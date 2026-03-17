@@ -14,18 +14,6 @@ Option Explicit
 'Environmentは各アプリに１つあれば十分。
 '１つのEnvironmentから複数のController/WebView2のセットを生産できる。
 
-' WebView2Loader.dll のエントリポイント ※後述のCreateWebView2Environmentメソッド内で実行
-Private Declare PtrSafe Function CreateCoreWebView2EnvironmentWithOptions Lib "WebView2Loader.dll" ( _
-    ByVal browserExecutableFolder As LongPtr, _
-    ByVal userDataFolder As LongPtr, _
-    ByVal additionalBrowserArguments As LongPtr, _
-    ByVal environmentCreatedHandler As LongPtr) As Long
-
-'自作COMオブジェクト（ハンドラー）をメモリ上に設置するための宣言
-Private Declare PtrSafe Sub CopyMemory Lib "kernel32" Alias "RtlMoveMemory" (Destination As Any, Source As Any, ByVal length As LongPtr)
-Private Declare PtrSafe Function GlobalAlloc Lib "kernel32" (ByVal uFlags As Long, ByVal dwBytes As LongPtr) As LongPtr
-Private Const GPTR As Long = &H40 'GlobalAllocのuFlags用定数。「固定メモリ」として確保する　というフラグ
-
 '作成したCOMオブジェクト（ハンドラー）を保持しておくためのポインター
 '※Class_Terminate時にGlobalAllocで確保したメモリ領域を解放する時にアドレスが必要
 Private vTable(3) As LongPtr
@@ -79,7 +67,3 @@ Public Sub CreateWebView2Environment()
 End Sub
 
 
-' AddressOf を LongPtr で受け取るためのヘルパー
-Private Function GetAddr(ByVal addr As LongPtr) As LongPtr
-    GetAddr = addr
-End Function
