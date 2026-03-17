@@ -2,50 +2,23 @@ VERSION 1.0 CLASS
 BEGIN
   MultiUse = -1  'True
 END
-Attribute VB_Name = "c1_WebView2Controller"
+Attribute VB_Name = "c2_WebView2Controller"
 Attribute VB_GlobalNameSpace = False
 Attribute VB_Creatable = False
 Attribute VB_PredeclaredId = False
 Attribute VB_Exposed = False
-'Public Class c1_WebView2Controller
+'Public Class c2_WebView2Controller
 
 Option Explicit
 
 Public pController As LongPtr
 
-Private vTable(3) As LongPtr
-Private pVTable As LongPtr
-Private pControllerHandler As LongPtr
+Public WithEvents WebView2 As c3_WebView2
+Attribute WebView2.VB_VarHelpID = -1
+Public Event NavigationCompleted()
+Public Event ScriptResultReceived(result As String)
 
-#If Win64 Then
-    Private Const vbLongPtr = vbLongLong
-#Else
-    Private Const vbLongPtr = vbLong
-#End If
-
-'ホントはこれはWevView2Environmentの関数・・・・
-Public Function CreateWebView2Controller(pEnvironment As LongPtr)
-
-    vTable(0) = GetAddr(AddressOf Handler_QueryInterface)
-    vTable(1) = GetAddr(AddressOf Handler_AddRef)
-    vTable(2) = GetAddr(AddressOf Handler_Release)
-    vTable(3) = GetAddr(AddressOf ControllerHandler_Invoke)
-
-    ' すでに作成済みなら再作成しない（二重実行防止）
-    If pVTable = 0 Then
-        pVTable = GlobalAlloc(GPTR, 4 * LenB(vTable(0)))
-        CopyMemory ByVal pVTable, vTable(0), 4 * LenB(vTable(0))
-        pControllerHandler = GlobalAlloc(GPTR, LenB(pVTable))
-        CopyMemory ByVal pControllerHandler, pVTable, LenB(pVTable)
-    End If
-
-    Dim hr As Long
-    ' hWnd が 0 だと失敗するので、Debug.Print で TargetHwnd が正しいか確認してください
-    hr = CallCreateController(pEnvironment, TargetHwnd, pControllerHandler)
-
-    Debug.Print "CreateCoreWebView2Controller Call Result: " & hr
-
-End Function
+Public Event WebVeiw2ReadyCompleted()
 
 
 'ここから下がWevView2Controllerの関数
@@ -132,7 +105,7 @@ End Property
 
 
 ' get_CoreWebView2 (Index 25) 専用：ポインタのポインタを渡して実体を取得
-Public Function GetWebView2() As c2_WebView2
+Public Function GetWebView2() As c3_WebView2
 
     Dim ppWebView2 As LongPtr
     Dim args(0) As Variant
@@ -152,9 +125,10 @@ Public Function GetWebView2() As c2_WebView2
     
         If result = 0 Then
         
-            Dim WV2 As New c2_WebView2
+            Dim WV2 As New c3_WebView2
             WV2.ppWebView2 = ppWebView2
-            Set GetWebView2 = WV2
+            'Set GetWebView2 = WV2
+            Set WebView2 = WV2
         
         Else
         
@@ -169,4 +143,42 @@ Public Function GetWebView2() As c2_WebView2
     End If
 
 End Function
+
+
+Public Sub ReadyCompleted()
+    RaiseEvent WebVeiw2ReadyCompleted
+End Sub
+
+Public Sub CloseWebView2()
+    Dim hr As Long
+    Dim result As Variant
+
+    ' pController は Environment::CreateCoreWebView2Controller
+    ' の完了ハンドラ (Invoke) で受け取ったポインタです。
+    If pController = 0 Then Exit Sub
+
+    ' ICoreWebView2Controller::Close (Index 24) を実行
+    ' これにより、関連する msedgewebview2.exe プロセスが終了します。
+    hr = DispCallFunc(pController, 24 * LenB(pController), CC_STDCALL, vbLong, 0, 0, 0, result)
+
+    If hr = 0 Then
+        Debug.Print "WebView2 Controller Closed."
+    Else
+        Debug.Print "Close Failed. HR: " & hr
+    End If
+
+    ' ポインタを破棄して、VBA側からも参照を完全に切る
+    ' これを忘れると、VBA側がポインタを「握ったまま」になり、不安定になります。
+    Set WebView2 = Nothing 'オブジェクト自体の破棄によりポインタも消える・・・はず
+    pController = 0
+    'pKeepEnv = 0
+End Sub
+
+Private Sub WebView2_NavigationCompleted()
+    RaiseEvent NavigationCompleted
+End Sub
+
+Private Sub WebView2_ReceiveScriptResult(ByVal result As String)
+    RaiseEvent ScriptResultReceived(result)
+End Sub
 

@@ -14,30 +14,91 @@ Attribute VB_GlobalNameSpace = False
 Attribute VB_Creatable = False
 Attribute VB_PredeclaredId = True
 Attribute VB_Exposed = False
+'Public UserForm UserFrom1
 
 Option Explicit
 
+Public WV2Loader As New c0_WebView2Loader
+Public WV2Environment As New c1_WebView2Environment
+Public WithEvents WV2Controller As c2_WebView2Controller
+Attribute WV2Controller.VB_VarHelpID = -1
 
 
 Private Sub CommandButton1_Click()
     
     Dim url As String
     url = TextBox1.Text
-    
-    Call Module1.WV2.Navigate(url)
+        
+    If Left(url, 11) = "javascript:" Then
+        Call WV2Controller.WebView2.ExecuteScriptAsync(url)
+    Else
+        Call WV2Controller.WebView2.NavigateSync(url)
+    End If
 
 End Sub
 
 
 Private Sub CommandButton2_Click()
-    Dim script As String
-    script = InputBox("Input JavaScript")
     
-    Call Module1.WV2.ExecuteScript(script)
+'    Dim script As String
+'    script = InputBox("Input JavaScript")
+'
+'    Call WV2Controller.WebView2.ExecuteScriptAsync(script)
+    
+    Debug.Print WV2Controller.WebView2.Source
     
 End Sub
 
 Private Sub UserForm_Activate()
-    Call Module1.WebView2錬成
+    Call WebView2錬成
 End Sub
 
+'フォームにWebView2を生成する処理
+Public Sub WebView2錬成()
+    '独自に作っているUIA ラッパークラスを使ってフォームを取得
+    Dim win As uia_e
+    Set win = e.getRoot.ffDescendants(c.ClsName("ThunderDFrame"), 5)
+        
+    Dim fr As uia_e
+    Set fr = win.ffDescendants(c.Type_(Group))
+
+    TargetHwnd = fr.prHwnd
+    Debug.Print TargetHwnd
+    
+    Call WV2Loader.CreateWebView2Environment
+End Sub
+
+Private Sub UserForm_QueryClose(Cancel As Integer, CloseMode As Integer)
+' 1. まず WebView2 本体のプロセスを止める
+    Call WV2Controller.CloseWebView2
+    
+    ' 2. 重要：Dictionary 等の参照を明示的に外す
+    If Not WV2Controller.WebView2 Is Nothing Then
+        WV2Controller.WebView2.Finalize
+    End If
+    
+    '現状、辞書を解放しないとTerminateが発動しない
+    Set m_InstanceMap = Nothing
+    
+    ' 3. 最後に参照を切る
+    Set WV2Controller = Nothing
+End Sub
+
+
+Private Sub WV2Controller_ScriptResultReceived(result As String)
+
+    Debug.Print "ScriptResultReceived:", result
+    TextBox1.Text = WV2Controller.WebView2.Source
+
+End Sub
+
+Private Sub WV2Controller_WebVeiw2ReadyCompleted()
+
+    Call WV2Controller.WebView2.NavigateAsync("https://www.google.co.jp")
+
+End Sub
+
+Private Sub WV2Controller_NavigationCompleted()
+    Debug.Print "フォームで受けたよ"
+    TextBox1.Text = WV2Controller.WebView2.Source
+End Sub

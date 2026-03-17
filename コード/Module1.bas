@@ -3,124 +3,14 @@ Attribute VB_Name = "Module1"
 
 Option Explicit
 
-' 宣言
-
-' 標準モジュールにて
-Public Declare PtrSafe Function GetDeviceCaps Lib "gdi32" (ByVal hdc As LongPtr, ByVal nIndex As Long) As Long
-Public Declare PtrSafe Function GetDC Lib "user32" (ByVal hWnd As LongPtr) As LongPtr
-Public Declare PtrSafe Function ReleaseDC Lib "user32" (ByVal hWnd As LongPtr, ByVal hdc As LongPtr) As Long
-
-
-' 定数
-Public Const LOGPIXELSX As Long = 88 ' 横方向のDPI
-Public Const LOGPIXELSY As Long = 90 ' 縦方向のDPI
-
 Public myWidth As Long
 Public myHeight As Long
-
-
-' 寿命を永続化させるために Public かつ Static に近い扱いで保持
-Public pKeepEnv As LongPtr        ' Environmentポインタ保存用
-Public pKeepController As LongPtr   ' Controllerポインタ保存用
-Public pKeepWebView As LongPtr      ' WebViewポインタ保存用
-
-Public Declare PtrSafe Function CallWindowProcW Lib "user32" (ByVal lpPrevWndFunc As LongPtr, ByVal hWnd As LongPtr, ByVal Msg As LongPtr, ByVal wParam As LongPtr, ByVal lParam As LongPtr) As LongPtr
-
-Public Declare PtrSafe Function FindWindowEx Lib "user32" Alias "FindWindowExA" ( _
-    ByVal hWndParent As LongPtr, _
-    ByVal hWndChildAfter As LongPtr, _
-    ByVal lpszClass As String, _
-    ByVal lpszWindow As String) As LongPtr
-
-Public Declare PtrSafe Function ShowWindow Lib "user32" (ByVal hWnd As LongPtr, ByVal nCmdShow As Long) As Long
-Public Const SW_SHOW As Long = 5
-
-Public Declare PtrSafe Function GetWindow Lib "user32" (ByVal hWnd As LongPtr, ByVal uCmd As Long) As LongPtr
-Public Declare PtrSafe Function MoveWindow Lib "user32" (ByVal hWnd As LongPtr, ByVal x As Long, ByVal y As Long, ByVal nWidth As Long, ByVal nHeight As Long, ByVal bRepaint As Long) As Long
-Public Const GW_CHILD As Long = 5
-
-Public Declare PtrSafe Function SetWindowPos Lib "user32" ( _
-    ByVal hWnd As LongPtr, ByVal hWndInsertAfter As LongPtr, _
-    ByVal x As Long, ByVal y As Long, ByVal cx As Long, ByVal cy As Long, _
-    ByVal uFlags As Long) As Long
-
-Public Const HWND_TOP As LongPtr = 0
-Public Const SWP_SHOWWINDOW As Long = &H40
-
 Public TargetHwnd As LongPtr
 
-'' WebView2Loader.dll のエントリポイント
-'Private Declare PtrSafe Function CreateCoreWebView2EnvironmentWithOptions Lib "WebView2Loader.dll" ( _
-'    ByVal browserExecutableFolder As LongPtr, _
-'    ByVal userDataFolder As LongPtr, _
-'    ByVal additionalBrowserArguments As LongPtr, _
-'    ByVal environmentCreatedHandler As LongPtr) As Long
-
-' メモリ確保用
-Public Declare PtrSafe Sub CopyMemory Lib "kernel32" Alias "RtlMoveMemory" (Destination As Any, Source As Any, ByVal length As LongPtr)
-Public Declare PtrSafe Function GlobalAlloc Lib "kernel32" (ByVal uFlags As Long, ByVal dwBytes As LongPtr) As LongPtr
-
-Public Const GPTR As Long = &H40
-Public Const S_OK As Long = 0
-
-Public Declare PtrSafe Function DispCallFunc Lib "oleaut32.dll" ( _
-    ByVal pvInstance As LongPtr, _
-    ByVal oVft As LongPtr, _
-    ByVal cc As Long, _
-    ByVal vtReturn As Integer, _
-    ByVal cArgs As Long, _
-    ByRef rgvt As Integer, _
-    ByRef rgpvarg As LongPtr, _
-    ByRef pvargResult As Variant) As Long
-
-' 定数
-Public Const CC_STDCALL As Long = 4
-
-Public Type RECT
-    left As Long
-    top As Long
-    right As Long
-    bottom As Long
-End Type
-
-Public WV2Loader As New c0_WebView2Loader
-Public WV2Controller As New c1_WebView2Controller
-Public WV2 As c2_WebView2
-
-Sub a()
-
-    '事前にフォームを表示してウィンドウハンドルを取得する
+Public Sub フォーム表示()
     UserForm1.Show
-
-    '独自に作っているUIA ラッパークラスを使ってフォームを取得
-    Dim win As uia_e
-    Set win = e.getRoot.ffDescendants(c.ClsName("ThunderDFrame"), 5)
-        
-    Dim fr As uia_e
-    Set fr = win.ffDescendants(c.Type_(Group))
-
-    TargetHwnd = fr.prHwnd
-    Debug.Print TargetHwnd
-    
-    Call WV2Loader.CreateWebView2Environment
-
 End Sub
 
-'フォームにWebView2を生成する処理
-Public Sub WebView2錬成()
-    '独自に作っているUIA ラッパークラスを使ってフォームを取得
-    Dim win As uia_e
-    Set win = e.getRoot.ffDescendants(c.ClsName("ThunderDFrame"), 5)
-        
-    Dim fr As uia_e
-    Set fr = win.ffDescendants(c.Type_(Group))
-
-    TargetHwnd = fr.prHwnd
-    Debug.Print TargetHwnd
-    
-    Call WV2Loader.CreateWebView2Environment
-    'Call WV2Loader.DebugLoader
-End Sub
 
 ' DispCallFuncをラップする関数 (可変引数はVBAでは難しいため、今回は引数固定で実装)
 Public Function CallCreateController(ByVal pEnv As LongPtr, ByVal hWnd As LongPtr, ByVal pHandler As LongPtr) As Long
@@ -205,42 +95,11 @@ Public Function PtsToPx(ByVal pts As Single, ByVal isVertical As Boolean) As Lon
     PtsToPx = pts * (dpi / 72)
 End Function
 
+
 '全く使ってないのに、このプロシージャを消したり、大部分をコメントアウトすると
 'WebView2初期化処理の際、c0_WebView2Loader内のCreateCoreWebView2EnvironmentWithOptions
 'を呼び出した瞬間にExcelがクラッシュする
-Public Sub RegisterNavigationCompleted_(ByVal pWebView As LongPtr)
-    Dim vTable(3) As LongPtr
-    Dim pVTable As LongPtr
-    Static pNavHandler As LongPtr
-
-    'vTable 構築 (QueryInterface, AddRef, Release は共通でOK)
-    vTable(0) = GetAddr(AddressOf Handler_QueryInterface)
-    vTable(1) = GetAddr(AddressOf Handler_AddRef)
-    vTable(2) = GetAddr(AddressOf Handler_Release)
-    vTable(3) = GetAddr(AddressOf NavCompleted_Invoke) ' 新しいInvoke
-
-    If pVTable = 0 Then
-        pVTable = GlobalAlloc(GPTR, 4 * LenB(vTable(0)))
-        CopyMemory ByVal pVTable, vTable(0), 4 * LenB(vTable(0))
-        pNavHandler = GlobalAlloc(GPTR, LenB(pVTable))
-        CopyMemory ByVal pNavHandler, pVTable, LenB(pVTable)
-    End If
-
-    ' ICoreWebView2::add_NavigationCompleted (Index 15)
-    ' 第1引数: [this], 第2引数: [eventHandler], 第3引数: [token(受け取り用アウト引数)]
-    Dim token As LongLong
-    Dim hr As Long
-    Dim res As Variant
-
-    Dim args(1) As Variant
-    Dim argTypes(1) As Integer
-    Dim argPtrs(1) As LongPtr
-
-    args(0) = pNavHandler
-    args(1) = VarPtr(token) ' 登録解除に使うトークンを受け取る
-    argTypes(0) = 20: argTypes(1) = 20
-    argPtrs(0) = VarPtr(args(0)): argPtrs(1) = VarPtr(args(1))
-
-    'hr = DispCallFunc(pWebView, 15 * LenB(pWebView), CC_STDCALL, vbLong, 2, argTypes(0), argPtrs(0), res)
-    'Debug.Print "Add_NavigationCompleted Result: " & hr
+Public Sub RegisterNavigationCompleted_()
+    Static vTable As LongPtr
+    vTable = GetAddr(AddressOf Handler_QueryInterface)
 End Sub
