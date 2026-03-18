@@ -22,6 +22,8 @@ Public WV2Loader As New c0_WebView2Loader
 Public WV2Environment As New c1_WebView2Environment
 Public WithEvents WV2Controller As c2_WebView2Controller
 Attribute WV2Controller.VB_VarHelpID = -1
+Public WithEvents WV2 As c3_WebView2
+Attribute WV2.VB_VarHelpID = -1
 
 
 Private Sub CommandButton1_Click()
@@ -31,8 +33,10 @@ Private Sub CommandButton1_Click()
         
     If Left(url, 11) = "javascript:" Then
         Call WV2Controller.WebView2.ExecuteScriptAsync(url)
-    Else
+    ElseIf Left(url, 4) = "http" Then
         Call WV2Controller.WebView2.NavigateSync(url)
+    Else
+        Call WV2Controller.WebView2.NavigateToString(url)
     End If
 
 End Sub
@@ -40,10 +44,6 @@ End Sub
 
 Private Sub CommandButton2_Click()
     
-'    Dim script As String
-'    script = InputBox("Input JavaScript")
-'
-'    Call WV2Controller.WebView2.ExecuteScriptAsync(script)
     
     Debug.Print WV2Controller.WebView2.Source
     
@@ -85,6 +85,15 @@ Private Sub UserForm_QueryClose(Cancel As Integer, CloseMode As Integer)
 End Sub
 
 
+Private Sub WV2_NavigationCompleted()
+    Debug.Print "NavigationCompleted"
+    TextBox1.Text = WV2Controller.WebView2.Source
+End Sub
+
+Private Sub WV2_NavigationStarting()
+    Debug.Print "NavigationStarting"
+End Sub
+
 Private Sub WV2Controller_ScriptResultReceived(result As String)
 
     Debug.Print "ScriptResultReceived:", result
@@ -98,7 +107,3 @@ Private Sub WV2Controller_WebVeiw2ReadyCompleted()
 
 End Sub
 
-Private Sub WV2Controller_NavigationCompleted()
-    Debug.Print "ÉtÉHÅ[ÉÄÇ≈éÛÇØÇΩÇÊ"
-    TextBox1.Text = WV2Controller.WebView2.Source
-End Sub

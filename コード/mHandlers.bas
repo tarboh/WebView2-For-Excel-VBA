@@ -58,9 +58,11 @@ Public Function ControllerHandler_Invoke(ByVal This As LongPtr, ByVal errorCode 
     'WebView2本体オブジェクトの取得
     'Set WV2 = WV2Controller.GetWebView2
     Call UserForm1.WV2Controller.GetWebView2
+    Set UserForm1.WV2 = UserForm1.WV2Controller.WebView2
     
     ' NavigationCompleted イベントの登録
     'WV2.WebView2_RegisterNavigationCompleted
+    Call UserForm1.WV2Controller.WebView2.add_NavigationStarting
     Call UserForm1.WV2Controller.WebView2.WebView2_RegisterNavigationCompleted
     
     'Navigateメソッドの実行
@@ -85,6 +87,26 @@ Public Function ControllerHandler_Invoke(ByVal This As LongPtr, ByVal errorCode 
     Call UserForm1.WV2Controller.ReadyCompleted
 
     ControllerHandler_Invoke = 0
+End Function
+
+Public Function NavigationStarting_Invoke(ByVal This As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
+    On Error Resume Next
+    
+    Dim target As c3_WebView2
+    Set target = GetInstance(This)
+    
+    If Not target Is Nothing Then
+        ' クラス側のメソッドを叩く
+        target.NotifyNavigationStarting
+    Else
+        ' 【重要】もしターゲットが見つからない（クラスが破棄された後）なら
+        ' WebView2側に残っている「幽霊ハンドラ」の可能性があるので
+        ' 辞書からこのポインタを掃除しておく（念のため）
+        UnregisterInstance This
+    End If
+    
+    NavigationStarting_Invoke = 0
+
 End Function
 
 Public Function NavCompleted_Invoke(ByVal This As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long

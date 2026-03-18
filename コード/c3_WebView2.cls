@@ -12,6 +12,7 @@ Attribute VB_Exposed = False
 Option Explicit
 
 Public ppWebView2 As LongPtr
+Public Event NavigationStarting()
 Public Event NavigationCompleted()
 Public Event ReceiveScriptResult(ByVal result As String)
 Public LastScriptResult As String
@@ -43,6 +44,53 @@ Public Sub WebView2_RegisterNavigationCompleted()
         Debug.Print "NavigationHandler Registered."
     End If
 End Sub
+
+Public Function NavigateToString(htmlContent As String) As Long
+    '    virtual HRESULT STDMETHODCALLTYPE NavigateToString(
+    '        /* [in] */ LPCWSTR htmlContent) = 0;
+    Dim nArgs(0) As Variant: nArgs(0) = StrPtr(htmlContent)
+    Dim nTypes(0) As Integer: nTypes(0) = vbLongPtr
+    Dim nPtrs(0) As LongPtr: nPtrs(0) = VarPtr(nArgs(0))
+    Dim hr As Long
+    Dim res As Variant
+    
+    hr = DispCallFunc(ppWebView2, 6 * LenB(ppWebView2), CC_STDCALL, vbLong, 1, nTypes(0), nPtrs(0), res)
+    
+    If hr = 0 Then
+        Debug.Print "DispCallFuncê¨å˜"
+        If res = 0 Then
+            Debug.Print "NavigateToStringê¨å˜"
+            NavigateToString = 0
+        Else
+            Debug.Print "NavigateToStringé∏îs", res
+        End If
+    Else
+        Debug.Print "DispCallFuncé∏îs", hr
+    End If
+
+End Function
+
+Public Function add_NavigationStarting()
+    Dim NavHandler As c4_Handler: Set NavHandler = New c4_Handler
+    NavHandler.CreateVTble GetAddr(AddressOf NavigationStarting_Invoke), ppWebView2
+    Col_Handler.Add NavHandler
+
+    Dim Token As LongPtr, hr As Long, res As Variant
+    Dim args(1) As Variant, argTypes(1) As Integer, argPtrs(1) As LongPtr
+
+    args(0) = NavHandler.Pointer
+    args(1) = VarPtr(Token)
+    argTypes(0) = vbLongPtr: argTypes(1) = vbLongPtr
+    argPtrs(0) = VarPtr(args(0)): argPtrs(1) = VarPtr(args(1))
+
+    hr = DispCallFunc(ppWebView2, 7 * LenB(ppWebView2), CC_STDCALL, vbLong, 2, argTypes(0), argPtrs(0), res)
+    
+    If hr = 0 And res = 0 Then
+        NavHandler.Token = Token
+        RegisterInstance NavHandler.Pointer, Me
+        Debug.Print "NavigationHandler Registered."
+    End If
+End Function
 
 ' --- åªç›ÇÃURLÇéÊìæÇ∑ÇÈä÷êî ---
 ' ICoreWebView2::get_Source (Index 4)
@@ -143,9 +191,11 @@ Public Function ExecuteScriptSync(ByVal script As String, Optional ByVal Timeout
 End Function
 
 ' --- ì‡ïîí ímóp ---
+Public Sub NotifyNavigationStarting()
+    RaiseEvent NavigationStarting
+End Sub
 Public Sub NotifyNavigationCompleted()
     m_IsNavigating = False
-    Debug.Print "NavigationCompleted"
     RaiseEvent NavigationCompleted
 End Sub
 
