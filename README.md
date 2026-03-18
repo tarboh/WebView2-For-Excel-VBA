@@ -1,35 +1,62 @@
-WebView2自体のフレームワーク？アーキテクチャ？は以下のような構成でした。
+やばいです。ブレイクスルーです。
 
-WebView2Loader (WebView2.exeを起動するためのプログラム。VBAからDeclareステートメントで呼び出し可能）
+IEサポート終了の話が出で以降、Excel VBA開発者たちの中では「モダンブラウザをVBAから以下に制御するか？」は大きな課題となっています。
 
-　┗ WebView2Environment (WebView2.exe全体。WebView2Controller及びWebView2のオブジェクト生成などを担当）
- 
-　　　┗ WebView2Controller（外側ウィンドウであるChrome_WidgetWin_0の制御及びWebView2本体の取得関連）
-   
-　　　┗ WebView2  (ブラウザ本体であるChrome_WidgetWin_1の制御関連。NavigateとかExecuteScriptとか、各種イベントハンドラの登録とか）
+昨今のスタンダードはSelenium VBAによる外部ブラウザの制御かと思いますが、この度、ユーザーフォーム上にWebView2コントロールを配置するというアプローチにおいて、大きな進展がありました。
 
-Loader以外は全部IUnknownベースのインターフェースしか持っていない（＝IDispatchが無くてObjectとして扱えない）ので、
-各機能をVBAから呼び出す時は全てDispCallFuncを経由する必要があります。
-UIautomationで遊んで得たスキルがそのまんま転用できてて楽しいです。
+これまではWebView2を使うと言っても.NET系アプリに実装したWebView2コントロールを、そのアプリのCOMインターフェースを用意してタイプライブラリを作成し、それをインストールした上で参照設定を通すというような非現実的な手法しかありませんでした。
 
-WebView2EnvironmentとWebView2Controllerはオブジェクト生成が完了したことをコールバックで通知してくるので、
-その通知を受け取るためのハンドラーを用意した上で、
-IUnknownインターフェースの３メソッド（QueryInterface,AddRef,Release）とハンドラーの関数ポインタをまとめてVTbleを作成し、
-それをWebView2側に渡す処理が必要になります。
-WebView2本体の各種ハンドラーの登録も同じ手法になっています。
+そんな中、https://eschamali.github.io/StarterWebScrapingKit/#userform-powershell<br>
+こちらの記事で紹介されていますが、もっくんさんが重要な事実を発見しました。
 
-VBA側からDispCallFuncでWebViewに制御を投げる
+その中で今回のプロジェクトの直接的なきっかけとなったのが、<br>
+C:\Program Files\Microsoft Office\root\Office16\ADDINS\Microsoft Power Query for Excel Integrated\bin<br>
+こちらのパス内に、WebView2のプログラム群(dll)が最初からインストール済みであるという事実です。
 
-　↓
- 
-処理を終えたWebView2がVBA側のハンドラを叩く
+少し使い方を調べてみると、WebView2Loader.dllの関数はDecleareステートメントによってVBAから直接呼び出せることが分かりました。
 
-　↓
- 
-ハンドラ内で次の処理をWebView2に投げる
+後はひたすら泥臭いコーディング＆テストを重ねた末、
+以下のような手順で、フォーム上に配置したWebVeiw2を制御できるようになりました。
 
-　↓
- 
-（以下繰り返し）
-
-という処理のリレーによって非同期通信を実現する設計思想になっています。
+＜WebView2オブジェクト取得まで＞<br>
+Declareステートメント宣言でWebView2Loader.dllのCreateCoreWebView2EnvironmentWithOptionsをコール<br>
+↓<br>
+Microsoft.Web.WebView2.Core.dllがロードされ、<br>
+WebView2Environmentオブジェクトが作成される<br>
+↓<br>
+標準モジュールに準備したWebView2Environmentの<br>
+作成完了通知を受け取る関数がコールされる<br>
+↓<br>
+VBAからWebView2Environment.CreateCoreWebView2Controllerメソッドを呼ぶ<br>
+↓<br>
+WebView2.exe内でWebView2Controllerが作成される<br>
+↓<br>
+標準モジュールに準備したWebView2Controllerの<br>
+作成完了通知を受け取る関数がコールされる<br>
+↓<br>
+VBAからWebView2Controller.GetWebView2メソッドでWebView2オブジェクトを取得<br>
+↓<br>
+WindowsAPI等でChrome_WidgetWin_0クラスウィンドウの位置とサイズを調整<br>
+<br>
+＜WebView2の制御：イベントハンドラの登録例＞<br>
+WebView2.add_NavigationCompletedを実行<br>
+（実行時にAddress of演算子でコールバック関数のポインタを渡す）<br>
+↓<br>
+WebView2.Navigateメソッドを実行<br>
+↓<br>
+ページ読み込みが完了したら、<br>
+標準モジュールに配置したイベントハンドラがコールされる<br>
+<br>
+なお、WebView2Environmentオブジェクト取得以降の関数は、<br>
+全部DispCallFuncを使用してコールする必要があるため、<br>
+VBA超上級者でないとライブラリ開発は難しいでしょう。<br>
+<br>
+このリポジトリで開発を進めていきますので、<br>
+興味のある方は各種イベントハンドラの実装に挑戦してみてください。<br>
+<br>
+また、このプロジェクトの果てに得られる機能として<br>
+・モダンなWebブラウザコントロールをユーザーフォーム配下に実装し、完全なコントロール権を得ること<br>
+・ユーザーフォーム上でのマウスホイールにるスクロール操作や右クリックによるコンテキストメニューが使えるようになること<br>
+・ActiveXコントロールに依存しないTreeViewやListViewコントロールを使えるようになること<br>
+などを期待しています。<br>
+もしかすると、ユーザーフォーム上のコントロールは全部WebView2上に描画するのが常識という時代が来るかもしれません。
