@@ -1,62 +1,46 @@
-やばいです。ブレイクスルーです。
+## 🚀 VBA WebView2 Integration Project
 
-IEサポート終了の話が出で以降、Excel VBA開発者たちの中では「モダンブラウザをVBAからいかに制御するか？」は大きな課題となっています。
+### 概要
+本プロジェクトは、Excel VBAから外部ライブラリのインストールや参照設定を行うことなく、ユーザーフォーム上に **Microsoft Edge WebView2** を直接配置・制御することを目指す、次世代のVBA開発フレームワークです。
 
-昨今のスタンダードはSelenium VBAによる外部ブラウザの制御かと思いますが、この度、ユーザーフォーム上にWebView2コントロールを配置するというアプローチにおいて、大きな進展がありました。
+IE（Internet Explorer）のサポート終了に伴い、VBAにおけるブラウザ制御は大きな転換期を迎えました。本リポジトリでは、Officeに標準で内蔵されている `WebView2Loader.dll` をハックし、**DispCallFunc** を駆使した低レイヤーなCOM操作によって、VBAの限界を超えたモダンなUI/UXを提供します。
 
-これまではWebView2を使うと言っても.NET系アプリに実装したWebView2コントロールを、そのアプリのCOMインターフェースを用意してタイプライブラリを作成し、それをインストールした上で参照設定を通すというような非現実的な手法しかありませんでした。
 
-そんな中、https://eschamali.github.io/StarterWebScrapingKit/#userform-powershell<br>
-こちらの記事で紹介されていますが、もっくんさんが重要な事実を発見しました。
 
-その中で今回のプロジェクトの直接的なきっかけとなったのが、<br>
-C:\Program Files\Microsoft Office\root\Office16\ADDINS\Microsoft Power Query for Excel Integrated\bin<br>
-こちらのパス内に、WebView2のプログラム群(dll)が最初からインストール済みであるという事実です。
+---
 
-少し使い方を調べてみると、WebView2Loader.dllの関数はDecleareステートメントによってVBAから直接呼び出せることが分かりました。
+### 🔥 本プロジェクトのブレイクスルー
+これまで、VBAからWebView2を利用するには .NET 経由のCOMラッパーを作成し、レジストリ登録（管理者権限）を行うという非現実的な壁がありました。
 
-後はひたすら泥臭いコーディング＆テストを重ねた末、
-以下のような手順で、フォーム上に配置したWebVeiw2を制御できるようになりました。
+しかし、本プロジェクトでは以下の **「発見」** を基点に、VBA単体での動作を実現しています。
 
-＜WebView2オブジェクト取得まで＞<br>
-Declareステートメント宣言でWebView2Loader.dllのCreateCoreWebView2EnvironmentWithOptionsをコール<br>
-↓<br>
-Microsoft.Web.WebView2.Core.dllがロードされ、<br>
-WebView2Environmentオブジェクトが作成される<br>
-↓<br>
-標準モジュールに準備したWebView2Environmentの<br>
-作成完了通知を受け取る関数がコールされる<br>
-↓<br>
-VBAからWebView2Environment.CreateCoreWebView2Controllerメソッドを呼ぶ<br>
-↓<br>
-WebView2.exe内でWebView2Controllerが作成される<br>
-↓<br>
-標準モジュールに準備したWebView2Controllerの<br>
-作成完了通知を受け取る関数がコールされる<br>
-↓<br>
-VBAからWebView2Controller.GetWebView2メソッドでWebView2オブジェクトを取得<br>
-↓<br>
-WindowsAPI等でChrome_WidgetWin_0クラスウィンドウの位置とサイズを調整<br>
-<br>
-＜WebView2の制御：イベントハンドラの登録例＞<br>
-WebView2.add_NavigationCompletedを実行<br>
-（実行時にAddress of演算子でコールバック関数のポインタを渡す）<br>
-↓<br>
-WebView2.Navigateメソッドを実行<br>
-↓<br>
-ページ読み込みが完了したら、<br>
-標準モジュールに配置したイベントハンドラがコールされる<br>
-<br>
-なお、WebView2Environmentオブジェクト取得以降の関数は、<br>
-全部DispCallFuncを使用してコールする必要があるため、<br>
-VBA超上級者でないとライブラリ開発は難しいでしょう。<br>
-<br>
-このリポジトリで開発を進めていきますので、<br>
-興味のある方は各種イベントハンドラの実装に挑戦してみてください。<br>
-<br>
-また、このプロジェクトの果てに得られる機能として<br>
-・モダンなWebブラウザコントロールをユーザーフォーム配下に実装し、完全なコントロール権を得ること<br>
-・ユーザーフォーム上でのマウスホイールにるスクロール操作や右クリックによるコンテキストメニューが使えるようになること<br>
-・ActiveXコントロールに依存しないTreeViewやListViewコントロールを使えるようになること<br>
-などを期待しています。<br>
-もしかすると、ユーザーフォーム上のコントロールは全部WebView2上に描画するのが常識という時代が来るかもしれません。
+* **プリインストール資産の活用**: 
+  `C:\Program Files\Microsoft Office\root\Office16\ADDINS\Microsoft Power Query for Excel Integrated\bin`
+  内に存在する `WebView2Loader.dll` を `Declare` ステートメントで直接叩くことで、環境汚染なしにWebView2 Environmentを構築可能です。
+* **完全なVTableハック**: 
+  `WebView2Environment` 取得以降の全操作を `DispCallFunc` による関数ポインタ呼び出しで実行。参照設定ゼロでの動作を実現します。
+
+---
+
+### 🛠 セットアップ・フロー
+WebView2オブジェクトを取得するまでの「泥臭くも精密な」プロセスは以下の通りです。
+
+1. **Environment作成**: `WebView2Loader.dll` の `CreateCoreWebView2EnvironmentWithOptions` をコール。
+2. **コールバック待機**: 標準モジュールで作成完了通知を受信。
+3. **Controller生成**: `CreateCoreWebView2Controller` を実行し、ブラウザの描画領域を確保。
+4. **WebView2取得**: `GetWebView2` メソッドより、本体である `ICoreWebView2` インスタンスを捕捉。
+5. **ウィンドウ調整**: Windows APIを用いて、`Chrome_WidgetWin_0` クラスのウィンドウをユーザーフォームにフィッティング。
+
+---
+
+### 🌟 実現される未来
+本プロジェクトの完成により、VBA開発者は以下の恩恵を受けることができます。
+
+* **モダンGUIの統合**: ユーザーフォーム内に最新のHTML5/CSS3/JavaScriptによるUIを構築。
+* **ActiveXからの脱却**: 動作が不安定なレガシーなTreeViewやListViewを、WebView2上の高性能なWebコンポーネントで代替。
+* **フルコントロール**: イベントハンドラ（NavigationCompleted等）の自作実装による、Webスクレイピングや自動操作の完全掌握。
+
+---
+
+### 📚 謝辞
+本プロジェクトの着想にあたり、重要な技術的知見を共有してくださった **もっくん** 様（[参考記事](https://eschamali.github.io/StarterWebScrapingKit/#userform-powershell)）に深く感謝いたします。
