@@ -18,80 +18,11 @@ Public Event ReceiveScriptResult(ByVal result As String)
 Public LastScriptResult As String
 
 
-Private Col_Handler As New Collection
+Public Col_Handler As New Collection
 Private m_IsNavigating As Boolean
 Private m_IsScriptRunning As Boolean
 
 
-
-
-' --- Navigate 関連 ---
-
-
-
-
-'add_NavigationCompleted
-Public Sub WebView2_RegisterNavigationCompleted()
-    Dim NavHandler As c4_Handler: Set NavHandler = New c4_Handler
-    NavHandler.CreateVTble GetAddr(AddressOf NavCompleted_Invoke), ppWebView2
-    Col_Handler.Add NavHandler
-
-    Dim Token As LongPtr, hr As Long, res As Variant
-    Dim args(1) As Variant, argTypes(1) As Integer, argPtrs(1) As LongPtr
-
-    args(0) = NavHandler.Pointer
-    args(1) = VarPtr(Token)
-    argTypes(0) = vbLongPtr: argTypes(1) = vbLongPtr
-    argPtrs(0) = VarPtr(args(0)): argPtrs(1) = VarPtr(args(1))
-
-    hr = DispCallFunc(ppWebView2, 15 * LenB(ppWebView2), CC_STDCALL, vbLong, 2, argTypes(0), argPtrs(0), res)
-    
-    If hr = 0 And res = 0 Then
-        NavHandler.Token = Token
-        RegisterInstance NavHandler.Pointer, Me
-        Debug.Print "NavigationHandler Registered."
-    End If
-End Sub
-
-
-
-' --- ExecuteScript 関連 ---
-' 非同期版：実行を依頼するだけで戻る。結果はイベントで受け取る
-Public Sub ExecuteScriptAsync(ByVal script As String)
-    Dim ScriptHandler As c4_Handler: Set ScriptHandler = New c4_Handler
-    ScriptHandler.CreateVTble GetAddr(AddressOf ExecuteScript_Invoke), ppWebView2
-    Col_Handler.Add ScriptHandler
-    RegisterInstance ScriptHandler.Pointer, Me
-
-    Dim args(1) As Variant, argTypes(1) As Integer, argPtrs(1) As LongPtr
-    Dim res As Variant
-    
-    args(0) = StrPtr(script)
-    args(1) = ScriptHandler.Pointer
-    argTypes(0) = vbLongPtr: argTypes(1) = vbLongPtr
-    argPtrs(0) = VarPtr(args(0)): argPtrs(1) = VarPtr(args(1))
-
-    Call DispCallFunc(ppWebView2, 29 * LenB(ppWebView2), CC_STDCALL, vbLong, 2, argTypes(0), argPtrs(0), res)
-End Sub
-
-' 同期版：実行結果を戻り値として直接受け取る
-Public Function ExecuteScriptSync(ByVal script As String, Optional ByVal TimeoutSec As Double = 5) As String
-    m_IsScriptRunning = True
-    ExecuteScriptAsync script
-    
-    ' 専用の待機ループ
-    Dim start As Double: start = Timer
-    Do While m_IsScriptRunning
-        Debug.Print "waiting ExecuteScriptSync"
-        DoEvents
-        If Timer - start > TimeoutSec Then
-            Debug.Print "ExecuteScriptSync: Timeout!"
-            Exit Do
-        End If
-    Loop
-    
-    ExecuteScriptSync = LastScriptResult
-End Function
 
 ' --- 内部通知用 ---
 Public Sub NotifyNavigationStarting()
@@ -170,33 +101,15 @@ End Sub
 '    /* [in] */ LPCWSTR htmlContent) = 0;
 Public Function NavigateToString(htmlContent As String) As Long
     '指定したHTMLコードを描画する
-    Call DCF_引数1つで文字列を渡す(ppWebView2, 6, "NavigateToString", htmlContent)
+    NavigateToString = DCF_引数1つで文字列を渡す(ppWebView2, 6, "NavigateToString", htmlContent)
 End Function
 
 '7
 'virtual HRESULT STDMETHODCALLTYPE add_NavigationStarting(
 '    /* [in] */ ICoreWebView2NavigationStartingEventHandler *eventHandler,
 '    /* [out] */ EventRegistrationToken *token) = 0;
-Public Function add_NavigationStarting()
-    Dim NavHandler As c4_Handler: Set NavHandler = New c4_Handler
-    NavHandler.CreateVTble GetAddr(AddressOf NavigationStarting_Invoke), ppWebView2
-    Col_Handler.Add NavHandler
-
-    Dim Token As LongPtr, hr As Long, res As Variant
-    Dim args(1) As Variant, argTypes(1) As Integer, argPtrs(1) As LongPtr
-
-    args(0) = NavHandler.Pointer
-    args(1) = VarPtr(Token)
-    argTypes(0) = vbLongPtr: argTypes(1) = vbLongPtr
-    argPtrs(0) = VarPtr(args(0)): argPtrs(1) = VarPtr(args(1))
-
-    hr = DispCallFunc(ppWebView2, 7 * LenB(ppWebView2), CC_STDCALL, vbLong, 2, argTypes(0), argPtrs(0), res)
-    
-    If hr = 0 And res = 0 Then
-        NavHandler.Token = Token
-        RegisterInstance NavHandler.Pointer, Me
-        Debug.Print "NavigationHandler Registered."
-    End If
+Public Function add_NavigationStarting() As Long
+    add_NavigationStarting = DCF_ハンドラ登録(Me, 7, "add_NavigationStarting", AddressOf NavigationStarting_Invoke)
 End Function
 
 
@@ -235,6 +148,10 @@ End Function
 'virtual HRESULT STDMETHODCALLTYPE add_NavigationCompleted(
 '    /* [in] */ ICoreWebView2NavigationCompletedEventHandler *eventHandler,
 '    /* [out] */ EventRegistrationToken *token) = 0;
+'add_NavigationCompleted
+Public Function add_NavigationCompleted() As Long
+    add_NavigationCompleted = mHelpers.DCF_ハンドラ登録(Me, 15, "add_NavigationCompleted", AddressOf NavCompleted_Invoke)
+End Function
 
 '16
 'virtual HRESULT STDMETHODCALLTYPE remove_NavigationCompleted(
@@ -298,6 +215,30 @@ End Function
 'virtual HRESULT STDMETHODCALLTYPE ExecuteScript(
 '    /* [in] */ LPCWSTR javaScript,
 '    /* [in] */ ICoreWebView2ExecuteScriptCompletedHandler *handler) = 0;
+Public Function ExecuteScriptAsync(ByVal script As String) As Long
+' 非同期版：実行を依頼するだけで戻る。結果はイベントで受け取る
+    ExecuteScriptAsync = DFC_ハンドラ登録_文字列渡しあり(Me, 29, "ExecuteScript", script, AddressOf ExecuteScript_Invoke)
+End Function
+
+' 同期版：実行結果を戻り値として直接受け取る
+Public Function ExecuteScriptSync(ByVal script As String, Optional ByVal TimeoutSec As Double = 5) As String
+    m_IsScriptRunning = True
+    ExecuteScriptAsync script
+    
+    ' 専用の待機ループ
+    Dim start As Double: start = Timer
+    Do While m_IsScriptRunning
+        Debug.Print "waiting ExecuteScriptSync"
+        DoEvents
+        If Timer - start > TimeoutSec Then
+            Debug.Print "ExecuteScriptSync: Timeout!"
+            Exit Do
+        End If
+    Loop
+    
+    ExecuteScriptSync = LastScriptResult
+End Function
+
 
 '30
 'virtual HRESULT STDMETHODCALLTYPE CapturePreview(
@@ -383,6 +324,9 @@ End Function
 'virtual HRESULT STDMETHODCALLTYPE AddHostObjectToScript(
 '    /* [in] */ LPCWSTR name,
 '    /* [in] */ VARIANT *object) = 0;
+Public Function AddHostObjectToScript(ByVal Name As String, ByVal Instance As Object) As Long
+    AddHostObjectToScript = DCF_引数2つ_StringとObject(ppWebView2, 49, "AddHostObjectToScript", Name, Instance)
+End Function
 
 '50
 'virtual HRESULT STDMETHODCALLTYPE RemoveHostObjectFromScript(
