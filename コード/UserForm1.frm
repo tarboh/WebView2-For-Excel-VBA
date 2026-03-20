@@ -50,7 +50,7 @@ Private Sub CommandButton2_Click()
 End Sub
 
 Private Sub NavigationCompletedHandler_Invoked(ByVal pThis As LongLong, ByVal sender As LongLong, ByVal args As LongLong)
-    Debug.Print "NavigationCompleted!"
+    Debug.Print "C4_Handler2_NavigationCompleted!"
 End Sub
 
 Private Sub UserForm_Activate()
@@ -60,21 +60,18 @@ End Sub
 
 'フォームにWebView2を生成する処理
 Public Sub WebView2錬成()
-    '独自に作っているUIA ラッパークラスを使ってフォームを取得
-    Dim win As uia_e
-    Set win = e.getRoot.ffDescendants(c.ClsName("ThunderDFrame"), 5)
-        
-    Dim fr As uia_e
-    Set fr = win.ffDescendants(c.Type_(Group))
 
-    TargetHwnd = fr.prHwnd
+    '隠しプロパティを使えば直接ウィンドウハンドルが取得できる
+    '※KallunWillockさんからのIssueで教えてもらいました。ありがとう。
+    TargetHwnd = Frame1.[_GethWnd]
     Debug.Print TargetHwnd
     
     Call WV2Loader.CreateWebView2Environment
+    
 End Sub
 
 Private Sub UserForm_QueryClose(Cancel As Integer, CloseMode As Integer)
-' 1. まず WebView2 本体のプロセスを止める
+    ' 1. まず WebView2 本体のプロセスを止める
     Call WV2Controller.CloseWebView2
     
     ' 2. 重要：Dictionary 等の参照を明示的に外す
@@ -87,6 +84,9 @@ Private Sub UserForm_QueryClose(Cancel As Integer, CloseMode As Integer)
     
     ' 3. 最後に参照を切る
     Set WV2Controller = Nothing
+    
+    'サンクを領域展開しているハンドラを消す
+    Set NavigationCompletedHandler = Nothing
 End Sub
 
 Private Sub WV2_NavigationCompleted()
