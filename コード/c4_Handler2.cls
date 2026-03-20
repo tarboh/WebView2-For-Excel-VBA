@@ -51,7 +51,7 @@ End Property
 ' pThis: 捏造オブジェクト(mFakeObjPtr), sender: WebView2本体, args: イベント引数
 Public Function cls_Invoke(ByVal pThis As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
     On Error Resume Next ' 外部呼び出しのため安全策
-    
+
     RaiseEvent Invoked(pThis, sender, args)
 '    Debug.Print "=== WebView2 Event Fired ==="
 '    Debug.Print "Sender Ptr:", sender
@@ -59,7 +59,7 @@ Public Function cls_Invoke(ByVal pThis As LongPtr, ByVal sender As LongPtr, ByVa
 '    Debug.Print "ppWebView2:", ppWebView2
     ' ここで Me (このクラス自身) のプロパティ等にも安全にアクセス可能です。
     ' 例: Debug.Print Me.Token
-    
+
     cls_Invoke = 0 ' S_OK
 End Function
 
@@ -71,16 +71,16 @@ Private Sub Class_Initialize()
     mVTablePtr = VirtualAlloc(0, VTABLE_SIZE, MEM_COMMIT Or MEM_RESERVE, PAGE_EXECUTE_READWRITE)
     mThunkAddr = VirtualAlloc(0, THUNK_SIZE, MEM_COMMIT Or MEM_RESERVE, PAGE_EXECUTE_READWRITE)
     mFakeObjPtr = VirtualAlloc(0, 8, MEM_COMMIT Or MEM_RESERVE, PAGE_EXECUTE_READWRITE)
-    
+
     ' 2. クラスメソッド "cls_Invoke" の実体アドレスを取得
     Dim pTargetFunc As LongPtr, offset As Long
     pTargetFunc = GetClassMethodPtr(Me, "cls_Invoke", offset) ' ※既存の取得関数を使用
-    
+
     ' 3. x64用 マシン語サンク作成
     ' 内容: WebView2の引数(RCX, RDX, R8)を一つ右(RDX, R8, R9)にずらし、RCXにこのクラスのMeをセットしてジャンプ
     Dim thunkBytes(31) As Byte
     Dim i As Long: i = 0
-    
+
     ' mov r9, r8   (args -> 第4引数へ)
     thunkBytes(i) = &H4D: thunkBytes(i + 1) = &H89: thunkBytes(i + 2) = &HC1: i = i + 3
     ' mov r8, rdx  (sender -> 第3引数へ)
@@ -95,24 +95,24 @@ Private Sub Class_Initialize()
     RtlMoveMemory VarPtr(thunkBytes(i)), VarPtr(pTargetFunc), 8: i = i + 8
     ' jmp rax (転送)
     thunkBytes(i) = &HFF: thunkBytes(i + 1) = &HE0
-    
+
     RtlMoveMemory mThunkAddr, VarPtr(thunkBytes(0)), THUNK_SIZE
-    
+
     ' 4. VTable 構築 (Index 0-2 は標準モジュールのダミー、3 にサンク)
     ' ※Handler_QI/AddRef/Release は標準モジュールに定義されている前提
     Dim pQI As LongPtr, pAddRef As LongPtr, pRelease As LongPtr
     pQI = GetAddr(AddressOf Handler_QueryInterface)
     pAddRef = GetAddr(AddressOf Handler_AddRef)
     pRelease = GetAddr(AddressOf Handler_Release)
-    
+
     RtlMoveMemory mVTablePtr + (0 * 8), VarPtr(pQI), 8
     RtlMoveMemory mVTablePtr + (1 * 8), VarPtr(pAddRef), 8
     RtlMoveMemory mVTablePtr + (2 * 8), VarPtr(pRelease), 8
     RtlMoveMemory mVTablePtr + (3 * 8), VarPtr(mThunkAddr), 8
-    
+
     ' 5. FakeInstance の先頭に VTable へのポインタを書き込む
     RtlMoveMemory mFakeObjPtr, VarPtr(mVTablePtr), 8
-    
+
     Debug.Print "Handler Ready. FakeObjPtr: " & Hex(mFakeObjPtr)
 End Sub
 
@@ -121,15 +121,5 @@ Private Sub Class_Terminate()
     If mVTablePtr <> 0 Then VirtualFree mVTablePtr, 0, MEM_RELEASE
     If mThunkAddr <> 0 Then VirtualFree mThunkAddr, 0, MEM_RELEASE
     If mFakeObjPtr <> 0 Then VirtualFree mFakeObjPtr, 0, MEM_RELEASE
-    Debug.Print "Handler Memory Released."
+    Debug.Print "c4_Handler2 Memory Released."
 End Sub
-
-
-' --- タイマー専用の受け皿メソッド ---
-' 本来: (hwnd, msg, id, time) -> 4つ
-' サンク後: (Me, hwnd, msg, id, time) -> 5つ
-Public Function cls_TimerProc(ByVal pMe As LongPtr, ByVal hwnd As LongPtr, ByVal uMsg As Long, ByVal idEvent As LongPtr, ByVal dwTime As Long) As Long
-    Debug.Print "--- Timer Fired! ---"
-    Debug.Print "TimeCount:", dwTime
-    cls_TimerProc = 0
-End Function
