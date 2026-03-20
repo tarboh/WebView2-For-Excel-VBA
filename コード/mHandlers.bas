@@ -25,8 +25,6 @@ Public Function Handler_Release(ByVal This As LongPtr) As Long: Handler_Release 
 Public Function Handler_Invoke(ByVal This As LongPtr, ByVal errorCode As Long, ByVal pEnvironment As LongPtr) As Long
     Debug.Print "WebView2 Environment Created. ErrorCode: " & errorCode
 
-    'pKeepEnv = pEnvironment ' ポインタをグローバル変数に退避
-
     If errorCode = 0 Then
 
         Call UserForm1.WV2Environment.CreateWebView2Controller(pEnvironment)
@@ -61,10 +59,8 @@ Public Function ControllerHandler_Invoke(ByVal This As LongPtr, ByVal errorCode 
     Set UserForm1.WV2 = UserForm1.WV2Controller.WebView2
     
     ' NavigationCompleted イベントの登録
-    'WV2.WebView2_RegisterNavigationCompleted
     Call UserForm1.WV2Controller.WebView2.add_NavigationStarting
-    'Call UserForm1.WV2Controller.WebView2.add_NavigationCompleted
-    'Call UserForm1.WV2Controller.WebView2.add_NavigationCompleted2
+    Call UserForm1.WV2Controller.WebView2.add_NavigationCompleted
     Call UserForm1.WV2Controller.WebView2.AddNavigationCompletedHandler(UserForm1.NavigationCompletedHandler)
     Debug.Print "ppWebView2:", UserForm1.WV2Controller.WebView2.ppWebView2
     
