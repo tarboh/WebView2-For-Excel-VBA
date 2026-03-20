@@ -25,8 +25,10 @@ Public Declare PtrSafe Sub CoTaskMemFree Lib "ole32.dll" (ByVal pv As LongPtr)
 ' 文字列の長さを取得する（Unicode版）
 Public Declare PtrSafe Function lstrlenW Lib "kernel32" (ByVal lpString As LongPtr) As Long
 Public Declare PtrSafe Function SysAllocString Lib "oleaut32.dll" (ByVal pOleChar As LongPtr) As LongPtr
+' BSTRメモリを解放する
+Public Declare PtrSafe Sub SysFreeString Lib "oleaut32.dll" (ByVal bstr As LongPtr)
 
-Public Declare PtrSafe Function MoveWindow Lib "user32" (ByVal hWnd As LongPtr, ByVal x As Long, ByVal y As Long, ByVal nWidth As Long, ByVal nHeight As Long, ByVal bRepaint As Long) As Long
+Public Declare PtrSafe Function MoveWindow Lib "user32" (ByVal hwnd As LongPtr, ByVal x As Long, ByVal y As Long, ByVal nWidth As Long, ByVal nHeight As Long, ByVal bRepaint As Long) As Long
 
 Public Declare PtrSafe Function FindWindowEx Lib "user32" Alias "FindWindowExA" ( _
     ByVal hWndParent As LongPtr, _
@@ -49,14 +51,15 @@ Public Const CC_STDCALL As Long = 4
 
 ' 標準モジュールにて
 Public Declare PtrSafe Function GetDeviceCaps Lib "gdi32" (ByVal hdc As LongPtr, ByVal nIndex As Long) As Long
-Public Declare PtrSafe Function GetDC Lib "user32" (ByVal hWnd As LongPtr) As LongPtr
-Public Declare PtrSafe Function ReleaseDC Lib "user32" (ByVal hWnd As LongPtr, ByVal hdc As LongPtr) As Long
+Public Declare PtrSafe Function GetDC Lib "user32" (ByVal hwnd As LongPtr) As LongPtr
+Public Declare PtrSafe Function ReleaseDC Lib "user32" (ByVal hwnd As LongPtr, ByVal hdc As LongPtr) As Long
 
 ' 定数
 Public Const LOGPIXELSX As Long = 88 ' 横方向のDPI
 Public Const LOGPIXELSY As Long = 90 ' 縦方向のDPI
 
 Public Declare PtrSafe Sub RtlMoveMemory Lib "kernel32" (ByVal Destination As LongPtr, ByRef Source As LongPtr, ByVal Length As LongPtr)
+
 
 
 Public Sub PutMemPtr(ByVal pDest As LongPtr, ByVal pSrc As LongPtr)

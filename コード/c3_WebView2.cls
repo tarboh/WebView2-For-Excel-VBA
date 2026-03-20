@@ -22,7 +22,7 @@ Public Col_Handler As New Collection
 Private m_IsNavigating As Boolean
 Private m_IsScriptRunning As Boolean
 
-
+Public cHandler As c4_Handler2
 
 ' --- 内部通知用 ---
 Public Sub NotifyNavigationStarting()
@@ -56,10 +56,10 @@ End Sub
 
 ' --- 待機用ヘルパー ---
 Private Sub WaitNavigation(ByVal TimeoutSec As Double)
-    Dim start As Double: start = Timer
+    Dim Start As Double: Start = Timer
     Do While m_IsNavigating
         DoEvents
-        If Timer - start > TimeoutSec Then Exit Do
+        If Timer - Start > TimeoutSec Then Exit Do
     Loop
 End Sub
 
@@ -152,6 +152,60 @@ End Function
 Public Function add_NavigationCompleted() As Long
     add_NavigationCompleted = mHelpers.DCF_ハンドラ登録(Me, 15, "add_NavigationCompleted", AddressOf NavCompleted_Invoke)
 End Function
+Public Function add_NavigationCompleted2() As Long
+        
+    Set cHandler = New c4_Handler2
+    Dim funcPtr As LongPtr, vtbloffset As Long
+    funcPtr = GetClassMethodPtr(cHandler, "NavCompleted_Invoke", vtbloffset)
+    
+    add_NavigationCompleted2 = mHelpers.DCF_ハンドラ登録(Me, 15, "add_NavigationCompleted2", funcPtr)
+
+End Function
+
+Public Function Register_NavCompleted(ByVal wb2Ptr As LongPtr, ByVal handler As c4_Handler2) As LongPtr
+    ' wb2Ptr: ICoreWebView2 の生ポインタ
+    ' handler: 捏造 VTable を持った c4_Handler2 のインスタンス
+    
+    Dim hr As Long
+    Dim pHandler As LongPtr: pHandler = handler.Pointer
+    Dim tkn As LongPtr ' トークンを受け取る変数
+    Dim res As Variant
+    
+    ' DispCallFunc 用の準備 (引数2つ)
+    ' 1: [in]  eventHandler (IUnknown*) -> pHandler
+    ' 2: [out] token (EventRegistrationToken*) -> VarPtr(tkn)
+    
+    Dim argTypes(1) As Integer
+    Dim argPtrs(1) As LongPtr
+    Dim args(1) As Variant
+    
+    ' 第1引数: Handlerのポインタそのものを渡す (ByVal)
+    args(0) = pHandler
+    argTypes(0) = vbLongPtr
+    argPtrs(0) = VarPtr(args(0))
+    
+    ' 第2引数: Tokenを受け取る変数のアドレスを渡す (ByRef相当)
+    args(1) = VarPtr(tkn)
+    argTypes(1) = vbLongPtr
+    argPtrs(1) = VarPtr(args(1))
+    
+    ' add_NavigationCompleted の VTable Index は 15 (64bit環境)
+    ' ※環境により異なる場合は要調整
+    Const IDX_ADD_NAV_COMPLETED As Long = 15
+    
+    hr = DispCallFunc(wb2Ptr, IDX_ADD_NAV_COMPLETED * LenB(wb2Ptr), _
+                      CC_STDCALL, vbLong, 2, argTypes(0), argPtrs(0), res)
+                      
+    If hr = 0 And res = 0 Then
+        ' 成功したらトークンを保持しておく
+        handler.Token = tkn
+        Register_NavCompleted = tkn
+        Debug.Print "ハンドラ登録成功！ Token: " & tkn
+    Else
+        Debug.Print "ハンドラ登録失敗。 hr: " & Hex(hr) & " / res: " & res
+    End If
+End Function
+
 
 '16
 'virtual HRESULT STDMETHODCALLTYPE remove_NavigationCompleted(
@@ -226,11 +280,11 @@ Public Function ExecuteScriptSync(ByVal script As String, Optional ByVal Timeout
     ExecuteScriptAsync script
     
     ' 専用の待機ループ
-    Dim start As Double: start = Timer
+    Dim Start As Double: Start = Timer
     Do While m_IsScriptRunning
         Debug.Print "waiting ExecuteScriptSync"
         DoEvents
-        If Timer - start > TimeoutSec Then
+        If Timer - Start > TimeoutSec Then
             Debug.Print "ExecuteScriptSync: Timeout!"
             Exit Do
         End If
@@ -377,3 +431,81 @@ End Function
 '    /* [in] */ EventRegistrationToken token) = 0;
 '
 '};
+
+
+''' <summary>
+''' NavigationCompleted イベントハンドラを登録する
+''' </summary>
+Public Function AddNavigationCompletedHandler(handler As c4_Handler2) As Long
+    On Error GoTo ErrorHandler
+
+    ' 1. コレクションの初期化（初回のみ）
+    If Col_Handler Is Nothing Then Set Col_Handler = New Collection
+
+    ' 2. ハンドラクラスのインスタンス化
+    ' ※ Initialize 内で VTable と マシン語サンクが自動生成されます
+    'Set handler = New c4_Handler2
+    handler.ppWebView2 = ppWebView2
+
+    ' 3. WebView2 (COMインターフェース) への登録準備
+    ' ICoreWebView2::add_NavigationCompleted の VTable Index は 15 (x64)
+    Const IDX_ADD_NAV_COMPLETED As Long = 15
+    
+    Dim pWebView2 As LongPtr: pWebView2 = Me.ppWebView2 ' 保持している ICoreWebView2 ポインタ
+    Dim pHandlerObj As LongPtr: pHandlerObj = handler.Pointer ' 捏造された FakeObjPtr
+    Dim tkn As LongPtr ' 登録解除用のトークンを受け取る変数
+    
+    ' DispCallFunc の引数設定
+    ' HRESULT add_NavigationCompleted(handler, [out] token)
+    Dim args(1) As Variant
+    Dim argTypes(1) As Integer
+    Dim argPtrs(1) As LongPtr
+    Dim res As Variant
+    Dim hr As Long
+
+    ' 第1引数: [in] ICoreWebView2NavigationCompletedEventHandler*
+    args(0) = pHandlerObj
+    argTypes(0) = vbLongPtr
+    argPtrs(0) = VarPtr(args(0))
+
+    ' 第2引数: [out] EventRegistrationToken* (ポインタを渡す)
+    args(1) = VarPtr(tkn)
+    argTypes(1) = vbLongPtr
+    argPtrs(1) = VarPtr(args(1))
+
+    ' 4. DispCallFunc で API 実行
+    hr = DispCallFunc(pWebView2, _
+                      IDX_ADD_NAV_COMPLETED * LenB(pWebView2), _
+                      CC_STDCALL, _
+                      vbLong, _
+                      2, _
+                      argTypes(0), _
+                      argPtrs(0), _
+                      res)
+
+    ' 5. 結果の判定
+    If hr = 0 Then
+        If res = 0 Then
+            ' 成功：トークンを保存し、インスタンスをコレクションで維持する
+            handler.Token = tkn
+            Col_Handler.Add handler, CStr(tkn) ' トークンをキーにして保持
+            
+            Debug.Print "--- ハンドラ登録成功 ---"
+            Debug.Print "Token:", tkn
+            AddNavigationCompletedHandler = 0 ' S_OK
+        Else
+            Debug.Print "WebView2側でエラー発生。HRESULT: " & Hex(res)
+            AddNavigationCompletedHandler = res
+        End If
+    Else
+        Debug.Print "DispCallFunc 自体が失敗。hr: " & Hex(hr)
+        AddNavigationCompletedHandler = hr
+    End If
+
+    Exit Function
+
+ErrorHandler:
+    Debug.Print "AddNavigationCompletedHandler で予期せぬエラー: " & Err.Description
+    AddNavigationCompletedHandler = -1
+End Function
+

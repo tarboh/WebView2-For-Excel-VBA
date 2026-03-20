@@ -4,7 +4,7 @@ Begin {C62A69F0-16DC-11CE-9E98-00AA00574A4F} UserForm1
    ClientHeight    =   9120.001
    ClientLeft      =   120
    ClientTop       =   465
-   ClientWidth     =   12420
+   ClientWidth     =   12360
    OleObjectBlob   =   "UserForm1.frx":0000
    ShowModal       =   0   'False
    StartUpPosition =   1  'オーナー フォームの中央
@@ -24,7 +24,9 @@ Public WithEvents WV2Controller As c2_WebView2Controller
 Attribute WV2Controller.VB_VarHelpID = -1
 Public WithEvents WV2 As c3_WebView2
 Attribute WV2.VB_VarHelpID = -1
-
+Public WithEvents NavigationCompletedHandler As c4_Handler2
+Attribute NavigationCompletedHandler.VB_VarHelpID = -1
+Public c5 As New c5_ObjectForJS
 
 Private Sub CommandButton1_Click()
     
@@ -34,7 +36,7 @@ Private Sub CommandButton1_Click()
     If Left(url, 11) = "javascript:" Then
         Call WV2Controller.WebView2.ExecuteScriptAsync(url)
     ElseIf Left(url, 4) = "http" Then
-        Call WV2Controller.WebView2.NavigateSync(url)
+        Call WV2Controller.WebView2.NavigateAsync(url)
     Else
         Call WV2Controller.WebView2.NavigateToString(url)
     End If
@@ -43,13 +45,16 @@ End Sub
 
 
 Private Sub CommandButton2_Click()
-    
-    
     Debug.Print WV2Controller.WebView2.Source
-    
+   
+End Sub
+
+Private Sub NavigationCompletedHandler_Invoked(ByVal pThis As LongLong, ByVal sender As LongLong, ByVal args As LongLong)
+    Debug.Print "NavigationCompleted!"
 End Sub
 
 Private Sub UserForm_Activate()
+    Set NavigationCompletedHandler = New c4_Handler2
     Call WebView2錬成
 End Sub
 
@@ -84,10 +89,11 @@ Private Sub UserForm_QueryClose(Cancel As Integer, CloseMode As Integer)
     Set WV2Controller = Nothing
 End Sub
 
-
 Private Sub WV2_NavigationCompleted()
-    Debug.Print "NavigationCompleted"
-    TextBox1.Text = WV2Controller.WebView2.Source
+    Dim Source As String
+    Source = WV2Controller.WebView2.Source
+    Debug.Print "（標準モジュール由来）NavigationCompleted Source:" & Source
+    TextBox1.Text = Source
 End Sub
 
 Private Sub WV2_NavigationStarting()
@@ -102,6 +108,8 @@ Private Sub WV2Controller_ScriptResultReceived(result As String)
 End Sub
 
 Private Sub WV2Controller_WebVeiw2ReadyCompleted()
+
+    Call WV2.AddHostObjectToScript("VBAObj", c5)
 
     Call WV2Controller.WebView2.NavigateAsync("https://www.google.co.jp")
 

@@ -63,7 +63,10 @@ Public Function ControllerHandler_Invoke(ByVal This As LongPtr, ByVal errorCode 
     ' NavigationCompleted イベントの登録
     'WV2.WebView2_RegisterNavigationCompleted
     Call UserForm1.WV2Controller.WebView2.add_NavigationStarting
-    Call UserForm1.WV2Controller.WebView2.WebView2_RegisterNavigationCompleted
+    'Call UserForm1.WV2Controller.WebView2.add_NavigationCompleted
+    'Call UserForm1.WV2Controller.WebView2.add_NavigationCompleted2
+    Call UserForm1.WV2Controller.WebView2.AddNavigationCompletedHandler(UserForm1.NavigationCompletedHandler)
+    Debug.Print "ppWebView2:", UserForm1.WV2Controller.WebView2.ppWebView2
     
     'Navigateメソッドの実行
     'WV2.Navigate "Https://www.google.co.jp/"

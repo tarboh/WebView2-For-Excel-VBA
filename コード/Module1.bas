@@ -7,13 +7,14 @@ Public myWidth As Long
 Public myHeight As Long
 Public TargetHwnd As LongPtr
 
+
 Public Sub フォーム表示()
     UserForm1.Show
 End Sub
 
 
 ' DispCallFuncをラップする関数 (可変引数はVBAでは難しいため、今回は引数固定で実装)
-Public Function CallCreateController(ByVal pEnv As LongPtr, ByVal hWnd As LongPtr, ByVal pHandler As LongPtr) As Long
+Public Function CallCreateController(ByVal pEnv As LongPtr, ByVal hwnd As LongPtr, ByVal pHandler As LongPtr) As Long
     Dim vTable As LongPtr
     Dim pFunc As LongPtr
     Dim hr As Long
@@ -25,7 +26,7 @@ Public Function CallCreateController(ByVal pEnv As LongPtr, ByVal hWnd As LongPt
     ' ICoreWebView2Environment::CreateCoreWebView2Controller は vTable の index 3
     ' (QueryInterface, AddRef, Release が 0,1,2 なので)
 
-    args(0) = hWnd
+    args(0) = hwnd
     args(1) = pHandler
 
     argTypes(0) = vbLongLong
