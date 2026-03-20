@@ -1,4 +1,6 @@
 ## 🚀 VBA WebView2 Integration Project
+<img width="1916" height="1028" alt="image" src="https://github.com/user-attachments/assets/a2bcff2c-3443-42c7-9315-f2555433a61a" />
+
 
 ### 概要
 本プロジェクトは、Excel VBAから外部ライブラリのインストールや参照設定を行うことなく、ユーザーフォーム上に **Microsoft Edge WebView2** を直接配置・制御することを目指す、次世代のVBA開発フレームワークです。
