@@ -206,17 +206,18 @@ Public Function DCF_ˆø”2‚Â_String‚ÆObject(pObj As LongPtr, vIndex As Long, strF
     End If
 End Function
 
-Public Function DCF_ƒnƒ“ƒhƒ‰“o˜^(WB2 As c3_WebView2, vTblIndex As Long, strFuncName As String, funcPtr As LongPtr) As Long
+Public Function DCF_ƒnƒ“ƒhƒ‰“o˜^(WB2 As c3_WebView2, vTblIndex As Long, strFuncName As String, funcPtr As LongPtr, Optional Namae As String) As Long
     
-    Dim handler As c4_Handler: Set handler = New c4_Handler
-    handler.CreateVTble funcPtr, WB2.ppWebView2
-    WB2.Col_Handler.Add handler
+    Dim Handler As c4_Handler: Set Handler = New c4_Handler
+    Handler.CreateVTble funcPtr, WB2.ppWebView2
+    WB2.Col_Handler.Add Handler
+    Handler.Namae = Namae
     
-    Dim pObj As LongPtr, Token As LongPtr, hr As Long, res As Variant
+    Dim pObj As LongPtr, token As LongPtr, hr As Long, res As Variant
     pObj = WB2.ppWebView2
     Dim args(1) As Variant, argTypes(1) As Integer, argPtrs(1) As LongPtr
-    args(0) = handler.Pointer
-    args(1) = VarPtr(Token)
+    args(0) = Handler.Pointer
+    args(1) = VarPtr(token)
     argTypes(0) = vbLongPtr: argTypes(1) = vbLongPtr
     argPtrs(0) = VarPtr(args(0)): argPtrs(1) = VarPtr(args(1))
     
@@ -224,8 +225,8 @@ Public Function DCF_ƒnƒ“ƒhƒ‰“o˜^(WB2 As c3_WebView2, vTblIndex As Long, strFuncN
     
     If hr = 0 Then
         If res = 0 Then
-            handler.Token = Token
-            RegisterInstance handler.Pointer, WB2
+            Handler.token = token
+            RegisterInstance Handler.Pointer, WB2
             DCF_ƒnƒ“ƒhƒ‰“o˜^ = res
         Else
             Debug.Print strFuncName & "_¸”sAres:" & res
@@ -237,17 +238,17 @@ End Function
 
 Public Function DFC_ƒnƒ“ƒhƒ‰“o˜^_•¶š—ñ“n‚µ‚ ‚è(WB2 As c3_WebView2, vTblIndex As Long, strFuncName As String, str As String, funcPtr As LongPtr)
     
-    Dim handler As c4_Handler: Set handler = New c4_Handler
-    handler.CreateVTble funcPtr, WB2.ppWebView2
-    WB2.Col_Handler.Add handler
-    RegisterInstance handler.Pointer, WB2
+    Dim Handler As c4_Handler: Set Handler = New c4_Handler
+    Handler.CreateVTble funcPtr, WB2.ppWebView2
+    WB2.Col_Handler.Add Handler
+    RegisterInstance Handler.Pointer, WB2
 
     Dim pObj As LongPtr, hr As Long, res As Variant
     pObj = WB2.ppWebView2
     Dim args(1) As Variant, argTypes(1) As Integer, argPtrs(1) As LongPtr
     
     args(0) = StrPtr(str)
-    args(1) = handler.Pointer
+    args(1) = Handler.Pointer
     argTypes(0) = vbLongPtr: argTypes(1) = vbLongPtr
     argPtrs(0) = VarPtr(args(0)): argPtrs(1) = VarPtr(args(1))
 
@@ -260,6 +261,27 @@ Public Function DFC_ƒnƒ“ƒhƒ‰“o˜^_•¶š—ñ“n‚µ‚ ‚è(WB2 As c3_WebView2, vTblIndex As
         End If
     Else
         Debug.Print strFuncName & "_¸”sAhr:" & hr
+    End If
+End Function
+
+Public Function remove_Handler(WebView2 As c3_WebView2, vTblIndex As Long, token As Long, HandlerName As String) As Long
+    Dim ppWebView2 As LongPtr: ppWebView2 = WebView2.ppWebView2
+    Dim hr As Long, res As Variant
+    Dim vtoken As Variant: vtoken = token
+    Dim args(0) As Variant: args(0) = vtoken
+    Dim argsPtr(0) As Variant: argsPtr(0) = VarPtr(args(0))
+    Dim argsType(0) As Integer: argsType(0) = vbLong
+    hr = DispCallFunc(ppWebView2, vTblIndex * LenB(ppWebView2), CC_STDCALL, vbLong, 1, argsType(0), argsPtr(0), res)
+    If hr = 0 Then
+        If res = 0 Then
+            remove_Handler = res
+        Else
+            Debug.Print HandlerName & " Failed. res:" & res
+            remove_Handler = res
+        End If
+    Else
+        Debug.Print HandlerName & " Failed. hr:" & hr
+        remove_Handler = hr
     End If
 End Function
 

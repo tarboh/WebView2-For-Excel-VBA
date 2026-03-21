@@ -60,8 +60,13 @@ Public Function ControllerHandler_Invoke(ByVal This As LongPtr, ByVal errorCode 
     
     ' NavigationCompleted イベントの登録
     Call UserForm1.WV2Controller.WebView2.add_NavigationStarting
+    Call UserForm1.WV2Controller.WebView2.add_ContentLoading
+    Call UserForm1.WV2Controller.WebView2.add_SourceChanged
     Call UserForm1.WV2Controller.WebView2.add_NavigationCompleted
+    
+    'Handler2を使う方式のイベント登録
     Call UserForm1.WV2Controller.WebView2.AddNavigationCompletedHandler(UserForm1.NavigationCompletedHandler)
+    
     Debug.Print "ppWebView2:", UserForm1.WV2Controller.WebView2.ppWebView2
     
     'Navigateメソッドの実行
@@ -108,6 +113,62 @@ Public Function NavigationStarting_Invoke(ByVal This As LongPtr, ByVal sender As
 
 End Function
 
+Public Function ContentLoading_Invoke(ByVal This As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
+    On Error Resume Next
+    Dim target As c3_WebView2
+    Set target = GetInstance(This)
+    
+    If Not target Is Nothing Then
+        ' クラス側のメソッドを叩く
+        target.NotifyContentLoading
+    Else
+        ' 【重要】もしターゲットが見つからない（クラスが破棄された後）なら
+        ' WebView2側に残っている「幽霊ハンドラ」の可能性があるので
+        ' 辞書からこのポインタを掃除しておく（念のため）
+        UnregisterInstance This
+    End If
+    
+    ContentLoading_Invoke = 0
+    
+End Function
+
+'SourceChanged_Invoke
+Public Function SourceChanged_Invoke(ByVal This As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
+    On Error Resume Next
+    Dim target As c3_WebView2
+    Set target = GetInstance(This)
+    
+    If Not target Is Nothing Then
+        ' クラス側のメソッドを叩く
+        target.NotifySourceChanged
+    Else
+        ' 【重要】もしターゲットが見つからない（クラスが破棄された後）なら
+        ' WebView2側に残っている「幽霊ハンドラ」の可能性があるので
+        ' 辞書からこのポインタを掃除しておく（念のため）
+        UnregisterInstance This
+    End If
+    
+    SourceChanged_Invoke = 0
+End Function
+
+'HistoryChanged_Invoke
+Public Function HistoryChanged_Invoke(ByVal This As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
+    On Error Resume Next
+    Dim target As c3_WebView2
+    Set target = GetInstance(This)
+    
+    If Not target Is Nothing Then
+        ' クラス側のメソッドを叩く
+        target.NotifyHistoryChanged
+    Else
+        ' 【重要】もしターゲットが見つからない（クラスが破棄された後）なら
+        ' WebView2側に残っている「幽霊ハンドラ」の可能性があるので
+        ' 辞書からこのポインタを掃除しておく（念のため）
+        UnregisterInstance This
+    End If
+    
+    HistoryChanged_Invoke = 0
+End Function
 Public Function NavCompleted_Invoke(ByVal This As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
     On Error Resume Next
     

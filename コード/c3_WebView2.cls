@@ -13,6 +13,9 @@ Option Explicit
 
 Public ppWebView2 As LongPtr
 Public Event NavigationStarting()
+Public Event ContentLoading()
+Public Event SourceChanged()
+Public Event HistoryChanged()
 Public Event NavigationCompleted()
 Public Event ReceiveScriptResult(ByVal result As String)
 Public LastScriptResult As String
@@ -27,6 +30,15 @@ Public cHandler As c4_Handler2
 ' --- 内部通知用 ---
 Public Sub NotifyNavigationStarting()
     RaiseEvent NavigationStarting
+End Sub
+Public Sub NotifyContentLoading()
+    RaiseEvent ContentLoading
+End Sub
+Public Sub NotifySourceChanged()
+    RaiseEvent SourceChanged
+End Sub
+Public Sub NotifyHistoryChanged()
+    RaiseEvent HistoryChanged
 End Sub
 Public Sub NotifyNavigationCompleted()
     m_IsNavigating = False
@@ -109,36 +121,56 @@ End Function
 '    /* [in] */ ICoreWebView2NavigationStartingEventHandler *eventHandler,
 '    /* [out] */ EventRegistrationToken *token) = 0;
 Public Function add_NavigationStarting() As Long
-    add_NavigationStarting = DCF_ハンドラ登録(Me, 7, "add_NavigationStarting", AddressOf NavigationStarting_Invoke)
+    add_NavigationStarting = DCF_ハンドラ登録(Me, 7, "add_NavigationStarting", AddressOf NavigationStarting_Invoke, "NavigationStartingHandler")
 End Function
-
+Public Function add_NavigationStarting_1(Handler As c4_Handler) As Long
+    'イベントハンドラのvTbleポインタを渡してトークンを受け取る形に修正したい
+End Function
 
 '8
 'virtual HRESULT STDMETHODCALLTYPE remove_NavigationStarting(
 '    /* [in] */ EventRegistrationToken token) = 0;
+Public Function remove_NavigationStarting(token As Long) As Long
+    remove_NavigationStarting = remove_Handler(Me, 8, token, "remove_NavigationStarting")
+End Function
 
 '9
 'virtual HRESULT STDMETHODCALLTYPE add_ContentLoading(
 '    /* [in] */ ICoreWebView2ContentLoadingEventHandler *eventHandler,
 '    /* [out] */ EventRegistrationToken *token) = 0;
+Public Function add_ContentLoading() As Long
+    add_ContentLoading = DCF_ハンドラ登録(Me, 9, "add_ContentLoading", AddressOf ContentLoading_Invoke, "ContentLoadingHandler")
+End Function
 
 '10
 'virtual HRESULT STDMETHODCALLTYPE remove_ContentLoading(
 '    /* [in] */ EventRegistrationToken token) = 0;
+Public Function remove_ContentLoading(token As Long) As Long
+    remove_ContentLoading = remove_Handler(Me, 10, token, "remove_ContentLoading")
+End Function
 
 '11
 'virtual HRESULT STDMETHODCALLTYPE add_SourceChanged(
 '    /* [in] */ ICoreWebView2SourceChangedEventHandler *eventHandler,
 '    /* [out] */ EventRegistrationToken *token) = 0;
+Public Function add_SourceChanged() As Long
+    add_SourceChanged = DCF_ハンドラ登録(Me, 11, "add_SourceChanged", AddressOf SourceChanged_Invoke, "SourceChangedHandler")
+End Function
 
 '12
 'virtual HRESULT STDMETHODCALLTYPE remove_SourceChanged(
 '    /* [in] */ EventRegistrationToken token) = 0;
+Public Function remove_SourceChanged(token As Long) As Long
+    remove_SourceChanged = remove_Handler(Me, 12, token, "remove_SourceChanged")
+End Function
 
 '13
 'virtual HRESULT STDMETHODCALLTYPE add_HistoryChanged(
 '    /* [in] */ ICoreWebView2HistoryChangedEventHandler *eventHandler,
 '    /* [out] */ EventRegistrationToken *token) = 0;
+Public Function add_HistoryChanged() As Long
+    add_HistoryChanged = DCF_ハンドラ登録(Me, 13, "add_HistoryChanged", AddressOf HistoryChanged_Invoke, "HistoryChangedHandler")
+End Function
 
 '14
 'virtual HRESULT STDMETHODCALLTYPE remove_HistoryChanged(
@@ -150,60 +182,7 @@ End Function
 '    /* [out] */ EventRegistrationToken *token) = 0;
 'add_NavigationCompleted
 Public Function add_NavigationCompleted() As Long
-    add_NavigationCompleted = mHelpers.DCF_ハンドラ登録(Me, 15, "add_NavigationCompleted", AddressOf NavCompleted_Invoke)
-End Function
-Public Function add_NavigationCompleted2() As Long
-        
-    Set cHandler = New c4_Handler2
-    Dim funcPtr As LongPtr, vtbloffset As Long
-    funcPtr = GetClassMethodPtr(cHandler, "NavCompleted_Invoke", vtbloffset)
-    
-    add_NavigationCompleted2 = mHelpers.DCF_ハンドラ登録(Me, 15, "add_NavigationCompleted2", funcPtr)
-
-End Function
-
-Public Function Register_NavCompleted(ByVal wb2Ptr As LongPtr, ByVal handler As c4_Handler2) As LongPtr
-    ' wb2Ptr: ICoreWebView2 の生ポインタ
-    ' handler: 捏造 VTable を持った c4_Handler2 のインスタンス
-    
-    Dim hr As Long
-    Dim pHandler As LongPtr: pHandler = handler.Pointer
-    Dim tkn As LongPtr ' トークンを受け取る変数
-    Dim res As Variant
-    
-    ' DispCallFunc 用の準備 (引数2つ)
-    ' 1: [in]  eventHandler (IUnknown*) -> pHandler
-    ' 2: [out] token (EventRegistrationToken*) -> VarPtr(tkn)
-    
-    Dim argTypes(1) As Integer
-    Dim argPtrs(1) As LongPtr
-    Dim args(1) As Variant
-    
-    ' 第1引数: Handlerのポインタそのものを渡す (ByVal)
-    args(0) = pHandler
-    argTypes(0) = vbLongPtr
-    argPtrs(0) = VarPtr(args(0))
-    
-    ' 第2引数: Tokenを受け取る変数のアドレスを渡す (ByRef相当)
-    args(1) = VarPtr(tkn)
-    argTypes(1) = vbLongPtr
-    argPtrs(1) = VarPtr(args(1))
-    
-    ' add_NavigationCompleted の VTable Index は 15 (64bit環境)
-    ' ※環境により異なる場合は要調整
-    Const IDX_ADD_NAV_COMPLETED As Long = 15
-    
-    hr = DispCallFunc(wb2Ptr, IDX_ADD_NAV_COMPLETED * LenB(wb2Ptr), _
-                      CC_STDCALL, vbLong, 2, argTypes(0), argPtrs(0), res)
-                      
-    If hr = 0 And res = 0 Then
-        ' 成功したらトークンを保持しておく
-        handler.Token = tkn
-        Register_NavCompleted = tkn
-        Debug.Print "ハンドラ登録成功！ Token: " & tkn
-    Else
-        Debug.Print "ハンドラ登録失敗。 hr: " & Hex(hr) & " / res: " & res
-    End If
+    add_NavigationCompleted = mHelpers.DCF_ハンドラ登録(Me, 15, "add_NavigationCompleted", AddressOf NavCompleted_Invoke, "NavigationCompleted")
 End Function
 
 
@@ -436,7 +415,7 @@ End Function
 ''' <summary>
 ''' NavigationCompleted イベントハンドラを登録する
 ''' </summary>
-Public Function AddNavigationCompletedHandler(handler As c4_Handler2) As Long
+Public Function AddNavigationCompletedHandler(Handler As c4_Handler2) As Long
     On Error GoTo ErrorHandler
 
     ' 1. コレクションの初期化（初回のみ）
@@ -445,16 +424,16 @@ Public Function AddNavigationCompletedHandler(handler As c4_Handler2) As Long
     ' 2. ハンドラクラスのインスタンス化
     ' ※ Initialize 内で VTable と マシン語サンクが自動生成されます
     'Set handler = New c4_Handler2
-    handler.ppWebView2 = ppWebView2
+    Handler.ppWebView2 = ppWebView2
 
     ' 3. WebView2 (COMインターフェース) への登録準備
     ' ICoreWebView2::add_NavigationCompleted の VTable Index は 15 (x64)
     Const IDX_ADD_NAV_COMPLETED As Long = 15
-    
+
     Dim pWebView2 As LongPtr: pWebView2 = Me.ppWebView2 ' 保持している ICoreWebView2 ポインタ
-    Dim pHandlerObj As LongPtr: pHandlerObj = handler.Pointer ' 捏造された FakeObjPtr
+    Dim pHandlerObj As LongPtr: pHandlerObj = Handler.Pointer ' 捏造された FakeObjPtr
     Dim tkn As LongPtr ' 登録解除用のトークンを受け取る変数
-    
+
     ' DispCallFunc の引数設定
     ' HRESULT add_NavigationCompleted(handler, [out] token)
     Dim args(1) As Variant
@@ -487,9 +466,9 @@ Public Function AddNavigationCompletedHandler(handler As c4_Handler2) As Long
     If hr = 0 Then
         If res = 0 Then
             ' 成功：トークンを保存し、インスタンスをコレクションで維持する
-            handler.Token = tkn
-            Col_Handler.Add handler, CStr(tkn) ' トークンをキーにして保持
-            
+            Handler.token = tkn
+            Col_Handler.Add Handler, CStr(tkn) ' トークンをキーにして保持
+
             Debug.Print "--- ハンドラ登録成功 ---"
             Debug.Print "Token:", tkn
             AddNavigationCompletedHandler = 0 ' S_OK
