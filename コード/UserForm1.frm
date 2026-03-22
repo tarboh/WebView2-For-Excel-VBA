@@ -46,11 +46,31 @@ End Sub
 
 Private Sub CommandButton2_Click()
     Debug.Print WV2Controller.WebView2.Source
-   
 End Sub
 
 Private Sub NavigationCompletedHandler_Invoked(ByVal pThis As LongLong, ByVal sender As LongLong, ByVal args As LongLong)
     Debug.Print "C4_Handler2_NavigationCompleted!"
+End Sub
+
+Private Sub ToggleButton1_Change()
+
+    If ToggleButton1.Value = True Then
+        WV2.Settings.AreDefaultScriptDialogsEnabled = False
+    Else
+        WV2.Settings.AreDefaultScriptDialogsEnabled = True
+    End If
+    Debug.Print WV2.Settings.AreDefaultScriptDialogsEnabled
+    WV2.Reload
+
+End Sub
+
+Private Sub WV2_ScriptDialogOpening()
+    Debug.Print "ScriptDialogOpening"
+    MsgBox "Dialog On VBA!"
+End Sub
+
+Private Sub CommandButton3_Click()
+    Call WV2Controller.WebView2.ExecuteScriptAsync("alert('Dialog On WebView2 !');")
 End Sub
 
 Private Sub UserForm_Activate()
@@ -89,6 +109,22 @@ Private Sub UserForm_QueryClose(Cancel As Integer, CloseMode As Integer)
     Set NavigationCompletedHandler = Nothing
 End Sub
 
+Private Sub WV2_ContentLoading()
+    Debug.Print "ContentLoading"
+End Sub
+
+Private Sub WV2_FrameNavigationCompleted()
+    Debug.Print "FrameNavigationCompleted"
+End Sub
+
+Private Sub WV2_FrameNavigationStarting()
+    Debug.Print "FrameNavigationStarting"
+End Sub
+
+Private Sub WV2_HistoryChanged()
+    Debug.Print "HistoryChanged"
+End Sub
+
 Private Sub WV2_NavigationCompleted()
     Dim Source As String
     Source = WV2Controller.WebView2.Source
@@ -98,6 +134,12 @@ End Sub
 
 Private Sub WV2_NavigationStarting()
     Debug.Print "NavigationStarting"
+End Sub
+
+
+
+Private Sub WV2_SourceChanged()
+    Debug.Print "SourceChanged"
 End Sub
 
 Private Sub WV2Controller_ScriptResultReceived(result As String)
