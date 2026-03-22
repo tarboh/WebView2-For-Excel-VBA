@@ -17,6 +17,10 @@ Public Event ContentLoading()
 Public Event SourceChanged()
 Public Event HistoryChanged()
 Public Event NavigationCompleted()
+Public Event FrameNavigationStarting()
+Public Event FrameNavigationCompleted()
+Public Event ScriptDialogOpening()
+
 Public Event ReceiveScriptResult(ByVal result As String)
 Public LastScriptResult As String
 
@@ -26,6 +30,8 @@ Private m_IsNavigating As Boolean
 Private m_IsScriptRunning As Boolean
 
 Public cHandler As c4_Handler2
+
+Public Settings As c6_WebView2Settings
 
 ' --- 内部通知用 ---
 Public Sub NotifyNavigationStarting()
@@ -43,6 +49,15 @@ End Sub
 Public Sub NotifyNavigationCompleted()
     m_IsNavigating = False
     RaiseEvent NavigationCompleted
+End Sub
+Public Sub NotifyFrameNavigationStarting()
+    RaiseEvent FrameNavigationStarting
+End Sub
+Public Sub NotifyFrameNavigationCompleted()
+    RaiseEvent FrameNavigationCompleted
+End Sub
+Public Sub NotifyScriptDialogOpening()
+    RaiseEvent ScriptDialogOpening
 End Sub
 
 Public Sub NotifyExecuteScriptCompleted(ByVal jsonResult As String)
@@ -84,6 +99,26 @@ End Sub
 '3
 'virtual /* [propget] */ HRESULT STDMETHODCALLTYPE get_Settings(
 '    /* [retval][out] */ ICoreWebView2Settings **settings) = 0;
+Public Function get_Settings() As Long
+    Dim psettings As LongPtr
+    Dim args(0) As Variant: args(0) = VarPtr(psettings)
+    Dim args_Ptr(0) As LongPtr: args_Ptr(0) = VarPtr(args(0))
+    Dim args_Type(0) As Integer: args_Type(0) = vbLongPtr
+    Dim hr As Long, res As Variant
+    
+    hr = DispCallFunc(ppWebView2, 3 * LenB(ppWebView2), CC_STDCALL, vbLong, 1, args_Type(0), args_Ptr(0), res)
+    If hr = 0 Then
+        Debug.Print "get_Settings Result:" & res
+        get_Settings = res
+        If res = 0 Then
+            Debug.Print "psettings:" & psettings
+            Set Settings = New c6_WebView2Settings
+            Settings.Init psettings
+        End If
+    Else
+        Debug.Print "DispCallFunc(get_Settings) Failed. HR:" & hr
+    End If
+End Function
 
 '4
 'virtual /* [propget] */ HRESULT STDMETHODCALLTYPE get_Source(
@@ -175,6 +210,9 @@ End Function
 '14
 'virtual HRESULT STDMETHODCALLTYPE remove_HistoryChanged(
 '    /* [in] */ EventRegistrationToken token) = 0;
+Public Function remove_HistoryChanged(token As Long) As Long
+    remove_HistoryChanged = remove_Handler(Me, 14, token, "remove_HistoryChanged")
+End Function
 
 '15
 'virtual HRESULT STDMETHODCALLTYPE add_NavigationCompleted(
@@ -185,37 +223,59 @@ Public Function add_NavigationCompleted() As Long
     add_NavigationCompleted = mHelpers.DCF_ハンドラ登録(Me, 15, "add_NavigationCompleted", AddressOf NavCompleted_Invoke, "NavigationCompleted")
 End Function
 
-
 '16
 'virtual HRESULT STDMETHODCALLTYPE remove_NavigationCompleted(
 '    /* [in] */ EventRegistrationToken token) = 0;
+Public Function remove_NavigationCompleted(token As Long) As Long
+    remove_NavigationCompleted = remove_Handler(Me, 16, token, "remove_NavigationCompleted")
+End Function
 
 '17
 'virtual HRESULT STDMETHODCALLTYPE add_FrameNavigationStarting(
 '    /* [in] */ ICoreWebView2NavigationStartingEventHandler *eventHandler,
 '    /* [out] */ EventRegistrationToken *token) = 0;
+Public Function add_FrameNavigationStarting() As Long
+    add_FrameNavigationStarting = mHelpers.DCF_ハンドラ登録(Me, 17, "add_FrameNavigationStarting", AddressOf FrameNavigationStarting_Invoke, "FrameNavigationStarting")
+End Function
 
 '18
 'virtual HRESULT STDMETHODCALLTYPE remove_FrameNavigationStarting(
 '    /* [in] */ EventRegistrationToken token) = 0;
+Public Function remove_FrameNavigationStarting(token As Long) As Long
+    remove_FrameNavigationStarting = remove_Handler(Me, 18, token, "remove_FrameNavigationStarting")
+End Function
 
 '19
 'virtual HRESULT STDMETHODCALLTYPE add_FrameNavigationCompleted(
 '    /* [in] */ ICoreWebView2NavigationCompletedEventHandler *eventHandler,
 '    /* [out] */ EventRegistrationToken *token) = 0;
+Public Function add_FrameNavigationCompleted() As Long
+    add_FrameNavigationCompleted = mHelpers.DCF_ハンドラ登録(Me, 19, "add_FrameNavigationCompleted", AddressOf FrameNavigationCompleted_Invoke, "FrameNavigationCompleted")
+End Function
 
 '20
 'virtual HRESULT STDMETHODCALLTYPE remove_FrameNavigationCompleted(
 '    /* [in] */ EventRegistrationToken token) = 0;
+Public Function remove_FrameNavigationCompleted(token As Long) As Long
+    remove_FrameNavigationCompleted = remove_Handler(Me, 20, token, "remove_FrameNavigationCompleted")
+End Function
 
 '21
 'virtual HRESULT STDMETHODCALLTYPE add_ScriptDialogOpening(
 '    /* [in] */ ICoreWebView2ScriptDialogOpeningEventHandler *eventHandler,
 '    /* [out] */ EventRegistrationToken *token) = 0;
+'   ※ このイベントのみ ICoreWebView2Settings:: AreDefaultScriptDialogsEnabledプロパティがFALSEに設定されている場合にトリガーされます｡
+Public Function add_ScriptDialogOpening() As Long
+    add_ScriptDialogOpening = mHelpers.DCF_ハンドラ登録(Me, 21, "add_ScriptDialogOpening", AddressOf ScriptDialogOpening_Invoke, "ScriptDialogOpening")
+End Function
 
 '22
 'virtual HRESULT STDMETHODCALLTYPE remove_ScriptDialogOpening(
 '    /* [in] */ EventRegistrationToken token) = 0;
+Public Function remove_ScriptDialogOpening(token As Long) As Long
+    remove_ScriptDialogOpening = remove_Handler(Me, 22, token, "remove_ScriptDialogOpening")
+End Function
+
 
 '23
 'virtual HRESULT STDMETHODCALLTYPE add_PermissionRequested(
@@ -225,6 +285,9 @@ End Function
 '24
 'virtual HRESULT STDMETHODCALLTYPE remove_PermissionRequested(
 '    /* [in] */ EventRegistrationToken token) = 0;
+Public Function remove_PermissionRequested(token As Long) As Long
+    remove_PermissionRequested = remove_Handler(Me, 24, token, "remove_PermissionRequested")
+End Function
 
 '25
 'virtual HRESULT STDMETHODCALLTYPE add_ProcessFailed(
@@ -234,7 +297,14 @@ End Function
 '26
 'virtual HRESULT STDMETHODCALLTYPE remove_ProcessFailed(
 '    /* [in] */ EventRegistrationToken token) = 0;
+Public Function remove_ProcessFailed(token As Long) As Long
+    remove_ProcessFailed = remove_Handler(Me, 26, token, "remove_ProcessFailed")
+End Function
 
+'※ 27,28は他のハンドラとは扱いが違うので注意。
+'   イベント発生時にコールバックを受けるのではなく、
+'   WebView2内部でJavaScriptを実行させるために、そのスクリプトを文字列として渡す関数なので
+'   Add,Removeどちらもシグネチャが異なる。
 '27
 'virtual HRESULT STDMETHODCALLTYPE AddScriptToExecuteOnDocumentCreated(
 '    /* [in] */ LPCWSTR javaScript,
@@ -243,6 +313,7 @@ End Function
 '28
 'virtual HRESULT STDMETHODCALLTYPE RemoveScriptToExecuteOnDocumentCreated(
 '    /* [in] */ LPCWSTR id) = 0;
+
 
 '29
 'virtual HRESULT STDMETHODCALLTYPE ExecuteScript(
@@ -281,6 +352,11 @@ End Function
 
 '31
 'virtual HRESULT STDMETHODCALLTYPE Reload( void) = 0;
+Public Function Reload() As Long
+    Dim hr As Long, res As Variant
+    hr = DispCallFunc(ppWebView2, 31 * LenB(ppWebView2), CC_STDCALL, vbLong, 0, 0, 0, res)
+    Reload = res
+End Function
 
 '32
 'virtual HRESULT STDMETHODCALLTYPE PostWebMessageAsJson(
