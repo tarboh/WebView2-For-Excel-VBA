@@ -20,6 +20,13 @@ Public Event NavigationCompleted()
 Public Event FrameNavigationStarting()
 Public Event FrameNavigationCompleted()
 Public Event ScriptDialogOpening()
+Public Event PermissionRequested()
+Public Event ProcessFailed()
+Public Event WebMessageReceived()
+Public Event NewWindowRequested()
+Public Event DocumentTitleChanged()
+Public Event ContainsFullScreenElementChanged()
+Public Event WebResourceRequested()
 
 Public Event ReceiveScriptResult(ByVal result As String)
 Public LastScriptResult As String
@@ -59,11 +66,31 @@ End Sub
 Public Sub NotifyScriptDialogOpening()
     RaiseEvent ScriptDialogOpening
 End Sub
-
+Public Sub NotifyPermissionRequested()
+    RaiseEvent PermissionRequested
+End Sub
+Public Sub NotifyProcessFailed()
+    RaiseEvent ProcessFailed
+End Sub
+Public Sub NotifyWebMessageReceived()
+    RaiseEvent WebMessageReceived
+End Sub
 Public Sub NotifyExecuteScriptCompleted(ByVal jsonResult As String)
     LastScriptResult = jsonResult
     m_IsScriptRunning = False
     RaiseEvent ReceiveScriptResult(jsonResult)
+End Sub
+Public Sub NotifyNewWindowRequested()
+    RaiseEvent NewWindowRequested
+End Sub
+Public Sub NotifyDocumentTitleChanged()
+    RaiseEvent DocumentTitleChanged
+End Sub
+Public Sub NotifyContainsFullScreenElementChanged()
+    RaiseEvent ContainsFullScreenElementChanged
+End Sub
+Public Sub NotifyWebResourceRequested()
+    RaiseEvent WebResourceRequested
 End Sub
 
 ' --- 後始末 ---
@@ -276,11 +303,13 @@ Public Function remove_ScriptDialogOpening(token As Long) As Long
     remove_ScriptDialogOpening = remove_Handler(Me, 22, token, "remove_ScriptDialogOpening")
 End Function
 
-
 '23
 'virtual HRESULT STDMETHODCALLTYPE add_PermissionRequested(
 '    /* [in] */ ICoreWebView2PermissionRequestedEventHandler *eventHandler,
 '    /* [out] */ EventRegistrationToken *token) = 0;
+Public Function add_PermissionRequested() As Long
+    add_PermissionRequested = mHelpers.DCF_ハンドラ登録(Me, 23, "add_PermissionRequested", AddressOf PermissionRequested_Invoke, "PermissionRequested")
+End Function
 
 '24
 'virtual HRESULT STDMETHODCALLTYPE remove_PermissionRequested(
@@ -293,6 +322,9 @@ End Function
 'virtual HRESULT STDMETHODCALLTYPE add_ProcessFailed(
 '    /* [in] */ ICoreWebView2ProcessFailedEventHandler *eventHandler,
 '    /* [out] */ EventRegistrationToken *token) = 0;
+Public Function add_ProcessFailed() As Long
+    add_ProcessFailed = mHelpers.DCF_ハンドラ登録(Me, 25, "add_ProcessFailed", AddressOf ProcessFailed_Invoke, "ProcessFailed")
+End Function
 
 '26
 'virtual HRESULT STDMETHODCALLTYPE remove_ProcessFailed(
@@ -370,10 +402,16 @@ End Function
 'virtual HRESULT STDMETHODCALLTYPE add_WebMessageReceived(
 '    /* [in] */ ICoreWebView2WebMessageReceivedEventHandler *handler,
 '    /* [out] */ EventRegistrationToken *token) = 0;
+Public Function add_WebMessageReceived() As Long
+    add_WebMessageReceived = mHelpers.DCF_ハンドラ登録(Me, 34, "add_WebMessageReceived", AddressOf WebMessageReceived_Invoke, "WebMessageReceived")
+End Function
 
 '35
 'virtual HRESULT STDMETHODCALLTYPE remove_WebMessageReceived(
 '    /* [in] */ EventRegistrationToken token) = 0;
+Public Function remove_WebMessageReceived(token As Long) As Long
+    remove_WebMessageReceived = remove_Handler(Me, 35, token, "remove_WebMessageReceived")
+End Function
 
 '36
 'virtual HRESULT STDMETHODCALLTYPE CallDevToolsProtocolMethod(
@@ -411,19 +449,30 @@ End Function
 'virtual HRESULT STDMETHODCALLTYPE add_NewWindowRequested(
 '    /* [in] */ ICoreWebView2NewWindowRequestedEventHandler *eventHandler,
 '    /* [out] */ EventRegistrationToken *token) = 0;
-
+Public Function add_NewWindowRequested() As Long
+    add_NewWindowRequested = mHelpers.DCF_ハンドラ登録(Me, 44, "add_NewWindowRequested", AddressOf NewWindowRequested_Invoke, "NewWindowRequested")
+End Function
 '45
 'virtual HRESULT STDMETHODCALLTYPE remove_NewWindowRequested(
 '    /* [in] */ EventRegistrationToken token) = 0;
+Public Function remove_NewWindowRequested(token As Long) As Long
+    remove_NewWindowRequested = remove_Handler(Me, 45, token, "remove_NewWindowRequested")
+End Function
 
 '46
 'virtual HRESULT STDMETHODCALLTYPE add_DocumentTitleChanged(
 '    /* [in] */ ICoreWebView2DocumentTitleChangedEventHandler *eventHandler,
 '    /* [out] */ EventRegistrationToken *token) = 0;
+Public Function add_DocumentTitleChanged() As Long
+    add_DocumentTitleChanged = mHelpers.DCF_ハンドラ登録(Me, 46, "add_DocumentTitleChanged", AddressOf DocumentTitleChanged_Invoke, "DocumentTitleChanged")
+End Function
 
 '47
 'virtual HRESULT STDMETHODCALLTYPE remove_DocumentTitleChanged(
 '    /* [in] */ EventRegistrationToken token) = 0;
+Public Function remove_DocumentTitleChanged(token As Long) As Long
+    remove_DocumentTitleChanged = remove_Handler(Me, 47, token, "remove_DocumentTitleChanged")
+End Function
 
 '48
 'virtual /* [propget] */ HRESULT STDMETHODCALLTYPE get_DocumentTitle(
@@ -448,23 +497,40 @@ End Function
 'virtual HRESULT STDMETHODCALLTYPE add_ContainsFullScreenElementChanged(
 '    /* [in] */ ICoreWebView2ContainsFullScreenElementChangedEventHandler *eventHandler,
 '    /* [out] */ EventRegistrationToken *token) = 0;
-
+Public Function add_ContainsFullScreenElementChanged() As Long
+    add_ContainsFullScreenElementChanged = mHelpers.DCF_ハンドラ登録(Me, 52, "add_ContainsFullScreenElementChanged", AddressOf ContainsFullScreenElementChanged_Invoke, "ContainsFullScreenElementChanged")
+End Function
 '53
 'virtual HRESULT STDMETHODCALLTYPE remove_ContainsFullScreenElementChanged(
 '    /* [in] */ EventRegistrationToken token) = 0;
+Public Function remove_ContainsFullScreenElementChanged(token As Long) As Long
+    remove_ContainsFullScreenElementChanged = remove_Handler(Me, 53, token, "remove_ContainsFullScreenElementChanged")
+End Function
+
 
 '54
 'virtual /* [propget] */ HRESULT STDMETHODCALLTYPE get_ContainsFullScreenElement(
 '    /* [retval][out] */ BOOL *containsFullScreenElement) = 0;
 
+
 '55
 'virtual HRESULT STDMETHODCALLTYPE add_WebResourceRequested(
 '    /* [in] */ ICoreWebView2WebResourceRequestedEventHandler *eventHandler,
 '    /* [out] */ EventRegistrationToken *token) = 0;
-
+'WebResourceRequested を有効にするには、単にハンドラを登録するだけでなく、
+'先に AddWebResourceRequestedFilter を呼び出して、
+'「どのURL（例: * ですべて、または特定のドメイン）」をインターセプトするかをブラウザに教えてあげる必要があります。
+'これをしないとイベントが発火しません。
+Public Function add_WebResourceRequested() As Long
+    add_WebResourceRequested = mHelpers.DCF_ハンドラ登録(Me, 55, "add_WebResourceRequested", AddressOf WebResourceRequested_Invoke, "WebResourceRequested")
+End Function
 '56
 'virtual HRESULT STDMETHODCALLTYPE remove_WebResourceRequested(
 '    /* [in] */ EventRegistrationToken token) = 0;
+Public Function remove_WebResourceRequested(token As Long) As Long
+    remove_WebResourceRequested = remove_Handler(Me, 56, token, "remove_WebResourceRequested")
+End Function
+
 
 '57
 'virtual HRESULT STDMETHODCALLTYPE AddWebResourceRequestedFilter(
@@ -484,6 +550,9 @@ End Function
 '60
 'virtual HRESULT STDMETHODCALLTYPE remove_WindowCloseRequested(
 '    /* [in] */ EventRegistrationToken token) = 0;
+Public Function remove_WindowCloseRequested(token As Long) As Long
+    remove_WindowCloseRequested = remove_Handler(Me, 60, token, "remove_WindowCloseRequested")
+End Function
 '
 '};
 

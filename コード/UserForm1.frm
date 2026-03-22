@@ -64,6 +64,30 @@ Private Sub ToggleButton1_Change()
 
 End Sub
 
+Private Sub WV2_ContainsFullScreenElementChanged()
+    Debug.Print "ContainsFullScreenElementChanged"
+End Sub
+
+Private Sub WV2_DocumentTitleChanged()
+    Debug.Print "DocumentTitleChanged"
+End Sub
+
+Private Sub WV2_NewWindowRequested()
+    Debug.Print "NewWindowRequested"
+End Sub
+
+Private Sub WV2_PermissionRequested()
+    Debug.Print "PermissionRequested"
+End Sub
+
+Private Sub WV2_ProcessFailed()
+    Debug.Print "ProcessFailed"
+End Sub
+
+Private Sub WV2_ReceiveScriptResult(ByVal result As String)
+    Debug.Print result
+End Sub
+
 Private Sub WV2_ScriptDialogOpening()
     Debug.Print "ScriptDialogOpening"
     MsgBox "Dialog On VBA!"
@@ -140,6 +164,14 @@ End Sub
 
 Private Sub WV2_SourceChanged()
     Debug.Print "SourceChanged"
+End Sub
+
+Private Sub WV2_WebMessageReceived()
+    Debug.Print "WebMessageReceived"
+End Sub
+
+Private Sub WV2_WebResourceRequested()
+    Debug.Print "WebResourceRequested"
 End Sub
 
 Private Sub WV2Controller_ScriptResultReceived(result As String)

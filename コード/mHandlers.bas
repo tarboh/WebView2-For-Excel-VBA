@@ -72,7 +72,14 @@ Public Function ControllerHandler_Invoke(ByVal This As LongPtr, ByVal errorCode 
     Call UserForm1.WV2Controller.WebView2.add_NavigationCompleted
     Call UserForm1.WV2Controller.WebView2.add_FrameNavigationStarting
     Call UserForm1.WV2Controller.WebView2.add_FrameNavigationCompleted
-    Debug.Print "add_ScriptDialogOpening:", UserForm1.WV2Controller.WebView2.add_ScriptDialogOpening
+    Call UserForm1.WV2Controller.WebView2.add_ScriptDialogOpening
+    Call UserForm1.WV2Controller.WebView2.add_PermissionRequested
+    Call UserForm1.WV2Controller.WebView2.add_ProcessFailed
+    Call UserForm1.WV2Controller.WebView2.add_WebMessageReceived
+    Call UserForm1.WV2Controller.WebView2.add_NewWindowRequested
+    Call UserForm1.WV2Controller.WebView2.add_DocumentTitleChanged
+    Call UserForm1.WV2Controller.WebView2.add_ContainsFullScreenElementChanged
+    Call UserForm1.WV2Controller.WebView2.add_WebResourceRequested
     
     'Handler2を使う方式のイベント登録
     Call UserForm1.WV2Controller.WebView2.AddNavigationCompletedHandler(UserForm1.NavigationCompletedHandler)
@@ -252,6 +259,66 @@ Public Function ScriptDialogOpening_Invoke(ByVal This As LongPtr, ByVal sender A
     
     ScriptDialogOpening_Invoke = 0
 End Function
+'PermissionRequested_Invoke
+Public Function PermissionRequested_Invoke(ByVal This As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
+    On Error Resume Next
+    
+    Dim target As c3_WebView2
+    Set target = GetInstance(This)
+    
+    If Not target Is Nothing Then
+        ' クラス側のメソッドを叩く
+        target.NotifyPermissionRequested
+    Else
+        ' 【重要】もしターゲットが見つからない（クラスが破棄された後）なら
+        ' WebView2側に残っている「幽霊ハンドラ」の可能性があるので
+        ' 辞書からこのポインタを掃除しておく（念のため）
+        UnregisterInstance This
+    End If
+    
+    PermissionRequested_Invoke = 0
+End Function
+
+'ProcessFailed
+Public Function ProcessFailed_Invoke(ByVal This As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
+    On Error Resume Next
+    
+    Dim target As c3_WebView2
+    Set target = GetInstance(This)
+    
+    If Not target Is Nothing Then
+        ' クラス側のメソッドを叩く
+        target.NotifyProcessFailed
+    Else
+        ' 【重要】もしターゲットが見つからない（クラスが破棄された後）なら
+        ' WebView2側に残っている「幽霊ハンドラ」の可能性があるので
+        ' 辞書からこのポインタを掃除しておく（念のため）
+        UnregisterInstance This
+    End If
+    
+    ProcessFailed_Invoke = 0
+End Function
+
+'WebMessageReceived
+Public Function WebMessageReceived_Invoke(ByVal This As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
+    On Error Resume Next
+    
+    Dim target As c3_WebView2
+    Set target = GetInstance(This)
+    
+    If Not target Is Nothing Then
+        ' クラス側のメソッドを叩く
+        target.NotifyWebMessageReceived
+    Else
+        ' 【重要】もしターゲットが見つからない（クラスが破棄された後）なら
+        ' WebView2側に残っている「幽霊ハンドラ」の可能性があるので
+        ' 辞書からこのポインタを掃除しておく（念のため）
+        UnregisterInstance This
+    End If
+    
+    WebMessageReceived_Invoke = 0
+End Function
+
 
 ' ExecuteScript完了時のコールバック
 ' Index 3: Invoke(HRESULT errorCode, LPCWSTR resultObjectAsJson)
@@ -267,6 +334,83 @@ Public Function ExecuteScript_Invoke(ByVal This As LongPtr, ByVal errorCode As L
         UnregisterInstance This
     End If
     ExecuteScript_Invoke = 0
+End Function
+
+'NewWindowRequested_Invoke
+Public Function NewWindowRequested_Invoke(ByVal This As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
+    On Error Resume Next
+    
+    Dim target As c3_WebView2
+    Set target = GetInstance(This)
+    
+    If Not target Is Nothing Then
+        ' クラス側のメソッドを叩く
+        target.NotifyNewWindowRequested
+    Else
+        ' 【重要】もしターゲットが見つからない（クラスが破棄された後）なら
+        ' WebView2側に残っている「幽霊ハンドラ」の可能性があるので
+        ' 辞書からこのポインタを掃除しておく（念のため）
+        UnregisterInstance This
+    End If
+    
+    NewWindowRequested_Invoke = 0
+End Function
+'DocumentTitleChanged
+Public Function DocumentTitleChanged_Invoke(ByVal This As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
+    On Error Resume Next
+    
+    Dim target As c3_WebView2
+    Set target = GetInstance(This)
+    
+    If Not target Is Nothing Then
+        ' クラス側のメソッドを叩く
+        target.NotifyDocumentTitleChanged
+    Else
+        ' 【重要】もしターゲットが見つからない（クラスが破棄された後）なら
+        ' WebView2側に残っている「幽霊ハンドラ」の可能性があるので
+        ' 辞書からこのポインタを掃除しておく（念のため）
+        UnregisterInstance This
+    End If
+    
+    DocumentTitleChanged_Invoke = 0
+End Function
+'ContainsFullScreenElementChanged
+Public Function ContainsFullScreenElementChanged_Invoke(ByVal This As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
+    On Error Resume Next
+    
+    Dim target As c3_WebView2
+    Set target = GetInstance(This)
+    
+    If Not target Is Nothing Then
+        ' クラス側のメソッドを叩く
+        target.NotifyContainsFullScreenElementChanged
+    Else
+        ' 【重要】もしターゲットが見つからない（クラスが破棄された後）なら
+        ' WebView2側に残っている「幽霊ハンドラ」の可能性があるので
+        ' 辞書からこのポインタを掃除しておく（念のため）
+        UnregisterInstance This
+    End If
+    
+    ContainsFullScreenElementChanged_Invoke = 0
+End Function
+'WebResourceRequested
+Public Function WebResourceRequested_Invoke(ByVal This As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
+    On Error Resume Next
+    
+    Dim target As c3_WebView2
+    Set target = GetInstance(This)
+    
+    If Not target Is Nothing Then
+        ' クラス側のメソッドを叩く
+        target.NotifyWebResourceRequested
+    Else
+        ' 【重要】もしターゲットが見つからない（クラスが破棄された後）なら
+        ' WebView2側に残っている「幽霊ハンドラ」の可能性があるので
+        ' 辞書からこのポインタを掃除しておく（念のため）
+        UnregisterInstance This
+    End If
+    
+    WebResourceRequested_Invoke = 0
 End Function
 
 ' ヘルパー：PtrToStrW (UnicodeポインタをVBA文字列へ)
