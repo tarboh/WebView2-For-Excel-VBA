@@ -58,11 +58,21 @@ Public Function ControllerHandler_Invoke(ByVal This As LongPtr, ByVal errorCode 
     Call UserForm1.WV2Controller.GetWebView2
     Set UserForm1.WV2 = UserForm1.WV2Controller.WebView2
     
+    ' Get Settings
+    Call UserForm1.WV2Controller.WebView2.get_Settings
+    
+    ' Set ScriptDialogsEnabled Property
+    UserForm1.WV2Controller.WebView2.Settings.AreDefaultScriptDialogsEnabled = True
+    
     ' NavigationCompleted イベントの登録
     Call UserForm1.WV2Controller.WebView2.add_NavigationStarting
     Call UserForm1.WV2Controller.WebView2.add_ContentLoading
     Call UserForm1.WV2Controller.WebView2.add_SourceChanged
+    Call UserForm1.WV2Controller.WebView2.add_HistoryChanged
     Call UserForm1.WV2Controller.WebView2.add_NavigationCompleted
+    Call UserForm1.WV2Controller.WebView2.add_FrameNavigationStarting
+    Call UserForm1.WV2Controller.WebView2.add_FrameNavigationCompleted
+    Debug.Print "add_ScriptDialogOpening:", UserForm1.WV2Controller.WebView2.add_ScriptDialogOpening
     
     'Handler2を使う方式のイベント登録
     Call UserForm1.WV2Controller.WebView2.AddNavigationCompletedHandler(UserForm1.NavigationCompletedHandler)
@@ -132,7 +142,6 @@ Public Function ContentLoading_Invoke(ByVal This As LongPtr, ByVal sender As Lon
     
 End Function
 
-'SourceChanged_Invoke
 Public Function SourceChanged_Invoke(ByVal This As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
     On Error Resume Next
     Dim target As c3_WebView2
@@ -151,7 +160,6 @@ Public Function SourceChanged_Invoke(ByVal This As LongPtr, ByVal sender As Long
     SourceChanged_Invoke = 0
 End Function
 
-'HistoryChanged_Invoke
 Public Function HistoryChanged_Invoke(ByVal This As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
     On Error Resume Next
     Dim target As c3_WebView2
@@ -186,6 +194,63 @@ Public Function NavCompleted_Invoke(ByVal This As LongPtr, ByVal sender As LongP
     End If
     
     NavCompleted_Invoke = 0
+End Function
+
+Public Function FrameNavigationStarting_Invoke(ByVal This As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
+    On Error Resume Next
+    
+    Dim target As c3_WebView2
+    Set target = GetInstance(This)
+    
+    If Not target Is Nothing Then
+        ' クラス側のメソッドを叩く
+        target.NotifyFrameNavigationStarting
+    Else
+        ' 【重要】もしターゲットが見つからない（クラスが破棄された後）なら
+        ' WebView2側に残っている「幽霊ハンドラ」の可能性があるので
+        ' 辞書からこのポインタを掃除しておく（念のため）
+        UnregisterInstance This
+    End If
+    
+    FrameNavigationStarting_Invoke = 0
+End Function
+'FrameNavigationCompleted_Invoke
+Public Function FrameNavigationCompleted_Invoke(ByVal This As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
+    On Error Resume Next
+    
+    Dim target As c3_WebView2
+    Set target = GetInstance(This)
+    
+    If Not target Is Nothing Then
+        ' クラス側のメソッドを叩く
+        target.NotifyFrameNavigationCompleted
+    Else
+        ' 【重要】もしターゲットが見つからない（クラスが破棄された後）なら
+        ' WebView2側に残っている「幽霊ハンドラ」の可能性があるので
+        ' 辞書からこのポインタを掃除しておく（念のため）
+        UnregisterInstance This
+    End If
+    
+    FrameNavigationCompleted_Invoke = 0
+End Function
+'ScriptDialogOpening
+Public Function ScriptDialogOpening_Invoke(ByVal This As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
+    On Error Resume Next
+    
+    Dim target As c3_WebView2
+    Set target = GetInstance(This)
+    
+    If Not target Is Nothing Then
+        ' クラス側のメソッドを叩く
+        target.NotifyScriptDialogOpening
+    Else
+        ' 【重要】もしターゲットが見つからない（クラスが破棄された後）なら
+        ' WebView2側に残っている「幽霊ハンドラ」の可能性があるので
+        ' 辞書からこのポインタを掃除しておく（念のため）
+        UnregisterInstance This
+    End If
+    
+    ScriptDialogOpening_Invoke = 0
 End Function
 
 ' ExecuteScript完了時のコールバック
