@@ -9,7 +9,8 @@ Attribute VB_PredeclaredId = False
 Attribute VB_Exposed = False
 Option Explicit
 
-Function ä÷êî1(value As Long) As Long
-    Debug.Print "c5_ObjectForJS.ä÷êî1Ç™åƒÇŒÇÍÇ‹ÇµÇΩ"
-    ä÷êî1 = value * 10
+' JavaScript-callable method: Multiplies the passed value by 10 and returns it
+Function Func1(ByVal Value As Long) As Long
+    Debug.Print "c5_ObjectForJS.Func1 was called."
+    Func1 = Value * 10
 End Function

@@ -1,22 +1,22 @@
 Attribute VB_Name = "mHandleManager"
-' --- 標準モジュール：HandlerManager ---
+' --- Standard Module: HandlerManager ---
 Option Explicit
 Public m_InstanceMap As Dictionary
 
-' 登録：ハンドラの住所をキーにして、クラスインスタンスを紐付ける
+' Register: Map a class instance using the handler's memory address as the key
 Public Sub RegisterInstance(ByVal pHandler As LongPtr, ByRef obj As Object)
-    If m_InstanceMap Is Nothing Then Set m_InstanceMap = New Dictionary 'CreateObject("Scripting.Dictionary")
+    If m_InstanceMap Is Nothing Then Set m_InstanceMap = New Dictionary
     m_InstanceMap.Add CStr(pHandler), obj
 End Sub
 
-' 削除：解放時に呼び出す
+' Unregister: Call this when releasing the handler to prevent memory leaks
 Public Sub UnregisterInstance(ByVal pHandler As LongPtr)
     If Not m_InstanceMap Is Nothing Then
         If m_InstanceMap.Exists(CStr(pHandler)) Then m_InstanceMap.Remove CStr(pHandler)
     End If
 End Sub
 
-' 逆引き：Invoke 内で使用
+' Lookup: Used inside the Invoke method to retrieve the instance from the pointer
 Public Function GetInstance(ByVal pHandler As LongPtr) As Object
     If Not m_InstanceMap Is Nothing Then
         If m_InstanceMap.Exists(CStr(pHandler)) Then

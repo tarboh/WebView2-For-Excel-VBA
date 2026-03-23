@@ -24,9 +24,12 @@ Public WithEvents WV2Controller As c2_WebView2Controller
 Attribute WV2Controller.VB_VarHelpID = -1
 Public WithEvents WV2 As c3_WebView2
 Attribute WV2.VB_VarHelpID = -1
+Public c5 As New c5_ObjectForJS
+
+#If Win64 Then
 Public WithEvents NavigationCompletedHandler As c4_Handler2
 Attribute NavigationCompletedHandler.VB_VarHelpID = -1
-Public c5 As New c5_ObjectForJS
+#End If
 
 Private Sub CommandButton1_Click()
     
@@ -48,9 +51,11 @@ Private Sub CommandButton2_Click()
     Debug.Print WV2Controller.WebView2.Source
 End Sub
 
+#If Win64 Then
 Private Sub NavigationCompletedHandler_Invoked(ByVal pThis As LongLong, ByVal sender As LongLong, ByVal args As LongLong)
     Debug.Print "C4_Handler2_NavigationCompleted!"
 End Sub
+#End If
 
 Private Sub ToggleButton1_Change()
 
@@ -98,15 +103,17 @@ Private Sub CommandButton3_Click()
 End Sub
 
 Private Sub UserForm_Activate()
+    #If Win64 Then
     Set NavigationCompletedHandler = New c4_Handler2
-    Call WebView2錬成
+    #End If
+    Call Create_WebView2
 End Sub
 
-'フォームにWebView2を生成する処理
-Public Sub WebView2錬成()
+'Create WebView2 In Frame
+Public Sub Create_WebView2()
 
-    '隠しプロパティを使えば直接ウィンドウハンドルが取得できる
-    '※KallunWillockさんからのIssueで教えてもらいました。ありがとう。
+    'Use Hidden Property
+    'Notified by KallunWillock via GitHub Issue. Thank you!
     TargetHwnd = Frame1.[_GethWnd]
     Debug.Print TargetHwnd
     
@@ -115,22 +122,24 @@ Public Sub WebView2錬成()
 End Sub
 
 Private Sub UserForm_QueryClose(Cancel As Integer, CloseMode As Integer)
-    ' 1. まず WebView2 本体のプロセスを止める
+    ' 1. Shut down the WebView2 process first
     Call WV2Controller.CloseWebView2
     
-    ' 2. 重要：Dictionary 等の参照を明示的に外す
+    ' 2. CRITICAL: Explicitly release references like Dictionaries
     If Not WV2Controller.WebView2 Is Nothing Then
         WV2Controller.WebView2.Finalize
     End If
     
-    '現状、辞書を解放しないとTerminateが発動しない
+    ' Currently, Class_Terminate won't fire unless the dictionary is released
     Set m_InstanceMap = Nothing
     
-    ' 3. 最後に参照を切る
+    ' 3. Finally, release the main controller reference
     Set WV2Controller = Nothing
     
-    'サンクを領域展開しているハンドラを消す
+    #If Win64 Then
+    ' Release the handler that allocates/holds the Thunk memory area
     Set NavigationCompletedHandler = Nothing
+    #End If
 End Sub
 
 Private Sub WV2_ContentLoading()
@@ -152,15 +161,13 @@ End Sub
 Private Sub WV2_NavigationCompleted()
     Dim Source As String
     Source = WV2Controller.WebView2.Source
-    Debug.Print "（標準モジュール由来）NavigationCompleted Source:" & Source
+    Debug.Print "NavigationCompleted(From Standard Module) Source:" & Source
     TextBox1.Text = Source
 End Sub
 
 Private Sub WV2_NavigationStarting()
     Debug.Print "NavigationStarting"
 End Sub
-
-
 
 Private Sub WV2_SourceChanged()
     Debug.Print "SourceChanged"
@@ -174,18 +181,18 @@ Private Sub WV2_WebResourceRequested()
     Debug.Print "WebResourceRequested"
 End Sub
 
-Private Sub WV2Controller_ScriptResultReceived(result As String)
+Private Sub WV2Controller_ScriptResultReceived(ByVal result As String)
 
     Debug.Print "ScriptResultReceived:", result
     TextBox1.Text = WV2Controller.WebView2.Source
 
 End Sub
 
-Private Sub WV2Controller_WebVeiw2ReadyCompleted()
+Private Sub WV2Controller_WebView2ReadyCompleted()
 
     Call WV2.AddHostObjectToScript("VBAObj", c5)
 
-    Call WV2Controller.WebView2.NavigateAsync("https://www.google.co.jp")
+    Call WV2Controller.WebView2.NavigateAsync("https://www.google.com/")
 
 End Sub
 

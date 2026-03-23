@@ -7,8 +7,7 @@ Attribute VB_GlobalNameSpace = False
 Attribute VB_Creatable = False
 Attribute VB_PredeclaredId = False
 Attribute VB_Exposed = False
-'Public Class c2_WebView2Controller
-
+' Class Module: c2_WebView2Controller
 Option Explicit
 
 Public pController As LongPtr
@@ -16,97 +15,76 @@ Public pController As LongPtr
 Public WithEvents WebView2 As c3_WebView2
 Attribute WebView2.VB_VarHelpID = -1
 Public Event NavigationCompleted()
-Public Event ScriptResultReceived(result As String)
+Public Event ScriptResultReceived(ByVal result As String)
+Public Event WebView2ReadyCompleted()
 
-Public Event WebVeiw2ReadyCompleted()
-
-
-'ここから下がWevView2Controllerの関数
-
-'get_IsVisible(VtblIndex:3)
+' ---------------------------------------------------------
+'  ICoreWebView2Controller::get_IsVisible (VTable Index 3)
+' ---------------------------------------------------------
 Public Property Get IsVisible() As Boolean
-
-    Dim value As Long ' 戻り値（BOOL）を受け取る変数
-    Dim hr As Long     'DispCallFuncのHRESULT
-    Dim res As Variant 'put_IsVisibleのHRESULT
+    Dim Value As Long ' BOOL variable to receive output
+    Dim hr As Long    ' DispCallFunc HRESULT
+    Dim res As Variant ' Method HRESULT
     
-    ' 引数0: 値を書き込んでもらうための「変数valueのアドレス」を渡す
-    Dim vArgs(0) As Variant: vArgs(0) = VarPtr(value)
+    Dim vArgs(0) As Variant: vArgs(0) = VarPtr(Value)
     Dim vTypes(0) As Integer: vTypes(0) = vbLongPtr
     Dim vPtrs(0) As LongPtr: vPtrs(0) = VarPtr(vArgs(0))
     
-    ' Index 3: get_IsVisible を実行
     hr = DispCallFunc(pController, 3 * LenB(pController), CC_STDCALL, vbLong, 1, vTypes(0), vPtrs(0), res)
     
     If hr = 0 Then
         If res = 0 Then
-            If value <> 0 Then
-                IsVisible = True
-            Else
-                IsVisible = False
-            End If
+            IsVisible = (Value <> 0)
         Else
-            'なんかエラー吐かせる
-            Debug.Print "WebView2オブジェクトのIsVisibleプロパティの取得に失敗しました。"
+            Debug.Print "Failed to get IsVisible property. res: " & res
         End If
     Else
-        '致命的失敗
-        Debug.Print "WebView2オブジェクトのIsVisibleプロパティを取得しようとしましたが、それ以前にDispCallFuncが失敗しました。"
+        Debug.Print "DispCallFunc failed during get_IsVisible. hr: " & hr
     End If
-
 End Property
 
-'put_IsVisible(VtblIndex:4)
-Public Property Let IsVisible(value As Boolean)
-
-    Dim hr As Long     'DispCallFuncのHRESULT
-    Dim res As Variant 'put_IsVisibleのHRESULT
+' ---------------------------------------------------------
+'  ICoreWebView2Controller::put_IsVisible (VTable Index 4)
+' ---------------------------------------------------------
+Public Property Let IsVisible(ByVal Value As Boolean)
+    Dim hr As Long
+    Dim res As Variant
 
     Dim vArgs(0) As Variant
-    vArgs(0) = CLng(IIf(value, 1, 0))
+    vArgs(0) = CLng(IIf(Value, 1, 0))
     Dim vTypes(0) As Integer: vTypes(0) = vbLong
     Dim vPtrs(0) As LongPtr: vPtrs(0) = VarPtr(vArgs(0))
+    
     hr = DispCallFunc(pController, 4 * LenB(pController), CC_STDCALL, vbLong, 1, vTypes(0), vPtrs(0), res)
     
-    If hr = 0 Then
-        If res = 0 Then
-        Else
-            Debug.Print "put_IsVisible Result: " & res
-        End If
-    Else
-        '致命的失敗
-        Debug.Print "WebView2オブジェクトのIsVisibleプロパティを取得しようとしましたが、それ以前にDispCallFuncが失敗しました。"
+    If hr <> 0 Or res <> 0 Then
+        Debug.Print "Failed put_IsVisible. hr: " & hr & " res: " & res
     End If
-
 End Property
 
-'put_IsVisible の本質的な役割
-'このメソッドは、WebView2の「親ウィンドウ（UserForm等）に対する表示状態のスイッチ」です。
+' --- Architectural Notes for put_IsVisible ---
+' This method acts as a drawing toggle between WebView2 and the parent window (e.g., UserForm).
 '
-'1. 描画プロセスの起動スイッチ
-'WebView2は、CreateCoreWebView2Controller で生成された直後は、メモリ上に存在していても「描画プロセス（Renderer）」がフル稼働していません。
-'put_IsVisible = True (1) を叩いた瞬間に、WebView2は親ウィンドウのハンドル（HWND）に対して自分の描画内容を転送し始めます。
+' 1. Rendering Process Ignition
+'    Even when initialized via CreateCoreWebView2Controller, the internal rendering process
+'    doesn't run at full capacity. Setting it to True (1) kicks off pixel transfer to the parent HWND.
 '
-'2. 親ウィンドウとの「親子関係」の確定
-'これを True にすることで、Win32 APIレベルでの「子ウィンドウ」としての振る舞いが本格化します。
+' 2. Parent-Child Relationship Enforcement
+'    Setting it to True finalizes the Win32 behavior as a proper child window.
+'    - True: Redraws its client area automatically as the parent redraws.
+'    - False: Suspends visual rendering to save CPU/GPU (JavaScript keeps running in background).
 '
-'True (1): 親ウィンドウが再描画されるたびに、WebView2も自分の領域を再描画します。
-'False (0): WebView2は描画を停止し、リソース消費を抑えます。ただし、バックグラウンドでJavaScriptなどは動き続けます。
-'実装上の重要な挙動
-'① put_Bounds との順序
-'通常、put_Bounds（サイズ設定）を先に呼び出してから put_IsVisible(True) を呼び出します。
-'もしサイズが 0x0 の状態で Visible = True にしても何も見えません。逆に、サイズを設定した後に Visible = True にしないと、領域が真っ白（または親フォームの背景色のまま）になります。
+' 3. Implementation Order
+'    Typically, you call put_Bounds (sizing) first, then put_IsVisible(True).
+'    If size is 0x0, making it Visible yields a blank screen.
 '
-'② フォーカスとの連動
-'put_IsVisible(True) にすると、WebView2はキーボードフォーカスを受け取れる状態になります。逆に False にすると、マウスイベントやキーボードイベントを一切受け付けなくなります。
-'
-'③ ウィンドウメッセージのハンドリング
-'WebView2は内部で WM_SHOWWINDOW などのメッセージをこのメソッド経由で処理しています。VBAで UserForm.Hide などをした際、WebView2側が「自分も隠れた」と正しく認識させるためには、本来はこのメソッドを False にするのが正攻法です。
+' 4. Focus & Input
+'    Keyboard and mouse events are ignored unless IsVisible is True.
 
-
-' get_CoreWebView2 (Index 25) 専用：ポインタのポインタを渡して実体を取得
+' ---------------------------------------------------------
+'  ICoreWebView2Controller::get_CoreWebView2 (VTable Index 25)
+' ---------------------------------------------------------
 Public Function GetWebView2() As c3_WebView2
-
     Dim ppWebView2 As LongPtr
     Dim args(0) As Variant
     Dim argTypes(0) As Integer
@@ -115,63 +93,44 @@ Public Function GetWebView2() As c3_WebView2
     Dim hr As Long
     Dim result As Variant
 
-    ' 受け取り用変数のアドレスを渡す
     args(0) = VarPtr(ppWebView2)
-    argTypes(0) = vbLongPtr ' 64bitならvbLongLong(20), 32bitならvbLong(3)
+    argTypes(0) = vbLongPtr
     argPtrs(0) = VarPtr(args(0))
  
     hr = DispCallFunc(pController, 25 * LenB(pController), CC_STDCALL, vbLong, 1, argTypes(0), argPtrs(0), result)
-    If hr = 0 Then
     
-        If result = 0 Then
-        
-            Dim WV2 As New c3_WebView2
-            WV2.ppWebView2 = ppWebView2
-            'Set GetWebView2 = WV2
-            Set WebView2 = WV2
-        
-        Else
-        
-            Debug.Print "get_CoreWebView2が失敗しました。result:", result
-        
-        End If
-    
+    If hr = 0 And result = 0 Then
+        Dim WV2 As New c3_WebView2
+        WV2.ppWebView2 = ppWebView2
+        Set WebView2 = WV2
     Else
-    
-        Debug.Print "get_CoreWebView2を実行しようとしましたが、そもそもDispCallFuncが失敗しました。HR:", hr
-    
+        Debug.Print "get_CoreWebView2 failed. hr: " & hr & " result: " & result
     End If
-
 End Function
 
-
 Public Sub ReadyCompleted()
-    RaiseEvent WebVeiw2ReadyCompleted
+    RaiseEvent WebView2ReadyCompleted
 End Sub
 
+' ---------------------------------------------------------
+'  ICoreWebView2Controller::Close (VTable Index 24)
+' ---------------------------------------------------------
 Public Sub CloseWebView2()
     Dim hr As Long
     Dim result As Variant
 
-    ' pController は Environment::CreateCoreWebView2Controller
-    ' の完了ハンドラ (Invoke) で受け取ったポインタです。
     If pController = 0 Then Exit Sub
 
-    ' ICoreWebView2Controller::Close (Index 24) を実行
-    ' これにより、関連する msedgewebview2.exe プロセスが終了します。
     hr = DispCallFunc(pController, 24 * LenB(pController), CC_STDCALL, vbLong, 0, 0, 0, result)
 
     If hr = 0 Then
         Debug.Print "WebView2 Controller Closed."
     Else
-        Debug.Print "Close Failed. HR: " & hr
+        Debug.Print "Close Failed. hr: " & hr
     End If
 
-    ' ポインタを破棄して、VBA側からも参照を完全に切る
-    ' これを忘れると、VBA側がポインタを「握ったまま」になり、不安定になります。
-    Set WebView2 = Nothing 'オブジェクト自体の破棄によりポインタも消える・・・はず
+    Set WebView2 = Nothing
     pController = 0
-    'pKeepEnv = 0
 End Sub
 
 Private Sub WebView2_NavigationCompleted()
@@ -181,4 +140,3 @@ End Sub
 Private Sub WebView2_ReceiveScriptResult(ByVal result As String)
     RaiseEvent ScriptResultReceived(result)
 End Sub
-

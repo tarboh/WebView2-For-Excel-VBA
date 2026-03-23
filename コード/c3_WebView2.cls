@@ -36,11 +36,13 @@ Public Col_Handler As New Collection
 Private m_IsNavigating As Boolean
 Private m_IsScriptRunning As Boolean
 
+#If Win64 Then
 Public cHandler As c4_Handler2
+#End If
 
 Public Settings As c6_WebView2Settings
 
-' --- 内部通知用 ---
+' --- For internal notifications ---
 Public Sub NotifyNavigationStarting()
     RaiseEvent NavigationStarting
 End Sub
@@ -93,7 +95,7 @@ Public Sub NotifyWebResourceRequested()
     RaiseEvent WebResourceRequested
 End Sub
 
-' --- 後始末 ---
+' --- Cleaning up ---
 Public Sub Finalize()
     Dim h As c4_Handler
     On Error Resume Next
@@ -108,7 +110,7 @@ Private Sub Class_Terminate()
     Debug.Print "c3_WebView2 Terminated."
 End Sub
 
-' --- 待機用ヘルパー ---
+' --- Standby helper ---
 Private Sub WaitNavigation(ByVal TimeoutSec As Double)
     Dim Start As Double: Start = Timer
     Do While m_IsNavigating
@@ -151,19 +153,19 @@ End Function
 'virtual /* [propget] */ HRESULT STDMETHODCALLTYPE get_Source(
 '    /* [retval][out] */ LPWSTR *uri) = 0;
 Public Property Get Source() As String
-    '現在のURLを取得する
-    Source = DCF_引数無しで文字列を取得(ppWebView2, 4, "get_Source")
+    'Get current URL
+    Source = DCF_GetStringNoArgs(ppWebView2, 4, "get_Source")
 End Property
 
 '5
 'virtual HRESULT STDMETHODCALLTYPE Navigate(
 '    /* [in] */ LPCWSTR uri) = 0;
 Public Function NavigateAsync(ByVal uri As String) As Long
-    '指定したuriに遷移する
-    NavigateAsync = DCF_引数1つで文字列を渡す(ppWebView2, 5, "Navigate", uri)
+    'Navigate to the specified URI.
+    NavigateAsync = DCF_OneArgString(ppWebView2, 5, "Navigate", uri)
 End Function
 Public Sub NavigateSync(ByVal url As String, Optional ByVal TimeoutSec As Double = 10)
-    ' 同期版：読み込み完了まで待機する
+    ' Synchronized version: Wait until loading is complete.
     m_IsNavigating = True
     If NavigateAsync(url) = 0 Then
         WaitNavigation TimeoutSec
@@ -174,8 +176,8 @@ End Sub
 'virtual HRESULT STDMETHODCALLTYPE NavigateToString(
 '    /* [in] */ LPCWSTR htmlContent) = 0;
 Public Function NavigateToString(htmlContent As String) As Long
-    '指定したHTMLコードを描画する
-    NavigateToString = DCF_引数1つで文字列を渡す(ppWebView2, 6, "NavigateToString", htmlContent)
+    'Renders the specified HTML code.
+    NavigateToString = DCF_OneArgString(ppWebView2, 6, "NavigateToString", htmlContent)
 End Function
 
 '7
@@ -183,10 +185,10 @@ End Function
 '    /* [in] */ ICoreWebView2NavigationStartingEventHandler *eventHandler,
 '    /* [out] */ EventRegistrationToken *token) = 0;
 Public Function add_NavigationStarting() As Long
-    add_NavigationStarting = DCF_ハンドラ登録(Me, 7, "add_NavigationStarting", AddressOf NavigationStarting_Invoke, "NavigationStartingHandler")
+    add_NavigationStarting = DCF_RegisterHandler(Me, 7, "add_NavigationStarting", AddressOf NavigationStarting_Invoke, "NavigationStartingHandler")
 End Function
 Public Function add_NavigationStarting_1(Handler As c4_Handler) As Long
-    'イベントハンドラのvTbleポインタを渡してトークンを受け取る形に修正したい
+    'I want to modify it so that it receives a token by passing a vTble pointer to the event handler.
 End Function
 
 '8
@@ -201,7 +203,7 @@ End Function
 '    /* [in] */ ICoreWebView2ContentLoadingEventHandler *eventHandler,
 '    /* [out] */ EventRegistrationToken *token) = 0;
 Public Function add_ContentLoading() As Long
-    add_ContentLoading = DCF_ハンドラ登録(Me, 9, "add_ContentLoading", AddressOf ContentLoading_Invoke, "ContentLoadingHandler")
+    add_ContentLoading = DCF_RegisterHandler(Me, 9, "add_ContentLoading", AddressOf ContentLoading_Invoke, "ContentLoadingHandler")
 End Function
 
 '10
@@ -216,7 +218,7 @@ End Function
 '    /* [in] */ ICoreWebView2SourceChangedEventHandler *eventHandler,
 '    /* [out] */ EventRegistrationToken *token) = 0;
 Public Function add_SourceChanged() As Long
-    add_SourceChanged = DCF_ハンドラ登録(Me, 11, "add_SourceChanged", AddressOf SourceChanged_Invoke, "SourceChangedHandler")
+    add_SourceChanged = DCF_RegisterHandler(Me, 11, "add_SourceChanged", AddressOf SourceChanged_Invoke, "SourceChangedHandler")
 End Function
 
 '12
@@ -231,7 +233,7 @@ End Function
 '    /* [in] */ ICoreWebView2HistoryChangedEventHandler *eventHandler,
 '    /* [out] */ EventRegistrationToken *token) = 0;
 Public Function add_HistoryChanged() As Long
-    add_HistoryChanged = DCF_ハンドラ登録(Me, 13, "add_HistoryChanged", AddressOf HistoryChanged_Invoke, "HistoryChangedHandler")
+    add_HistoryChanged = DCF_RegisterHandler(Me, 13, "add_HistoryChanged", AddressOf HistoryChanged_Invoke, "HistoryChangedHandler")
 End Function
 
 '14
@@ -247,7 +249,7 @@ End Function
 '    /* [out] */ EventRegistrationToken *token) = 0;
 'add_NavigationCompleted
 Public Function add_NavigationCompleted() As Long
-    add_NavigationCompleted = mHelpers.DCF_ハンドラ登録(Me, 15, "add_NavigationCompleted", AddressOf NavCompleted_Invoke, "NavigationCompleted")
+    add_NavigationCompleted = mHelpers.DCF_RegisterHandler(Me, 15, "add_NavigationCompleted", AddressOf NavCompleted_Invoke, "NavigationCompleted")
 End Function
 
 '16
@@ -262,7 +264,7 @@ End Function
 '    /* [in] */ ICoreWebView2NavigationStartingEventHandler *eventHandler,
 '    /* [out] */ EventRegistrationToken *token) = 0;
 Public Function add_FrameNavigationStarting() As Long
-    add_FrameNavigationStarting = mHelpers.DCF_ハンドラ登録(Me, 17, "add_FrameNavigationStarting", AddressOf FrameNavigationStarting_Invoke, "FrameNavigationStarting")
+    add_FrameNavigationStarting = mHelpers.DCF_RegisterHandler(Me, 17, "add_FrameNavigationStarting", AddressOf FrameNavigationStarting_Invoke, "FrameNavigationStarting")
 End Function
 
 '18
@@ -277,7 +279,7 @@ End Function
 '    /* [in] */ ICoreWebView2NavigationCompletedEventHandler *eventHandler,
 '    /* [out] */ EventRegistrationToken *token) = 0;
 Public Function add_FrameNavigationCompleted() As Long
-    add_FrameNavigationCompleted = mHelpers.DCF_ハンドラ登録(Me, 19, "add_FrameNavigationCompleted", AddressOf FrameNavigationCompleted_Invoke, "FrameNavigationCompleted")
+    add_FrameNavigationCompleted = mHelpers.DCF_RegisterHandler(Me, 19, "add_FrameNavigationCompleted", AddressOf FrameNavigationCompleted_Invoke, "FrameNavigationCompleted")
 End Function
 
 '20
@@ -291,9 +293,9 @@ End Function
 'virtual HRESULT STDMETHODCALLTYPE add_ScriptDialogOpening(
 '    /* [in] */ ICoreWebView2ScriptDialogOpeningEventHandler *eventHandler,
 '    /* [out] */ EventRegistrationToken *token) = 0;
-'   ※ このイベントのみ ICoreWebView2Settings:: AreDefaultScriptDialogsEnabledプロパティがFALSEに設定されている場合にトリガーされます｡
+'   ** This event is triggered only if the ICoreWebView2Settings::AreDefaultScriptDialogsEnabled property is set to FALSE.
 Public Function add_ScriptDialogOpening() As Long
-    add_ScriptDialogOpening = mHelpers.DCF_ハンドラ登録(Me, 21, "add_ScriptDialogOpening", AddressOf ScriptDialogOpening_Invoke, "ScriptDialogOpening")
+    add_ScriptDialogOpening = mHelpers.DCF_RegisterHandler(Me, 21, "add_ScriptDialogOpening", AddressOf ScriptDialogOpening_Invoke, "ScriptDialogOpening")
 End Function
 
 '22
@@ -308,7 +310,7 @@ End Function
 '    /* [in] */ ICoreWebView2PermissionRequestedEventHandler *eventHandler,
 '    /* [out] */ EventRegistrationToken *token) = 0;
 Public Function add_PermissionRequested() As Long
-    add_PermissionRequested = mHelpers.DCF_ハンドラ登録(Me, 23, "add_PermissionRequested", AddressOf PermissionRequested_Invoke, "PermissionRequested")
+    add_PermissionRequested = mHelpers.DCF_RegisterHandler(Me, 23, "add_PermissionRequested", AddressOf PermissionRequested_Invoke, "PermissionRequested")
 End Function
 
 '24
@@ -323,7 +325,7 @@ End Function
 '    /* [in] */ ICoreWebView2ProcessFailedEventHandler *eventHandler,
 '    /* [out] */ EventRegistrationToken *token) = 0;
 Public Function add_ProcessFailed() As Long
-    add_ProcessFailed = mHelpers.DCF_ハンドラ登録(Me, 25, "add_ProcessFailed", AddressOf ProcessFailed_Invoke, "ProcessFailed")
+    add_ProcessFailed = mHelpers.DCF_RegisterHandler(Me, 25, "add_ProcessFailed", AddressOf ProcessFailed_Invoke, "ProcessFailed")
 End Function
 
 '26
@@ -333,10 +335,10 @@ Public Function remove_ProcessFailed(token As Long) As Long
     remove_ProcessFailed = remove_Handler(Me, 26, token, "remove_ProcessFailed")
 End Function
 
-'※ 27,28は他のハンドラとは扱いが違うので注意。
-'   イベント発生時にコールバックを受けるのではなく、
-'   WebView2内部でJavaScriptを実行させるために、そのスクリプトを文字列として渡す関数なので
-'   Add,Removeどちらもシグネチャが異なる。
+'** Note that handlers 27 and 28 are handled differently from the other handlers.
+' Instead of receiving a callback when an event occurs,
+' this function passes the script as a string in order to execute JavaScript inside WebView2, so
+' both Add and Remove have different signatures.
 '27
 'virtual HRESULT STDMETHODCALLTYPE AddScriptToExecuteOnDocumentCreated(
 '    /* [in] */ LPCWSTR javaScript,
@@ -352,16 +354,16 @@ End Function
 '    /* [in] */ LPCWSTR javaScript,
 '    /* [in] */ ICoreWebView2ExecuteScriptCompletedHandler *handler) = 0;
 Public Function ExecuteScriptAsync(ByVal script As String) As Long
-' 非同期版：実行を依頼するだけで戻る。結果はイベントで受け取る
-    ExecuteScriptAsync = DFC_ハンドラ登録_文字列渡しあり(Me, 29, "ExecuteScript", script, AddressOf ExecuteScript_Invoke)
+' Asynchronous version: Simply request execution and return. Receive results via events.
+    ExecuteScriptAsync = DCF_RegisterHandlerWithString(Me, 29, "ExecuteScript", script, AddressOf ExecuteScript_Invoke)
 End Function
 
-' 同期版：実行結果を戻り値として直接受け取る
+' Synchronized version: Receives the execution result directly as a return value.
 Public Function ExecuteScriptSync(ByVal script As String, Optional ByVal TimeoutSec As Double = 5) As String
     m_IsScriptRunning = True
     ExecuteScriptAsync script
     
-    ' 専用の待機ループ
+    ' Dedicated wait loop
     Dim Start As Double: Start = Timer
     Do While m_IsScriptRunning
         Debug.Print "waiting ExecuteScriptSync"
@@ -403,7 +405,7 @@ End Function
 '    /* [in] */ ICoreWebView2WebMessageReceivedEventHandler *handler,
 '    /* [out] */ EventRegistrationToken *token) = 0;
 Public Function add_WebMessageReceived() As Long
-    add_WebMessageReceived = mHelpers.DCF_ハンドラ登録(Me, 34, "add_WebMessageReceived", AddressOf WebMessageReceived_Invoke, "WebMessageReceived")
+    add_WebMessageReceived = mHelpers.DCF_RegisterHandler(Me, 34, "add_WebMessageReceived", AddressOf WebMessageReceived_Invoke, "WebMessageReceived")
 End Function
 
 '35
@@ -450,7 +452,7 @@ End Function
 '    /* [in] */ ICoreWebView2NewWindowRequestedEventHandler *eventHandler,
 '    /* [out] */ EventRegistrationToken *token) = 0;
 Public Function add_NewWindowRequested() As Long
-    add_NewWindowRequested = mHelpers.DCF_ハンドラ登録(Me, 44, "add_NewWindowRequested", AddressOf NewWindowRequested_Invoke, "NewWindowRequested")
+    add_NewWindowRequested = mHelpers.DCF_RegisterHandler(Me, 44, "add_NewWindowRequested", AddressOf NewWindowRequested_Invoke, "NewWindowRequested")
 End Function
 '45
 'virtual HRESULT STDMETHODCALLTYPE remove_NewWindowRequested(
@@ -464,7 +466,7 @@ End Function
 '    /* [in] */ ICoreWebView2DocumentTitleChangedEventHandler *eventHandler,
 '    /* [out] */ EventRegistrationToken *token) = 0;
 Public Function add_DocumentTitleChanged() As Long
-    add_DocumentTitleChanged = mHelpers.DCF_ハンドラ登録(Me, 46, "add_DocumentTitleChanged", AddressOf DocumentTitleChanged_Invoke, "DocumentTitleChanged")
+    add_DocumentTitleChanged = mHelpers.DCF_RegisterHandler(Me, 46, "add_DocumentTitleChanged", AddressOf DocumentTitleChanged_Invoke, "DocumentTitleChanged")
 End Function
 
 '47
@@ -483,7 +485,7 @@ End Function
 '    /* [in] */ LPCWSTR name,
 '    /* [in] */ VARIANT *object) = 0;
 Public Function AddHostObjectToScript(ByVal Name As String, ByVal Instance As Object) As Long
-    AddHostObjectToScript = DCF_引数2つ_StringとObject(ppWebView2, 49, "AddHostObjectToScript", Name, Instance)
+    AddHostObjectToScript = DCF_TwoArgsStringAndObject(ppWebView2, 49, "AddHostObjectToScript", Name, Instance)
 End Function
 
 '50
@@ -498,7 +500,7 @@ End Function
 '    /* [in] */ ICoreWebView2ContainsFullScreenElementChangedEventHandler *eventHandler,
 '    /* [out] */ EventRegistrationToken *token) = 0;
 Public Function add_ContainsFullScreenElementChanged() As Long
-    add_ContainsFullScreenElementChanged = mHelpers.DCF_ハンドラ登録(Me, 52, "add_ContainsFullScreenElementChanged", AddressOf ContainsFullScreenElementChanged_Invoke, "ContainsFullScreenElementChanged")
+    add_ContainsFullScreenElementChanged = mHelpers.DCF_RegisterHandler(Me, 52, "add_ContainsFullScreenElementChanged", AddressOf ContainsFullScreenElementChanged_Invoke, "ContainsFullScreenElementChanged")
 End Function
 '53
 'virtual HRESULT STDMETHODCALLTYPE remove_ContainsFullScreenElementChanged(
@@ -514,23 +516,24 @@ End Function
 
 
 '55
-'virtual HRESULT STDMETHODCALLTYPE add_WebResourceRequested(
-'    /* [in] */ ICoreWebView2WebResourceRequestedEventHandler *eventHandler,
-'    /* [out] */ EventRegistrationToken *token) = 0;
-'WebResourceRequested を有効にするには、単にハンドラを登録するだけでなく、
-'先に AddWebResourceRequestedFilter を呼び出して、
-'「どのURL（例: * ですべて、または特定のドメイン）」をインターセプトするかをブラウザに教えてあげる必要があります。
-'これをしないとイベントが発火しません。
+' virtual HRESULT STDMETHODCALLTYPE add_WebResourceRequested(
+'     /* [in] */ ICoreWebView2WebResourceRequestedEventHandler *eventHandler,
+'     /* [out] */ EventRegistrationToken *token) = 0;
+
+' NOTE: To enable WebResourceRequested, simply registering the handler is not enough.
+' You MUST call AddWebResourceRequestedFilter (VTable Index 57) first to tell the browser
+' which URLs (e.g., "*" for all, or a specific domain) and resource types to intercept.
+' If this filter is not registered, the event will never fire.
 Public Function add_WebResourceRequested() As Long
-    add_WebResourceRequested = mHelpers.DCF_ハンドラ登録(Me, 55, "add_WebResourceRequested", AddressOf WebResourceRequested_Invoke, "WebResourceRequested")
+    add_WebResourceRequested = mHelpers.DCF_RegisterHandler(Me, 55, "add_WebResourceRequested", AddressOf WebResourceRequested_Invoke, "WebResourceRequested")
 End Function
+
 '56
 'virtual HRESULT STDMETHODCALLTYPE remove_WebResourceRequested(
 '    /* [in] */ EventRegistrationToken token) = 0;
 Public Function remove_WebResourceRequested(token As Long) As Long
     remove_WebResourceRequested = remove_Handler(Me, 56, token, "remove_WebResourceRequested")
 End Function
-
 
 '57
 'virtual HRESULT STDMETHODCALLTYPE AddWebResourceRequestedFilter(
@@ -558,46 +561,44 @@ End Function
 
 
 ''' <summary>
-''' NavigationCompleted イベントハンドラを登録する
+''' Registers the NavigationCompleted event handler
 ''' </summary>
-Public Function AddNavigationCompletedHandler(Handler As c4_Handler2) As Long
+#If Win64 Then
+Public Function AddNavigationCompletedHandler(ByVal Handler As c4_Handler2) As Long
     On Error GoTo ErrorHandler
 
-    ' 1. コレクションの初期化（初回のみ）
+    ' 1. Initialize the handler collection (First time only)
     If Col_Handler Is Nothing Then Set Col_Handler = New Collection
 
-    ' 2. ハンドラクラスのインスタンス化
-    ' ※ Initialize 内で VTable と マシン語サンクが自動生成されます
-    'Set handler = New c4_Handler2
     Handler.ppWebView2 = ppWebView2
 
-    ' 3. WebView2 (COMインターフェース) への登録準備
-    ' ICoreWebView2::add_NavigationCompleted の VTable Index は 15 (x64)
+    ' 2. Prepare the registration for WebView2 (COM Interface)
+    ' ICoreWebView2::add_NavigationCompleted VTable Index is 15 (x64)
     Const IDX_ADD_NAV_COMPLETED As Long = 15
 
-    Dim pWebView2 As LongPtr: pWebView2 = Me.ppWebView2 ' 保持している ICoreWebView2 ポインタ
-    Dim pHandlerObj As LongPtr: pHandlerObj = Handler.Pointer ' 捏造された FakeObjPtr
-    Dim tkn As LongPtr ' 登録解除用のトークンを受け取る変数
+    Dim pWebView2 As LongPtr: pWebView2 = Me.ppWebView2 ' Cached ICoreWebView2 pointer
+    Dim pHandlerObj As LongPtr: pHandlerObj = Handler.Pointer ' Emulated/Fake COM Object Pointer
+    Dim tkn As LongPtr ' Variable to receive the EventRegistrationToken for unregistering
 
-    ' DispCallFunc の引数設定
-    ' HRESULT add_NavigationCompleted(handler, [out] token)
+    ' DispCallFunc argument preparation
+    ' HRESULT add_NavigationCompleted([in] ICoreWebView2NavigationCompletedEventHandler* eventHandler, [out] EventRegistrationToken* token)
     Dim args(1) As Variant
     Dim argTypes(1) As Integer
     Dim argPtrs(1) As LongPtr
     Dim res As Variant
     Dim hr As Long
 
-    ' 第1引数: [in] ICoreWebView2NavigationCompletedEventHandler*
+    ' Arg 1: [in] Pointer to our fake COM Object
     args(0) = pHandlerObj
     argTypes(0) = vbLongPtr
     argPtrs(0) = VarPtr(args(0))
 
-    ' 第2引数: [out] EventRegistrationToken* (ポインタを渡す)
+    ' Arg 2: [out] Pointer to the Token variable
     args(1) = VarPtr(tkn)
     argTypes(1) = vbLongPtr
     argPtrs(1) = VarPtr(args(1))
 
-    ' 4. DispCallFunc で API 実行
+    ' 3. Execute via DispCallFunc
     hr = DispCallFunc(pWebView2, _
                       IDX_ADD_NAV_COMPLETED * LenB(pWebView2), _
                       CC_STDCALL, _
@@ -607,29 +608,29 @@ Public Function AddNavigationCompletedHandler(Handler As c4_Handler2) As Long
                       argPtrs(0), _
                       res)
 
-    ' 5. 結果の判定
+    ' 4. Evaluate results
     If hr = 0 Then
         If res = 0 Then
-            ' 成功：トークンを保存し、インスタンスをコレクションで維持する
+            ' Success: Save the token and keep the handler instance alive in the collection
             Handler.token = tkn
-            Col_Handler.Add Handler, CStr(tkn) ' トークンをキーにして保持
+            Col_Handler.Add Handler, CStr(tkn) ' Using the token as a unique key to keep reference
 
-            Debug.Print "--- ハンドラ登録成功 ---"
+            Debug.Print "--- Event Handler Registered Successfully ---"
             Debug.Print "Token:", tkn
             AddNavigationCompletedHandler = 0 ' S_OK
         Else
-            Debug.Print "WebView2側でエラー発生。HRESULT: " & Hex(res)
+            Debug.Print "WebView2 error occurred. HRESULT: &H" & Hex(res)
             AddNavigationCompletedHandler = res
         End If
     Else
-        Debug.Print "DispCallFunc 自体が失敗。hr: " & Hex(hr)
+        Debug.Print "DispCallFunc itself failed. hr: &H" & Hex(hr)
         AddNavigationCompletedHandler = hr
     End If
 
     Exit Function
 
 ErrorHandler:
-    Debug.Print "AddNavigationCompletedHandler で予期せぬエラー: " & Err.Description
+    Debug.Print "Unexpected error in AddNavigationCompletedHandler: " & Err.Description
     AddNavigationCompletedHandler = -1
 End Function
-
+#End If
