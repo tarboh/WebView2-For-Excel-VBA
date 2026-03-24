@@ -524,6 +524,25 @@ End Function
 '33
 'virtual HRESULT STDMETHODCALLTYPE PostWebMessageAsString(
 '    /* [in] */ LPCWSTR webMessageAsString) = 0;
+Public Function PostWebMessageAsString(ByVal webMessage As String) As Long
+    Dim args(0) As Variant, args_Type(0) As Integer, args_Ptr(0) As LongPtr
+    args(0) = StrPtr(webMessage)
+    args_Type(0) = vbLongPtr
+    args_Ptr(0) = VarPtr(args(0))
+    Dim hr As Long, res As Variant
+    hr = DispCallFunc(ppWebView2, 33 * LenB(ppWebView2), CC_STDCALL, vbLong, 1, args_Type(0), args_Ptr(0), res)
+    If hr = 0 Then
+        If res = 0 Then
+            Debug.Print "PostWebMessageAsString success."
+        Else
+            Debug.Print "PostWebMessageAsString failed. res:" & res
+        End If
+        PostWebMessageAsString = res
+    Else
+        Debug.Print "PostWebMessageAsJson failed. hr:" & hr
+        PostWebMessageAsString = hr
+    End If
+End Function
 
 '34
 'virtual HRESULT STDMETHODCALLTYPE add_WebMessageReceived(

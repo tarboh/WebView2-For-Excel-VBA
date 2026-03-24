@@ -109,6 +109,12 @@ Private Sub CommandButton_PostWebMessageAsJson_Click()
     Debug.Print WV2Controller.WebView2.PostWebMessageAsJson(strjson)
 End Sub
 
+Private Sub CommandButton_PostWebMessageAsString_Click()
+    Dim webMessage As String
+    webMessage = "System Check Complete"
+    Debug.Print WV2Controller.WebView2.PostWebMessageAsString(webMessage)
+End Sub
+
 Private Sub CommandButton_RunScript_Click()
     Dim script As String
     script = TextBox_Script.text
