@@ -44,5 +44,28 @@ WebView2オブジェクトを取得するまでの「泥臭くも精密な」プ
 
 ---
 
+## ⚠️ Troubleshooting: Excel Crashes on Form Startup (Memory Address Table Issue)
+
+### Problem
+When you open the UserForm, Excel might crash immediately with an **"Automation error / Exception occurred"** or a silent termination. 
+
+This happens because the VBA compiler sometimes fails to statically evaluate or initialize the memory address of standard module functions using `AddressOf` if they are not explicitly called or held elsewhere. If VBA doesn't map these addresses correctly, calling low-level Win32 APIs (like `DispCallFunc` or `CreateCoreWebView2EnvironmentWithOptions`) will lead to an access violation (Null/Invalid pointer crash).
+
+### Solution
+To force the VBA compiler to hold the `AddressOf` evaluate and keep the VTable memory address valid, add a dummy Sub at the bottom of your standard module (e.g., `Module1`):
+
+```vba
+' Dummy Sub to prevent VBA compiler optimization / address loss
+Public Sub RegisterNavigationCompleted_()
+    Static vTable As LongPtr
+    vTable = GetAddr(AddressOf Handler_QueryInterface)
+End Sub
+```
+
+By having this `AddressOf` evaluation written explicitly inside a Sub (even if it's never called!), the VBA runtime is forced to allocate the correct memory address table, bypassing the startup crash magically.
+
+---
+
+
 ### 📚 謝辞
 本プロジェクトの着想にあたり、重要な技術的知見を共有してくださった **もっくん** 様（[参考記事](https://eschamali.github.io/StarterWebScrapingKit/#userform-powershell)）に深く感謝いたします。
