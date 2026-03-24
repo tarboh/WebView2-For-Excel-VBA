@@ -4,7 +4,7 @@ Begin {C62A69F0-16DC-11CE-9E98-00AA00574A4F} UserForm1
    ClientHeight    =   9120.001
    ClientLeft      =   120
    ClientTop       =   465
-   ClientWidth     =   12360
+   ClientWidth     =   15990
    OleObjectBlob   =   "UserForm1.frx":0000
    ShowModal       =   0   'False
    StartUpPosition =   1  'オーナー フォームの中央
@@ -26,15 +26,46 @@ Public WithEvents WV2 As c3_WebView2
 Attribute WV2.VB_VarHelpID = -1
 Public c5 As New c5_ObjectForJS
 
+Private WithEvents Console As fm_Console
+
 #If Win64 Then
 Public WithEvents NavigationCompletedHandler As c4_Handler2
 Attribute NavigationCompletedHandler.VB_VarHelpID = -1
 #End If
 
-Private Sub CommandButton1_Click()
+Private Sub CheckBox_Attach_c5ToJS_Click()
+    If CheckBox_Attach_c5ToJS.Value = True Then
+        Call WV2.AddHostObjectToScript("VBAObj", c5)
+    Else
+        Call WV2.RemoveHostObjectFromScript("VBAObj")
+    End If
+End Sub
+
+Private Sub CheckBox_InterceptDialogs_Change()
+    If CheckBox_InterceptDialogs.Value = True Then
+        WV2.Settings.AreDefaultScriptDialogsEnabled = False
+    Else
+        WV2.Settings.AreDefaultScriptDialogsEnabled = True
+    End If
+    Debug.Print WV2.Settings.AreDefaultScriptDialogsEnabled
+    WV2.Reload
+End Sub
+
+Private Sub CommandButton_Console_Click()
+    If Console Is Nothing Then Set Console = New fm_Console
+    Console.Show
+End Sub
+
+
+
+Private Sub CommandButton_ExeCuteVBAInJavaScript_Click()
+    Call WV2Controller.WebView2.ExecuteScriptAsync("window.chrome.webview.hostObjects.sync.VBAObj.Func1(15);")
+End Sub
+
+Private Sub CommandButton_Navigate_Click()
     
     Dim url As String
-    url = TextBox1.Text
+    url = TextBox_URL.text
         
     If Left(url, 11) = "javascript:" Then
         Call WV2Controller.WebView2.ExecuteScriptAsync(url)
@@ -47,8 +78,33 @@ Private Sub CommandButton1_Click()
 End Sub
 
 
-Private Sub CommandButton2_Click()
-    Debug.Print WV2Controller.WebView2.Source
+Private Sub CommandButton_NavToStr_Click()
+    If Console Is Nothing Then Set Console = New fm_Console
+    Console.Show
+    
+    Dim uri As String
+    uri = Console.TextBox_Console.text
+    Debug.Print uri
+    Call WV2Controller.WebView2.NavigateToString(uri)
+End Sub
+
+Private Sub CommandButton_OpenDevTools_Click()
+    WV2.OpenDevToolsWindow
+End Sub
+
+Private Sub CommandButton_RunScript_Click()
+    Dim script As String
+    script = TextBox_Script.text
+    Call WV2Controller.WebView2.ExecuteScriptAsync(script)
+End Sub
+
+Private Sub CommandButton_StopAutoJS_Click()
+    WV2Controller.WebView2.RemoveScriptToExecuteOnDocumentCreated ( _
+        WV2Controller.WebView2.ScriptId)
+End Sub
+
+Private Sub Console_QueryClose()
+    Set Console = Nothing
 End Sub
 
 #If Win64 Then
@@ -57,16 +113,10 @@ Private Sub NavigationCompletedHandler_Invoked(ByVal pThis As LongLong, ByVal se
 End Sub
 #End If
 
-Private Sub ToggleButton1_Change()
 
-    If ToggleButton1.Value = True Then
-        WV2.Settings.AreDefaultScriptDialogsEnabled = False
-    Else
-        WV2.Settings.AreDefaultScriptDialogsEnabled = True
-    End If
-    Debug.Print WV2.Settings.AreDefaultScriptDialogsEnabled
-    WV2.Reload
 
+Private Sub WV2_AddScriptToExecuteOnDocumentCreatedCompleted()
+    Debug.Print "AddScriptToExecuteOnDocumentCreatedCompleted"
 End Sub
 
 Private Sub WV2_ContainsFullScreenElementChanged()
@@ -90,7 +140,7 @@ Private Sub WV2_ProcessFailed()
 End Sub
 
 Private Sub WV2_ReceiveScriptResult(ByVal result As String)
-    Debug.Print result
+    Debug.Print "ReceiveScriptResult result : " & result
 End Sub
 
 Private Sub WV2_ScriptDialogOpening()
@@ -102,12 +152,13 @@ Private Sub CommandButton3_Click()
     Call WV2Controller.WebView2.ExecuteScriptAsync("alert('Dialog On WebView2 !');")
 End Sub
 
-Private Sub UserForm_Activate()
+Private Sub UserForm_Initialize()
     #If Win64 Then
     Set NavigationCompletedHandler = New c4_Handler2
     #End If
     Call Create_WebView2
 End Sub
+
 
 'Create WebView2 In Frame
 Public Sub Create_WebView2()
@@ -140,6 +191,9 @@ Private Sub UserForm_QueryClose(Cancel As Integer, CloseMode As Integer)
     ' Release the handler that allocates/holds the Thunk memory area
     Set NavigationCompletedHandler = Nothing
     #End If
+    
+    Set Console = Nothing
+    
 End Sub
 
 Private Sub WV2_ContentLoading()
@@ -159,10 +213,20 @@ Private Sub WV2_HistoryChanged()
 End Sub
 
 Private Sub WV2_NavigationCompleted()
+    
     Dim Source As String
     Source = WV2Controller.WebView2.Source
-    Debug.Print "NavigationCompleted(From Standard Module) Source:" & Source
-    TextBox1.Text = Source
+    
+    Dim Title As String
+    Title = WV2Controller.WebView2.DocumentTitle
+    
+    Debug.Print "NavigationCompleted(From Standard Module) "
+    Debug.Print "    Source : " & Source
+    Debug.Print "    Title  : " & Title
+    
+    TextBox_URL.text = Source
+    Me.Caption = Title
+    
 End Sub
 
 Private Sub WV2_NavigationStarting()
@@ -184,13 +248,11 @@ End Sub
 Private Sub WV2Controller_ScriptResultReceived(ByVal result As String)
 
     Debug.Print "ScriptResultReceived:", result
-    TextBox1.Text = WV2Controller.WebView2.Source
+    TextBox_URL.text = WV2Controller.WebView2.Source
 
 End Sub
 
 Private Sub WV2Controller_WebView2ReadyCompleted()
-
-    Call WV2.AddHostObjectToScript("VBAObj", c5)
 
     Call WV2Controller.WebView2.NavigateAsync("https://www.google.com/")
 

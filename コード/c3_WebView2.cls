@@ -27,6 +27,7 @@ Public Event NewWindowRequested()
 Public Event DocumentTitleChanged()
 Public Event ContainsFullScreenElementChanged()
 Public Event WebResourceRequested()
+Public Event AddScriptToExecuteOnDocumentCreatedCompleted()
 
 Public Event ReceiveScriptResult(ByVal result As String)
 Public LastScriptResult As String
@@ -41,6 +42,8 @@ Public cHandler As c4_Handler2
 #End If
 
 Public Settings As c6_WebView2Settings
+
+Private m_ScriptId As String
 
 ' --- For internal notifications ---
 Public Sub NotifyNavigationStarting()
@@ -93,6 +96,12 @@ Public Sub NotifyContainsFullScreenElementChanged()
 End Sub
 Public Sub NotifyWebResourceRequested()
     RaiseEvent WebResourceRequested
+End Sub
+Public Sub NotifyAddScriptToExecuteOnDocumentCreatedCompleted(ByVal errorCode As Long, result As LongPtr)
+    Dim ScriptId As String
+    ScriptId = PtrToStrW(result)
+    m_ScriptId = ScriptId
+    RaiseEvent AddScriptToExecuteOnDocumentCreatedCompleted
 End Sub
 
 ' --- Cleaning up ---
@@ -343,11 +352,62 @@ End Function
 'virtual HRESULT STDMETHODCALLTYPE AddScriptToExecuteOnDocumentCreated(
 '    /* [in] */ LPCWSTR javaScript,
 '    /* [in] */ ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler *handler) = 0;
+Public Function AddScriptToExecuteOnDocumentCreated(ByVal javascript As String) As Long
+    Dim pStr As LongPtr: pStr = StrPtr(javascript)
+    Dim args(1) As Variant, args_Ptr(1) As LongPtr, args_Type(1) As Integer
+    
+    args(0) = pStr
+    args_Ptr(0) = VarPtr(args(0))
+    args_Type(0) = vbLongPtr
+    
+    Dim Handler As c4_Handler
+    Set Handler = New c4_Handler
+    Col_Handler.Add Handler
+    Call Handler.CreateVTble(AddressOf AddScriptToExecuteOnDocumentCreatedCompletedHandler_Invoke, ppWebView2)
+    Handler.Namae = "AddScriptToExecuteOnDocumentCreated"
+    
+    args(1) = Handler.Pointer
+    args_Ptr(1) = VarPtr(args(1))
+    args_Type(1) = vbLongPtr
+    
+    Dim hr As Long, res As Variant
+    hr = DispCallFunc(ppWebView2, 27 * LenB(ppWebView2), CC_STDCALL, vbLong, 2, args_Type(0), args_Ptr(0), res)
+    If hr = 0 Then
+        If res = 0 Then
+            Debug.Print "AddScriptToExecuteOnDocumentCreated Success."
+            RegisterInstance Handler.Pointer, Me
+        Else
+            Debug.Print "AddScriptToExecuteOnDocumentCreated Failed. Res:" & res
+        End If
+    Else
+        Debug.Print "AddScriptToExecuteOnDocumentCreated Failed. Hr:" & hr
+    End If
+    
+End Function
 
 '28
 'virtual HRESULT STDMETHODCALLTYPE RemoveScriptToExecuteOnDocumentCreated(
 '    /* [in] */ LPCWSTR id) = 0;
+Public Function RemoveScriptToExecuteOnDocumentCreated(ScriptId As String) As Long
+    Dim args(0) As Variant:      args(0) = StrPtr(ScriptId)
+    Dim args_Ptr(0)  As LongPtr: args_Ptr(0) = VarPtr(args(0))
+    Dim args_Type(0) As Integer: args_Type(0) = vbLongPtr
+    Dim hr As Long, res As Variant
+    hr = DispCallFunc(ppWebView2, 28 * LenB(ppWebView2), CC_STDCALL, vbLong, 1, args_Type(0), args_Ptr(0), res)
+    If hr = 0 Then
+        If res = 0 Then
+            Debug.Print "RemoveScriptToExecuteOnDocumentCreated Success."
+        Else
+            Debug.Print "RemoveScriptToExecuteOnDocumentCreated Failed. Res:" & res
+        End If
+    Else
+        Debug.Print "RemoveScriptToExecuteOnDocumentCreated Failed. Hr:" & hr
+    End If
+End Function
 
+Public Property Get ScriptId() As String
+    ScriptId = m_ScriptId
+End Property
 
 '29
 'virtual HRESULT STDMETHODCALLTYPE ExecuteScript(
@@ -479,6 +539,9 @@ End Function
 '48
 'virtual /* [propget] */ HRESULT STDMETHODCALLTYPE get_DocumentTitle(
 '    /* [retval][out] */ LPWSTR *title) = 0;
+Public Property Get DocumentTitle() As String
+    DocumentTitle = DCF_GetStringNoArgs(ppWebView2, 48, "get_DocumentTitle")
+End Property
 
 '49
 'virtual HRESULT STDMETHODCALLTYPE AddHostObjectToScript(
@@ -491,9 +554,15 @@ End Function
 '50
 'virtual HRESULT STDMETHODCALLTYPE RemoveHostObjectFromScript(
 '    /* [in] */ LPCWSTR name) = 0;
+Public Function RemoveHostObjectFromScript(ByVal ObjName As String) As Long
+    RemoveHostObjectFromScript = DCF_OneArgString(ppWebView2, 50, "RemoveHostObjectFromScript", ObjName)
+End Function
 
 '51
 'virtual HRESULT STDMETHODCALLTYPE OpenDevToolsWindow( void) = 0;
+Public Function OpenDevToolsWindow()
+    Call DispCallFunc(ppWebView2, 51 * LenB(ppWebView2), CC_STDCALL, vbLong, 0, 0, 0, OpenDevToolsWindow)
+End Function
 
 '52
 'virtual HRESULT STDMETHODCALLTYPE add_ContainsFullScreenElementChanged(
@@ -502,6 +571,7 @@ End Function
 Public Function add_ContainsFullScreenElementChanged() As Long
     add_ContainsFullScreenElementChanged = mHelpers.DCF_RegisterHandler(Me, 52, "add_ContainsFullScreenElementChanged", AddressOf ContainsFullScreenElementChanged_Invoke, "ContainsFullScreenElementChanged")
 End Function
+
 '53
 'virtual HRESULT STDMETHODCALLTYPE remove_ContainsFullScreenElementChanged(
 '    /* [in] */ EventRegistrationToken token) = 0;

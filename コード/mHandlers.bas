@@ -9,20 +9,20 @@ Public Function GetAddr(ByVal addr As LongPtr) As LongPtr
 End Function
 
 ' IUnknown::QueryInterface
-Public Function Handler_QueryInterface(ByVal This As LongPtr, ByVal riid As LongPtr, ByRef ppvObject As LongPtr) As Long
+Public Function Handler_QueryInterface(ByVal this As LongPtr, ByVal riid As LongPtr, ByRef ppvObject As LongPtr) As Long
     ' Normally used to check GUID, but for now it returns itself
     Debug.Print "QueryInterface called!"
-    ppvObject = This
+    ppvObject = this
     Handler_QueryInterface = S_OK
 End Function
 
 ' IUnknown::AddRef / Release (Returns 1 as a stub/dummy)
-Public Function Handler_AddRef(ByVal This As LongPtr) As Long: Handler_AddRef = 1: End Function
-Public Function Handler_Release(ByVal This As LongPtr) As Long: Handler_Release = 1: End Function
+Public Function Handler_AddRef(ByVal this As LongPtr) As Long: Handler_AddRef = 1: End Function
+Public Function Handler_Release(ByVal this As LongPtr) As Long: Handler_Release = 1: End Function
 
 ' ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler::Invoke
 ' Receives the initialization result from WebView2
-Public Function Handler_Invoke(ByVal This As LongPtr, ByVal errorCode As Long, ByVal pEnvironment As LongPtr) As Long
+Public Function Handler_Invoke(ByVal this As LongPtr, ByVal errorCode As Long, ByVal pEnvironment As LongPtr) As Long
     Debug.Print "WebView2 Environment Created. ErrorCode: " & errorCode
 
     If errorCode = 0 Then
@@ -33,7 +33,7 @@ Public Function Handler_Invoke(ByVal This As LongPtr, ByVal errorCode As Long, B
 End Function
 
 ' Callback called by WebView2 when Controller creation is completed
-Public Function ControllerHandler_Invoke(ByVal This As LongPtr, ByVal errorCode As Long, ByVal pController As LongPtr) As Long
+Public Function ControllerHandler_Invoke(ByVal this As LongPtr, ByVal errorCode As Long, ByVal pController As LongPtr) As Long
     
     Debug.Print "ControllerHandler_Invoke called. pController: " & pController
     
@@ -76,6 +76,8 @@ Public Function ControllerHandler_Invoke(ByVal This As LongPtr, ByVal errorCode 
     Call UserForm1.WV2Controller.WebView2.add_DocumentTitleChanged
     Call UserForm1.WV2Controller.WebView2.add_ContainsFullScreenElementChanged
     Call UserForm1.WV2Controller.WebView2.add_WebResourceRequested
+    Call UserForm1.WV2Controller.WebView2.AddScriptToExecuteOnDocumentCreated("console.log('script on document created!');")
+
     
     ' Register events via Handler2 approach
     #If Win64 Then
@@ -104,11 +106,11 @@ Public Function ControllerHandler_Invoke(ByVal This As LongPtr, ByVal errorCode 
     ControllerHandler_Invoke = 0
 End Function
 
-Public Function NavigationStarting_Invoke(ByVal This As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
+Public Function NavigationStarting_Invoke(ByVal this As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
     On Error Resume Next
     
     Dim target As c3_WebView2
-    Set target = GetInstance(This)
+    Set target = GetInstance(this)
     
     If Not target Is Nothing Then
         ' Call the method on the class side
@@ -117,148 +119,148 @@ Public Function NavigationStarting_Invoke(ByVal This As LongPtr, ByVal sender As
         ' ÅyCRITICALÅzIf target is not found (after class is destroyed),
         ' it might be a "ghost handler" left on the WebView2 side.
         ' Clean up this pointer from the dictionary just in case.
-        UnregisterInstance This
+        UnregisterInstance this
     End If
     
     NavigationStarting_Invoke = 0
 End Function
 
-Public Function ContentLoading_Invoke(ByVal This As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
+Public Function ContentLoading_Invoke(ByVal this As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
     On Error Resume Next
     Dim target As c3_WebView2
-    Set target = GetInstance(This)
+    Set target = GetInstance(this)
     
     If Not target Is Nothing Then
         target.NotifyContentLoading
     Else
-        UnregisterInstance This
+        UnregisterInstance this
     End If
     
     ContentLoading_Invoke = 0
 End Function
 
-Public Function SourceChanged_Invoke(ByVal This As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
+Public Function SourceChanged_Invoke(ByVal this As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
     On Error Resume Next
     Dim target As c3_WebView2
-    Set target = GetInstance(This)
+    Set target = GetInstance(this)
     
     If Not target Is Nothing Then
         target.NotifySourceChanged
     Else
-        UnregisterInstance This
+        UnregisterInstance this
     End If
     
     SourceChanged_Invoke = 0
 End Function
 
-Public Function HistoryChanged_Invoke(ByVal This As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
+Public Function HistoryChanged_Invoke(ByVal this As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
     On Error Resume Next
     Dim target As c3_WebView2
-    Set target = GetInstance(This)
+    Set target = GetInstance(this)
     
     If Not target Is Nothing Then
         target.NotifyHistoryChanged
     Else
-        UnregisterInstance This
+        UnregisterInstance this
     End If
     
     HistoryChanged_Invoke = 0
 End Function
 
-Public Function NavCompleted_Invoke(ByVal This As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
+Public Function NavCompleted_Invoke(ByVal this As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
     On Error Resume Next
     
     Dim target As c3_WebView2
-    Set target = GetInstance(This)
+    Set target = GetInstance(this)
     
     If Not target Is Nothing Then
         target.NotifyNavigationCompleted
     Else
-        UnregisterInstance This
+        UnregisterInstance this
     End If
     
     NavCompleted_Invoke = 0
 End Function
 
-Public Function FrameNavigationStarting_Invoke(ByVal This As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
+Public Function FrameNavigationStarting_Invoke(ByVal this As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
     On Error Resume Next
     Dim target As c3_WebView2
-    Set target = GetInstance(This)
+    Set target = GetInstance(this)
     
     If Not target Is Nothing Then
         target.NotifyFrameNavigationStarting
     Else
-        UnregisterInstance This
+        UnregisterInstance this
     End If
     
     FrameNavigationStarting_Invoke = 0
 End Function
 
-Public Function FrameNavigationCompleted_Invoke(ByVal This As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
+Public Function FrameNavigationCompleted_Invoke(ByVal this As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
     On Error Resume Next
     Dim target As c3_WebView2
-    Set target = GetInstance(This)
+    Set target = GetInstance(this)
     
     If Not target Is Nothing Then
         target.NotifyFrameNavigationCompleted
     Else
-        UnregisterInstance This
+        UnregisterInstance this
     End If
     
     FrameNavigationCompleted_Invoke = 0
 End Function
 
-Public Function ScriptDialogOpening_Invoke(ByVal This As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
+Public Function ScriptDialogOpening_Invoke(ByVal this As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
     On Error Resume Next
     Dim target As c3_WebView2
-    Set target = GetInstance(This)
+    Set target = GetInstance(this)
     
     If Not target Is Nothing Then
         target.NotifyScriptDialogOpening
     Else
-        UnregisterInstance This
+        UnregisterInstance this
     End If
     
     ScriptDialogOpening_Invoke = 0
 End Function
 
-Public Function PermissionRequested_Invoke(ByVal This As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
+Public Function PermissionRequested_Invoke(ByVal this As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
     On Error Resume Next
     Dim target As c3_WebView2
-    Set target = GetInstance(This)
+    Set target = GetInstance(this)
     
     If Not target Is Nothing Then
         target.NotifyPermissionRequested
     Else
-        UnregisterInstance This
+        UnregisterInstance this
     End If
     
     PermissionRequested_Invoke = 0
 End Function
 
-Public Function ProcessFailed_Invoke(ByVal This As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
+Public Function ProcessFailed_Invoke(ByVal this As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
     On Error Resume Next
     Dim target As c3_WebView2
-    Set target = GetInstance(This)
+    Set target = GetInstance(this)
     
     If Not target Is Nothing Then
         target.NotifyProcessFailed
     Else
-        UnregisterInstance This
+        UnregisterInstance this
     End If
     
     ProcessFailed_Invoke = 0
 End Function
 
-Public Function WebMessageReceived_Invoke(ByVal This As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
+Public Function WebMessageReceived_Invoke(ByVal this As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
     On Error Resume Next
     Dim target As c3_WebView2
-    Set target = GetInstance(This)
+    Set target = GetInstance(this)
     
     If Not target Is Nothing Then
         target.NotifyWebMessageReceived
     Else
-        UnregisterInstance This
+        UnregisterInstance this
     End If
     
     WebMessageReceived_Invoke = 0
@@ -266,74 +268,91 @@ End Function
 
 ' Callback upon completion of ExecuteScript
 ' Index 3: Invoke(HRESULT errorCode, LPCWSTR resultObjectAsJson)
-Public Function ExecuteScript_Invoke(ByVal This As LongPtr, ByVal errorCode As Long, ByVal resultJsonPtr As LongPtr) As Long
+Public Function ExecuteScript_Invoke(ByVal this As LongPtr, ByVal errorCode As Long, ByVal resultJsonPtr As LongPtr) As Long
     Dim target As c3_WebView2
-    Set target = GetInstance(This)
+    Set target = GetInstance(this)
     
     If Not target Is Nothing Then
         ' Extract string from pointer and pass to target
         target.NotifyExecuteScriptCompleted PtrToStrW(resultJsonPtr)
         
         ' Remove completed handler from registry (one-time use)
-        UnregisterInstance This
+        UnregisterInstance this
     End If
     ExecuteScript_Invoke = 0
 End Function
 
-Public Function NewWindowRequested_Invoke(ByVal This As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
+Public Function NewWindowRequested_Invoke(ByVal this As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
     On Error Resume Next
     Dim target As c3_WebView2
-    Set target = GetInstance(This)
+    Set target = GetInstance(this)
     
     If Not target Is Nothing Then
         target.NotifyNewWindowRequested
     Else
-        UnregisterInstance This
+        UnregisterInstance this
     End If
     
     NewWindowRequested_Invoke = 0
 End Function
 
-Public Function DocumentTitleChanged_Invoke(ByVal This As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
+Public Function DocumentTitleChanged_Invoke(ByVal this As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
     On Error Resume Next
     Dim target As c3_WebView2
-    Set target = GetInstance(This)
+    Set target = GetInstance(this)
     
     If Not target Is Nothing Then
         target.NotifyDocumentTitleChanged
     Else
-        UnregisterInstance This
+        UnregisterInstance this
     End If
     
     DocumentTitleChanged_Invoke = 0
 End Function
 
-Public Function ContainsFullScreenElementChanged_Invoke(ByVal This As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
+Public Function ContainsFullScreenElementChanged_Invoke(ByVal this As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
     On Error Resume Next
     Dim target As c3_WebView2
-    Set target = GetInstance(This)
+    Set target = GetInstance(this)
     
     If Not target Is Nothing Then
         target.NotifyContainsFullScreenElementChanged
     Else
-        UnregisterInstance This
+        UnregisterInstance this
     End If
     
     ContainsFullScreenElementChanged_Invoke = 0
 End Function
 
-Public Function WebResourceRequested_Invoke(ByVal This As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
+Public Function WebResourceRequested_Invoke(ByVal this As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
     On Error Resume Next
     Dim target As c3_WebView2
-    Set target = GetInstance(This)
+    Set target = GetInstance(this)
     
     If Not target Is Nothing Then
         target.NotifyWebResourceRequested
     Else
-        UnregisterInstance This
+        UnregisterInstance this
     End If
     
     WebResourceRequested_Invoke = 0
+End Function
+
+'public HRESULT Invoke(HRESULT errorCode, LPCWSTR result)
+Public Function AddScriptToExecuteOnDocumentCreatedCompletedHandler_Invoke(ByVal this As LongPtr, ByVal errorCode As Long, ByVal result As LongPtr) As Long
+    
+    On Error Resume Next
+    Dim target As c3_WebView2
+    Set target = GetInstance(this)
+    
+    If Not target Is Nothing Then
+        Call target.NotifyAddScriptToExecuteOnDocumentCreatedCompleted(errorCode, result)
+    Else
+        UnregisterInstance this
+    End If
+    
+    AddScriptToExecuteOnDocumentCreatedCompletedHandler_Invoke = 0
+    
 End Function
 
 ' Helper: PtrToStrW (Converts Unicode pointer to VBA String)
