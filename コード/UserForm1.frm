@@ -22,8 +22,8 @@ Public WV2Loader As New c0_WebView2Loader
 Public WV2Environment As New c1_WebView2Environment
 Public WithEvents WV2Controller As c2_WebView2Controller
 Attribute WV2Controller.VB_VarHelpID = -1
-Public WithEvents WV2 As c3_WebView2
-Attribute WV2.VB_VarHelpID = -1
+Public WithEvents wv2 As c3_WebView2
+Attribute wv2.VB_VarHelpID = -1
 Public c5 As New c5_ObjectForJS
 
 Private WithEvents Console As fm_Console
@@ -35,20 +35,31 @@ Attribute NavigationCompletedHandler.VB_VarHelpID = -1
 
 Private Sub CheckBox_Attach_c5ToJS_Click()
     If CheckBox_Attach_c5ToJS.Value = True Then
-        Call WV2.AddHostObjectToScript("VBAObj", c5)
+        Call wv2.AddHostObjectToScript("VBAObj", c5)
     Else
-        Call WV2.RemoveHostObjectFromScript("VBAObj")
+        Call wv2.RemoveHostObjectFromScript("VBAObj")
     End If
 End Sub
 
 Private Sub CheckBox_InterceptDialogs_Change()
     If CheckBox_InterceptDialogs.Value = True Then
-        WV2.Settings.AreDefaultScriptDialogsEnabled = False
+        wv2.Settings.AreDefaultScriptDialogsEnabled = False
     Else
-        WV2.Settings.AreDefaultScriptDialogsEnabled = True
+        wv2.Settings.AreDefaultScriptDialogsEnabled = True
     End If
-    Debug.Print WV2.Settings.AreDefaultScriptDialogsEnabled
-    WV2.Reload
+    Debug.Print wv2.Settings.AreDefaultScriptDialogsEnabled
+    wv2.Reload
+End Sub
+
+Private Sub CommandButton_CapturePreviewToFile_Click()
+    
+    Dim folderPath As String
+    folderPath = "C:\temp\VBA_WebView2\ScreenShot\"
+    
+    Dim uniquePath As String
+    uniquePath = "cap_" & format(Now, "yyyymmdd_hhnnss") & "_" & Right("000" & Int(Timer * 1000) Mod 1000, 3) & ".png"
+    
+    WV2Controller.WebView2.CapturePreviewToFile folderPath, uniquePath
 End Sub
 
 Private Sub CommandButton_Console_Click()
@@ -89,7 +100,7 @@ Private Sub CommandButton_NavToStr_Click()
 End Sub
 
 Private Sub CommandButton_OpenDevTools_Click()
-    WV2.OpenDevToolsWindow
+    wv2.OpenDevToolsWindow
 End Sub
 
 Private Sub CommandButton_RunScript_Click()

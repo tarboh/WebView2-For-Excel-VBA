@@ -417,3 +417,29 @@ CleanUp_ITypeInfo:
 
 End Function
 
+''' <summary>
+''' Recursively creates directories if they do not exist, including deep subfolders.
+''' </summary>
+''' <param name="folderPath">The absolute path of the directory to create.</param>
+Public Sub CreateDeepFolder(ByVal folderPath As String)
+    Dim fso As Object
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    
+    ' Do nothing if the folder already exists
+    If fso.FolderExists(folderPath) Then Exit Sub
+    
+    ' Get the parent folder path
+    Dim parentPath As String
+    parentPath = fso.GetParentFolderName(folderPath)
+    
+    ' If the parent folder does not exist, recursively call itself to create the parent first
+    If Not fso.FolderExists(parentPath) Then
+        CreateDeepFolder parentPath
+    End If
+    
+    ' Finally, create the target folder
+    fso.CreateFolder folderPath
+    Debug.Print "Deep folder created: " & folderPath
+    
+    Set fso = Nothing
+End Sub

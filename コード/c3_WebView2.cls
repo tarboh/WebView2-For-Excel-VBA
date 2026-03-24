@@ -28,6 +28,7 @@ Public Event DocumentTitleChanged()
 Public Event ContainsFullScreenElementChanged()
 Public Event WebResourceRequested()
 Public Event AddScriptToExecuteOnDocumentCreatedCompleted()
+Public Event CapturePreviewCompleted(ByVal errorCode As Long)
 
 Public Event ReceiveScriptResult(ByVal result As String)
 Public LastScriptResult As String
@@ -102,6 +103,15 @@ Public Sub NotifyAddScriptToExecuteOnDocumentCreatedCompleted(ByVal errorCode As
     ScriptId = PtrToStrW(result)
     m_ScriptId = ScriptId
     RaiseEvent AddScriptToExecuteOnDocumentCreatedCompleted
+End Sub
+Public Sub NotifyCapturePreviewCompleted(ByVal errorCode As Long)
+    If errorCode = 0 Then
+        Debug.Print "CapturePreview: Success!"
+    Else
+        Debug.Print "CapturePreview: Failed. ErrorCode: &H" & Hex(errorCode)
+    End If
+    
+    RaiseEvent CapturePreviewCompleted(errorCode)
 End Sub
 
 ' --- Cleaning up ---
@@ -443,6 +453,42 @@ End Function
 '    /* [in] */ COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT imageFormat,
 '    /* [in] */ IStream *imageStream,
 '    /* [in] */ ICoreWebView2CapturePreviewCompletedHandler *handler) = 0;
+Public Function CapturePreview(ByVal format As Long, ByVal pStream As LongPtr) As Long
+    ' Å¶ format: 0=PNG, 1=JPEG
+    ' Å¶ pStream: Pointer to the pre-created IStream
+    
+    Dim args(2) As Variant, args_Ptr(2) As LongPtr, args_Type(2) As Integer
+    
+    ' 1. Fomat (Enum / Long)
+    args(0) = format
+    args_Ptr(0) = VarPtr(args(0))
+    args_Type(0) = vbLong
+    
+    ' 2. Pointer to the pre-created IStream
+    args(1) = pStream
+    args_Ptr(1) = VarPtr(args(1))
+    args_Type(1) = vbLongPtr
+    
+    ' 3. Completion handler (c4_Handler)
+    Dim Handler As c4_Handler
+    Set Handler = New c4_Handler
+    Col_Handler.Add Handler, "CapturePreviewCompletedHandler"
+    Call Handler.CreateVTble(AddressOf CapturePreviewCompletedHandler_Invoke, ppWebView2)
+    
+    args(2) = Handler.Pointer
+    args_Ptr(2) = VarPtr(args(2))
+    args_Type(2) = vbLongPtr
+    
+    ' Call ICoreWebView2::CapturePreview (VTable Index 30)
+    Dim hr As Long, res As Variant
+    hr = DispCallFunc(ppWebView2, 30 * LenB(ppWebView2), CC_STDCALL, vbLong, 3, args_Type(0), args_Ptr(0), res)
+    
+    If hr = 0 Then
+        RegisterInstance Handler.Pointer, Me
+        CapturePreview = res
+    End If
+End Function
+
 
 '31
 'virtual HRESULT STDMETHODCALLTYPE Reload( void) = 0;
@@ -704,3 +750,73 @@ ErrorHandler:
     AddNavigationCompletedHandler = -1
 End Function
 #End If
+
+
+''' <summary>
+''' Saves a screenshot of the WebView2 to the specified file path (Asynchronous).
+''' </summary>
+''' <param name="folderPath">The absolute path of the directory to save the file (e.g., "C:\temp\")</param>
+''' <param name="filePath">The file name with extension (e.g., "capture.png")</param>
+''' <param name="isJpeg">True to save as JPEG, False to save as PNG</param>
+Public Function CapturePreviewToFile(ByVal folderPath As String, ByVal filePath As String, Optional ByVal isJpeg As Boolean = False) As Long
+    Dim hr As Long
+    Dim pStream As LongPtr
+    
+    ' Combine paths to prevent file naming collisions
+    Dim fullPath As String
+    fullPath = folderPath & filePath
+    
+    ' Automatically create the directory if it does not exist
+    CreateDeepFolder folderPath
+    
+    ' 1. Create an IStream bound to the file (New creation & Read/Write mode)
+    hr = SHCreateStreamOnFileW(StrPtr(fullPath), STGM_CREATE Or STGM_READWRITE Or STGM_SHARE_DENY_NONE, pStream)
+    If hr <> 0 Or pStream = 0 Then
+        CapturePreviewToFile = hr
+        Exit Function
+    End If
+
+    Dim format As Long: format = IIf(isJpeg, 1, 0)
+    Dim args(2) As Variant, args_Ptr(2) As LongPtr, args_Type(2) As Integer
+    Dim res As Variant
+    
+    ' Arg 0: Image format (0: PNG, 1: JPEG)
+    args(0) = format
+    args_Ptr(0) = VarPtr(args(0))
+    args_Type(0) = vbLong
+
+    ' Arg 1: Pointer to the pre-created IStream
+    args(1) = pStream
+    args_Ptr(1) = VarPtr(args(1))
+    args_Type(1) = vbLongPtr
+
+    Dim Handler As c4_Handler
+    Set Handler = New c4_Handler
+    
+    ' Use ObjPtr (numeric address) instead of a literal string key to avoid collection collisions
+    Handler.Namae = "Cap_" & ObjPtr(Handler)
+    Col_Handler.Add Handler, Handler.Namae
+    
+    Call Handler.CreateVTble(AddressOf CapturePreviewCompletedHandler_Invoke, ppWebView2)
+
+    ' Arg 2: Completion handler (c4_Handler)
+    args(2) = Handler.Pointer
+    args_Ptr(2) = VarPtr(args(2))
+    args_Type(2) = vbLongPtr
+
+    ' Call ICoreWebView2::CapturePreview (VTable Index 30)
+    hr = DispCallFunc(ppWebView2, 30 * LenB(ppWebView2), CC_STDCALL, vbLong, 3, args_Type(0), args_Ptr(0), res)
+
+    If hr = 0 Then
+        RegisterInstance Handler.Pointer, Me
+        CapturePreviewToFile = res
+    End If
+
+    ' Release the IStream pointer to unlock the file (Decrements the reference count)
+    If pStream <> 0 Then
+        Dim resRelease As Variant
+        ' IUnknown::Release is VTable Index 2
+        Call DispCallFunc(pStream, 2 * LenB(pStream), CC_STDCALL, vbLong, 0, 0, 0, resRelease)
+    End If
+    
+End Function
