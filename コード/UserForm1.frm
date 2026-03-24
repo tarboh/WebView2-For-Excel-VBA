@@ -1,7 +1,7 @@
 VERSION 5.00
 Begin {C62A69F0-16DC-11CE-9E98-00AA00574A4F} UserForm1 
    Caption         =   "UserForm1"
-   ClientHeight    =   9120.001
+   ClientHeight    =   10560
    ClientLeft      =   120
    ClientTop       =   465
    ClientWidth     =   15990
@@ -49,6 +49,24 @@ Private Sub CheckBox_InterceptDialogs_Change()
     End If
     Debug.Print wv2.Settings.AreDefaultScriptDialogsEnabled
     wv2.Reload
+End Sub
+
+Private Sub CommandButton_CallDevToolsProtocolMethod_Click()
+    Dim strMethodName As String
+    strMethodName = "Page.printToPDF"
+    Dim strParametersAsJson As String
+    strParametersAsJson = "{" & _
+        """paperWidth"": 8.27," & _
+        """paperHeight"": 11.69," & _
+        """marginTop"": 0," & _
+        """marginBottom"": 0," & _
+        """marginLeft"": 0," & _
+        """marginRight"": 0," & _
+        """printBackground"": true," & _
+        """landscape"": false," & _
+        """displayHeaderFooter"": false" & _
+    "}"
+    Call WV2Controller.WebView2.CallDevToolsProtocolMethod(strMethodName, strParametersAsJson)
 End Sub
 
 Private Sub CommandButton_CapturePreviewToFile_Click()
@@ -140,6 +158,10 @@ End Sub
 
 Private Sub WV2_AddScriptToExecuteOnDocumentCreatedCompleted()
     Debug.Print "AddScriptToExecuteOnDocumentCreatedCompleted"
+End Sub
+
+Private Sub wv2_CallDevToolsProtocolMethodCompleted(ByVal errorCode As String, ByVal result As String)
+    Debug.Print "CallDevToolsProtocolMethodCompleted result:" & result
 End Sub
 
 Private Sub WV2_ContainsFullScreenElementChanged()

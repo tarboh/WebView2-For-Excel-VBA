@@ -33,6 +33,7 @@ Public Event CapturePreviewCompleted(ByVal errorCode As Long)
 Public Event ReceiveScriptResult(ByVal result As String)
 Public LastScriptResult As String
 
+Public Event CallDevToolsProtocolMethodCompleted(ByVal errorCode As String, ByVal result As String)
 
 Public Col_Handler As New Collection
 Private m_IsNavigating As Boolean
@@ -113,6 +114,13 @@ Public Sub NotifyCapturePreviewCompleted(ByVal errorCode As Long)
     
     RaiseEvent CapturePreviewCompleted(errorCode)
 End Sub
+Public Sub NotifyCallDevToolsProtocolMethodCompleted(ByVal errorCode As Long, result As LongPtr)
+    Dim strResult As String
+    strResult = PtrToStrW(result)
+    
+    RaiseEvent CallDevToolsProtocolMethodCompleted(errorCode, strResult)
+End Sub
+
 
 ' --- Cleaning up ---
 Public Sub Finalize()
@@ -564,6 +572,42 @@ End Function
 '    /* [in] */ LPCWSTR methodName,
 '    /* [in] */ LPCWSTR parametersAsJson,
 '    /* [in] */ ICoreWebView2CallDevToolsProtocolMethodCompletedHandler *handler) = 0;
+Public Function CallDevToolsProtocolMethod(ByVal methodName As String, parameterAsJson As String)
+    'Make a handler
+    Dim Handler As c4_Handler
+    Set Handler = New c4_Handler
+    Col_Handler.Add Handler, "CallDevToolsProtocolMethodCompletedHandler"
+    Call Handler.CreateVTble(AddressOf CallDevToolsProtocolMethodCompletedHandler_Invoke, ppWebView2)
+    
+    Dim args(2) As Variant, args_Type(2) As Integer, args_Ptr(2) As LongPtr
+    args(0) = StrPtr(methodName)
+    args_Type(0) = vbLongPtr
+    args_Ptr(0) = VarPtr(args(0))
+    
+    args(1) = StrPtr(parameterAsJson)
+    args_Type(1) = vbLongPtr
+    args_Ptr(1) = VarPtr(args(1))
+    
+    args(2) = Handler.Pointer
+    args_Type(2) = vbLongPtr
+    args_Ptr(2) = VarPtr(args(2))
+    
+    Dim hr As Long, res As Variant
+    hr = DispCallFunc(ppWebView2, 36 * LenB(ppWebView2), CC_STDCALL, vbLong, 3, args_Type(0), args_Ptr(0), res)
+    If hr = 0 Then
+        If res = 0 Then
+            Debug.Print "CallDevToolsProtocolMethod success."
+        Else
+            Debug.Print "CallDevToolsProtocolMethod failed. res:" & res
+        End If
+        RegisterInstance Handler.Pointer, Me
+        CallDevToolsProtocolMethod = res
+    Else
+        Debug.Print "CallDevToolsProtocolMethod failed. hr:" & hr
+        CallDevToolsProtocolMethod = hr
+    End If
+    
+End Function
 
 '37
 'virtual /* [propget] */ HRESULT STDMETHODCALLTYPE get_BrowserProcessId(
