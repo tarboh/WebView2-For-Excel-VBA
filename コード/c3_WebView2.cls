@@ -501,6 +501,25 @@ End Function
 '32
 'virtual HRESULT STDMETHODCALLTYPE PostWebMessageAsJson(
 '    /* [in] */ LPCWSTR webMessageAsJson) = 0;
+Public Function PostWebMessageAsJson(ByVal jsonString As String) As String
+    Dim args(0) As Variant, args_Type(0) As Integer, args_Ptr(0) As LongPtr
+    args(0) = StrPtr(jsonString)
+    args_Type(0) = vbLongPtr
+    args_Ptr(0) = VarPtr(args(0))
+    Dim hr As Long, res As Variant
+    hr = DispCallFunc(ppWebView2, 32 * LenB(ppWebView2), CC_STDCALL, vbLong, 1, args_Type(0), args_Ptr(0), res)
+    If hr = 0 Then
+        If res = 0 Then
+            Debug.Print "PostWebMessageAsJson success."
+        Else
+            Debug.Print "PostWebMessageAsJson failed. res:" & res
+        End If
+        PostWebMessageAsJson = res
+    Else
+        Debug.Print "PostWebMessageAsJson failed. hr:" & hr
+        PostWebMessageAsJson = hr
+    End If
+End Function
 
 '33
 'virtual HRESULT STDMETHODCALLTYPE PostWebMessageAsString(

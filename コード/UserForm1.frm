@@ -103,6 +103,12 @@ Private Sub CommandButton_OpenDevTools_Click()
     wv2.OpenDevToolsWindow
 End Sub
 
+Private Sub CommandButton_PostWebMessageAsJson_Click()
+    Dim strjson As String
+    strjson = "{""funcName"": ""calculateAndDisplay"", ""args"": [""Sum Result"", 123, 456]}"
+    Debug.Print WV2Controller.WebView2.PostWebMessageAsJson(strjson)
+End Sub
+
 Private Sub CommandButton_RunScript_Click()
     Dim script As String
     script = TextBox_Script.text
