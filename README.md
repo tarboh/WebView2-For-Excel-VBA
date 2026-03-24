@@ -59,6 +59,7 @@ Public Sub RegisterNavigationCompleted_()
     Static vTable As LongPtr
     vTable = GetAddr(AddressOf Handler_QueryInterface)
 End Sub
+```
 
 ---
 
