@@ -104,3 +104,9 @@ Public Function PtsToPx(ByVal pts As Single, ByVal isVertical As Boolean) As Lon
     ' e.g., 150% scaling will yield dpi = 144, resulting in points * 2
     PtsToPx = pts * (dpi / 72)
 End Function
+
+' Dummy Sub to prevent VBA compiler optimization / address loss
+Public Sub RegisterNavigationCompleted_()
+    Static vTable As LongPtr
+    vTable = GetAddr(AddressOf Handler_QueryInterface)
+End Sub
