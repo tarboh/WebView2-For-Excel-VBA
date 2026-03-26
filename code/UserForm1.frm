@@ -34,7 +34,7 @@ Attribute NavigationCompletedHandler.VB_VarHelpID = -1
 #End If
 
 Private Sub CheckBox_Attach_c5ToJS_Click()
-    If CheckBox_Attach_c5ToJS.Value = True Then
+    If CheckBox_Attach_c5ToJS.value = True Then
         Call wv2.AddHostObjectToScript("VBAObj", c5)
     Else
         Call wv2.RemoveHostObjectFromScript("VBAObj")
@@ -42,7 +42,7 @@ Private Sub CheckBox_Attach_c5ToJS_Click()
 End Sub
 
 Private Sub CheckBox_InterceptDialogs_Change()
-    If CheckBox_InterceptDialogs.Value = True Then
+    If CheckBox_InterceptDialogs.value = True Then
         wv2.Settings.AreDefaultScriptDialogsEnabled = False
     Else
         wv2.Settings.AreDefaultScriptDialogsEnabled = True
@@ -89,6 +89,14 @@ End Sub
 
 Private Sub CommandButton_ExeCuteVBAInJavaScript_Click()
     Call WV2Controller.WebView2.ExecuteScriptAsync("window.chrome.webview.hostObjects.sync.VBAObj.Func1(15);")
+End Sub
+
+Private Sub CommandButton_GoBack_Click()
+    WV2Controller.WebView2.GoBack
+End Sub
+
+Private Sub CommandButton_GoForward_Click()
+    WV2Controller.WebView2.GoForward
 End Sub
 
 Private Sub CommandButton_Navigate_Click()
@@ -144,6 +152,12 @@ Private Sub CommandButton_StopAutoJS_Click()
         WV2Controller.WebView2.ScriptId)
 End Sub
 
+
+
+Private Sub CommandButton4_Click()
+    Call WV2Controller.WebView2.GetDevToolsProtocolEventReceiver("Network.responseReceived")
+End Sub
+
 Private Sub Console_QueryClose()
     Set Console = Nothing
 End Sub
@@ -154,18 +168,57 @@ Private Sub NavigationCompletedHandler_Invoked(ByVal pThis As LongLong, ByVal se
 End Sub
 #End If
 
-
-
 Private Sub WV2_AddScriptToExecuteOnDocumentCreatedCompleted()
     Debug.Print "AddScriptToExecuteOnDocumentCreatedCompleted"
 End Sub
 
 Private Sub wv2_CallDevToolsProtocolMethodCompleted(ByVal errorCode As String, ByVal result As String)
-    Debug.Print "CallDevToolsProtocolMethodCompleted result:" & result
+    'Debug.Print "CallDevToolsProtocolMethodCompleted result:" & result
+    
+    ' VBA can directly access JavaScript properties (e.g., .data) retrieved from JScript!
+    Dim jsonObject As Object
+    Set jsonObject = ParseJSON(result)
+    
+    ' Safely retrieve the Base64 PDF string directly via Dot Notation
+    Dim base64PDF As String
+    base64PDF = CallByName(jsonObject, "data", VbGet)
+    
+    If Len(base64PDF) > 0 Then
+        Dim pdfBytes() As Byte
+        pdfBytes = Base64Decode(base64PDF)
+        
+        Dim folderPath As String
+        folderPath = "C:\temp\VBA_WebView2\PDF\"
+        
+        CreateDeepFolder folderPath
+        
+        Dim uniquePath As String
+        uniquePath = format(Now, "yyyymmdd_hhnnss") & "_" & Right("000" & Int(Timer * 1000) Mod 1000, 3) & ".pdf"
+        
+        SaveBytesToFile pdfBytes, folderPath & uniquePath
+        Debug.Print "PDF saved successfully to Desktop!"
+    End If
+    
+End Sub
+
+Private Sub wv2_CapturePreviewCompleted(ByVal errorCode As Long)
+    Debug.Print "CapturePreviewCompleted"
 End Sub
 
 Private Sub WV2_ContainsFullScreenElementChanged()
     Debug.Print "ContainsFullScreenElementChanged"
+    'Dim Source As String
+    'Source = WV2Controller.WebView2.Source
+    
+    Dim Title As String
+    Title = WV2Controller.WebView2.DocumentTitle
+    
+    Debug.Print "NavigationCompleted(From Standard Module) "
+    'Debug.Print "    Source : " & Source
+    Debug.Print "    Title  : " & Title
+    
+    'TextBox_URL.text = Source
+    Me.Caption = Title & " ContainsFullScreenElement:" & WV2Controller.WebView2.ContainsFullScreenElement
 End Sub
 
 Private Sub WV2_DocumentTitleChanged()
@@ -258,7 +311,7 @@ Private Sub WV2_HistoryChanged()
 End Sub
 
 Private Sub WV2_NavigationCompleted()
-    
+        
     Dim Source As String
     Source = WV2Controller.WebView2.Source
     
@@ -270,15 +323,18 @@ Private Sub WV2_NavigationCompleted()
     Debug.Print "    Title  : " & Title
     
     TextBox_URL.text = Source
-    Me.Caption = Title
+    Me.Caption = Title & " ContainsFullScreenElement:" & WV2Controller.WebView2.ContainsFullScreenElement
     
 End Sub
 
 Private Sub WV2_NavigationStarting()
+    
     Debug.Print "NavigationStarting"
 End Sub
 
 Private Sub WV2_SourceChanged()
+    CommandButton_GoBack.Enabled = WV2Controller.WebView2.CanGoBack
+    CommandButton_GoForward.Enabled = WV2Controller.WebView2.CanGoForward
     Debug.Print "SourceChanged"
 End Sub
 
@@ -299,6 +355,7 @@ End Sub
 
 Private Sub WV2Controller_WebView2ReadyCompleted()
 
+    Debug.Print "WV2Controller_WebView2ReadyCompleted proccessid:" & WV2Controller.WebView2.BrowserProcessId
     Call WV2Controller.WebView2.NavigateAsync("https://www.google.com/")
 
 End Sub

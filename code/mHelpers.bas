@@ -293,7 +293,7 @@ Public Function remove_Handler(WebView2 As c3_WebView2, vTblIndex As Long, token
     End If
 End Function
 
-Public Function GetClassMethodPtr(ByVal TargetObj As Object, ByVal MethodName As String, ByRef vTableOffset As Long) As LongPtr
+Public Function GetClassMethodPtr(ByVal TargetObj As Object, ByVal methodName As String, ByRef vTableOffset As Long) As LongPtr
     If TargetObj Is Nothing Then Exit Function
 
     Dim pDisp As LongPtr: pDisp = ObjPtr(TargetObj)
@@ -383,7 +383,7 @@ Public Function GetClassMethodPtr(ByVal TargetObj As Object, ByVal MethodName As
                 CopyMemory ByVal VarPtr(bstrName), pBstr, LenB(pBstr)
                 
                 ' STEP 3: Compare names and calculate the VTable pointer
-                If LCase$(bstrName) = LCase$(MethodName) Then
+                If LCase$(bstrName) = LCase$(methodName) Then
                     Dim pVTable As LongPtr, pRealAddr As LongPtr
                     CopyMemory pVTable, ByVal pDisp, LenB(pVTable)
                     CopyMemory pRealAddr, ByVal (pVTable + uFuncDesc.oVft), LenB(pRealAddr)
@@ -417,6 +417,39 @@ CleanUp_ITypeInfo:
 
 End Function
 
+Public Function dcf(ptr As LongPtr, vTblIndex As Long, funcName As String, ParamArray args() As Variant) As Long
+    Dim l As Long: l = LBound(args)
+    Dim u As Long: u = UBound(args)
+    Dim cnt As Long: cnt = u - l + 1
+    Dim hr As Long, res As Variant
+    Dim args_Type() As Integer
+    Dim args_Ptr() As LongPtr
+    If cnt > 0 Then
+        ReDim args_Type(l To u): ReDim args_Ptr(l To u)
+        Dim i As Long
+        For i = l To u
+            args_Type(i) = VarType(args(i))
+            args_Ptr(i) = VarPtr(args(i))
+        Next
+        hr = DispCallFunc(ptr, vTblIndex * LenB(ptr), CC_STDCALL, vbLong, cnt, args_Type(u), args_Ptr(u), res)
+    Else
+        hr = DispCallFunc(ptr, vTblIndex * LenB(ptr), CC_STDCALL, vbLong, cnt, 0, 0, res)
+    End If
+    If hr = 0 Then
+        If res <> 0 Then
+            Debug.Print funcName & " failed. res:" & res
+        End If
+        dcf = res
+    Else
+        Debug.Print funcName & " failed. hr:" & hr
+        dcf = hr
+    End If
+End Function
+
+Sub tttttttt()
+    Call dcf(1, 1, "a")
+End Sub
+
 ''' <summary>
 ''' Recursively creates directories if they do not exist, including deep subfolders.
 ''' </summary>
@@ -442,4 +475,58 @@ Public Sub CreateDeepFolder(ByVal folderPath As String)
     Debug.Print "Deep folder created: " & folderPath
     
     Set fso = Nothing
+End Sub
+
+
+''' <summary>
+''' Parses a JSON string into a Scripting.Object using JScript runtime.
+''' </summary>
+Public Function ParseJSON(ByVal jsonString As String) As Object
+    Dim html As Object
+    Set html = CreateObject("htmlfile")
+    
+    ' Leverage htmlfile's JavaScript space to parse JSON
+    html.parentWindow.execScript "function parse(json) { return JSON.parse(json); }", "JScript"
+    
+    ' Returns as a VBA Object (usable like a Dictionary)
+    Set ParseJSON = html.parentWindow.Parse(jsonString)
+End Function
+
+''' <summary>
+''' Decodes a Base64 string and converts it into a binary Byte array.
+''' </summary>
+Public Function Base64Decode(ByVal base64Str As String) As Byte()
+    Dim byteLen As Long
+    Dim skip As Long, outFlags As Long
+    
+    ' Calculate the required buffer size
+    If CryptStringToBinary(StrPtr(base64Str), Len(base64Str), CRYPT_STRING_BASE64, 0, byteLen, skip, outFlags) = 0 Then
+        Err.Raise vbObjectError + 1001, , "Failed to calculate Base64 buffer size."
+    End If
+    
+    Dim bytes() As Byte
+    ReDim bytes(byteLen - 1)
+    
+    ' Perform the actual Base64 decoding
+    If CryptStringToBinary(StrPtr(base64Str), Len(base64Str), CRYPT_STRING_BASE64, VarPtr(bytes(0)), byteLen, skip, outFlags) = 0 Then
+        Err.Raise vbObjectError + 1002, , "Failed to decode Base64 string."
+    End If
+    
+    Base64Decode = bytes
+End Function
+
+''' <summary>
+''' Saves a Byte array to a physical file (No ADODB.Stream reference required).
+''' </summary>
+Public Sub SaveBytesToFile(ByRef bytes() As Byte, ByVal filePath As String)
+    Dim stream As Object
+    Set stream = CreateObject("ADODB.Stream")
+    
+    With stream
+        .Type = 1 ' adTypeBinary
+        .Open
+        .Write bytes
+        .SaveToFile filePath, 2 ' adSaveCreateOverWrite
+        .Close
+    End With
 End Sub

@@ -28,6 +28,7 @@ Public Declare PtrSafe Function SysAllocString Lib "oleaut32.dll" (ByVal pOleCha
 ' Releases the BSTR memory
 Public Declare PtrSafe Sub SysFreeString Lib "oleaut32.dll" (ByVal bstr As LongPtr)
 
+
 Public Declare PtrSafe Function MoveWindow Lib "user32" (ByVal hwnd As LongPtr, ByVal x As Long, ByVal y As Long, ByVal nWidth As Long, ByVal nHeight As Long, ByVal bRepaint As Long) As Long
 
 Public Declare PtrSafe Function FindWindowEx Lib "user32" Alias "FindWindowExA" ( _
@@ -59,6 +60,44 @@ Public Const LOGPIXELSY As Long = 90 ' Logical pixels per inch (Y-axis)
 
 Public Declare PtrSafe Sub RtlMoveMemory Lib "kernel32" (ByVal Destination As LongPtr, ByRef Source As LongPtr, ByVal Length As LongPtr)
 
+#If VBA7 Then
+    ' API to create an IStream from a file path (Unicode version)
+    Public Declare PtrSafe Function SHCreateStreamOnFileW Lib "shlwapi.dll" ( _
+        ByVal pszFile As LongPtr, _
+        ByVal grfMode As Long, _
+        ByRef ppStm As LongPtr) As Long
+#Else
+    Public Declare Function SHCreateStreamOnFileW Lib "shlwapi.dll" ( _
+        ByVal pszFile As Long, _
+        ByVal grfMode As Long, _
+        ByRef ppStm As Long) As Long
+#End If
+
+' File access mode constants for STGM (Storage Management)
+Public Const STGM_READWRITE As Long = &H2
+Public Const STGM_CREATE As Long = &H1000
+Public Const STGM_SHARE_DENY_NONE As Long = &H40
+
+#If VBA7 Then
+    Public Declare PtrSafe Function CryptStringToBinary Lib "crypt32.dll" Alias "CryptStringToBinaryW" ( _
+        ByVal pszString As LongPtr, _
+        ByVal cchString As Long, _
+        ByVal dwFlags As Long, _
+        ByVal pbBinary As LongPtr, _
+        ByRef pcbBinary As Long, _
+        ByRef pdwSkip As Long, _
+        ByRef pdwFlags As Long) As Long
+#Else
+    Public Declare Function CryptStringToBinary Lib "crypt32.dll" Alias "CryptStringToBinaryW" ( _
+        ByVal pszString As Long, _
+        ByVal cchString As Long, _
+        ByVal dwFlags As Long, _
+        ByVal pbBinary As Long, _
+        ByRef pcbBinary As Long, _
+        ByRef pdwSkip As Long, _
+        ByRef pdwFlags As Long) As Long
+#End If
+Public Const CRYPT_STRING_BASE64 As Long = &H1
 
 Public Sub PutMemPtr(ByVal pDest As LongPtr, ByVal pSrc As LongPtr)
     RtlMoveMemory pDest, pSrc, 8

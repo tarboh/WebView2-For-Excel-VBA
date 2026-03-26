@@ -381,18 +381,21 @@ End Function
 '
 '};
 Public Function CallDevToolsProtocolMethodCompletedHandler_Invoke(ByVal this As LongPtr, ByVal errorCode As Long, ByVal result As LongPtr) As Long
-    CallDevToolsProtocolMethodCompletedHandler_Invoke = 0
+    
     Dim wv2 As c3_WebView2
     Set wv2 = GetInstance(this)
     
     If Not wv2 Is Nothing Then
         wv2.NotifyCallDevToolsProtocolMethodCompleted errorCode, result
-        
+        'wv2.Col_Handler.Remove "CallDevToolsProtocolMethodCompletedHandler"
         ' For stability, do not remove the handler from the collection here.
         ' Let the Class_Terminate (destruction of c3_WebView2) handle the cleanup to prevent crashes.
     End If
     
     UnregisterInstance this
+    
+    CallDevToolsProtocolMethodCompletedHandler_Invoke = 0
+    
 End Function
 
 

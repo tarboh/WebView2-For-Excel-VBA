@@ -47,6 +47,9 @@ Public Settings As c6_WebView2Settings
 
 Private m_ScriptId As String
 
+Public col_DTPEventReceiver As New Collection
+
+
 ' --- For internal notifications ---
 Public Sub NotifyNavigationStarting()
     RaiseEvent NavigationStarting
@@ -113,11 +116,12 @@ Public Sub NotifyCapturePreviewCompleted(ByVal errorCode As Long)
     End If
     
     RaiseEvent CapturePreviewCompleted(errorCode)
+    
+    
 End Sub
 Public Sub NotifyCallDevToolsProtocolMethodCompleted(ByVal errorCode As Long, result As LongPtr)
     Dim strResult As String
     strResult = PtrToStrW(result)
-    
     RaiseEvent CallDevToolsProtocolMethodCompleted(errorCode, strResult)
 End Sub
 
@@ -480,6 +484,7 @@ Public Function CapturePreview(ByVal format As Long, ByVal pStream As LongPtr) A
     ' 3. Completion handler (c4_Handler)
     Dim Handler As c4_Handler
     Set Handler = New c4_Handler
+    
     Col_Handler.Add Handler, "CapturePreviewCompletedHandler"
     Call Handler.CreateVTble(AddressOf CapturePreviewCompletedHandler_Invoke, ppWebView2)
     
@@ -576,6 +581,12 @@ Public Function CallDevToolsProtocolMethod(ByVal methodName As String, parameter
     'Make a handler
     Dim Handler As c4_Handler
     Set Handler = New c4_Handler
+    
+    On Error Resume Next
+    If Not Col_Handler("CallDevToolsProtocolMethodCompletedHandler") Is Nothing Then
+        Col_Handler.Remove "CallDevToolsProtocolMethodCompletedHandler"
+    End If
+    On Error GoTo 0
     Col_Handler.Add Handler, "CallDevToolsProtocolMethodCompletedHandler"
     Call Handler.CreateVTble(AddressOf CallDevToolsProtocolMethodCompletedHandler_Invoke, ppWebView2)
     
@@ -601,6 +612,7 @@ Public Function CallDevToolsProtocolMethod(ByVal methodName As String, parameter
             Debug.Print "CallDevToolsProtocolMethod failed. res:" & res
         End If
         RegisterInstance Handler.Pointer, Me
+
         CallDevToolsProtocolMethod = res
     Else
         Debug.Print "CallDevToolsProtocolMethod failed. hr:" & hr
@@ -612,25 +624,82 @@ End Function
 '37
 'virtual /* [propget] */ HRESULT STDMETHODCALLTYPE get_BrowserProcessId(
 '    /* [retval][out] */ UINT32 *value) = 0;
+Public Property Get BrowserProcessId() As Long
+    Dim value As Long: value = 0
+    Dim args(0) As Variant, args_Type(0) As Integer, args_Ptr(0) As LongPtr
+    args(0) = VarPtr(value)
+    args_Type(0) = vbLongPtr
+    args_Ptr(0) = VarPtr(args(0))
+    Dim hr As Long, res As Variant
+    hr = DispCallFunc(ppWebView2, 37 * LenB(ppWebView2), CC_STDCALL, vbLong, 1, args_Type(0), args_Ptr(0), res)
+    If hr = 0 Then
+        If res = 0 Then
+            BrowserProcessId = value
+        Else
+            Debug.Print "BrowserProcessId failed. res:" & res
+        End If
+    Else
+        Debug.Print "BrowserProcessId failed. hr:" & hr
+    End If
+End Property
 
 '38
 'virtual /* [propget] */ HRESULT STDMETHODCALLTYPE get_CanGoBack(
 '    /* [retval][out] */ BOOL *canGoBack) = 0;
+Public Property Get CanGoBack() As Boolean
+    Dim lcanGoBack As Long
+    Dim hr As Long
+    hr = dcf(ppWebView2, 38, "get_canGoBack", VarPtr(lcanGoBack))
+    If lcanGoBack = 1 Then
+        CanGoBack = True
+    Else
+        CanGoBack = False
+    End If
+End Property
 
 '39
 'virtual /* [propget] */ HRESULT STDMETHODCALLTYPE get_CanGoForward(
 '    /* [retval][out] */ BOOL *canGoForward) = 0;
+Public Property Get CanGoForward() As Boolean
+    Dim lCanGoForward As Long
+    Dim hr As Long
+    hr = dcf(ppWebView2, 39, "get_CanGoForward", VarPtr(lCanGoForward))
+    If lCanGoForward = 1 Then
+        CanGoForward = True
+    Else
+        CanGoForward = False
+    End If
+End Property
 
 '40
 'virtual HRESULT STDMETHODCALLTYPE GoBack( void) = 0;
+Public Function GoBack() As Long
+    GoBack = dcf(ppWebView2, 40, "GoBack")
+End Function
 
 '41
 'virtual HRESULT STDMETHODCALLTYPE GoForward( void) = 0;
+Public Function GoForward() As Long
+    GoForward = dcf(ppWebView2, 41, "GoForward")
+End Function
 
 '42
 'virtual HRESULT STDMETHODCALLTYPE GetDevToolsProtocolEventReceiver(
 '    /* [in] */ LPCWSTR eventName,
 '    /* [retval][out] */ ICoreWebView2DevToolsProtocolEventReceiver **receiver) = 0;
+Public Sub GetDevToolsProtocolEventReceiver(ByVal eventName As String) ' As c7_DTPEventReceiver
+    On Error Resume Next
+    If Not col_DTPEventReceiver(eventName) Is Nothing Then
+        col_DTPEventReceiver.Remove eventName
+        Debug.Print "çÌèúÇµÇ‹ÇµÇΩ"
+    End If
+    Dim DTPER As c7_DTPEventReceiver
+    Set DTPER = New c7_DTPEventReceiver
+    col_DTPEventReceiver.Add DTPER, eventName
+    Debug.Print "í«â¡ÇµÇ‹ÇµÇΩ"
+    Call DTPER.SetupEventReceiver(Me, eventName)
+    
+End Sub
 
 '43
 'virtual HRESULT STDMETHODCALLTYPE Stop( void) = 0;
@@ -711,7 +780,28 @@ End Function
 '54
 'virtual /* [propget] */ HRESULT STDMETHODCALLTYPE get_ContainsFullScreenElement(
 '    /* [retval][out] */ BOOL *containsFullScreenElement) = 0;
-
+Public Property Get ContainsFullScreenElement() As Boolean
+    Dim lng_ContainsFullScreenElement As Long
+    Dim args(0) As Variant, args_Type(0) As Integer, args_Ptr(0) As LongPtr
+    args(0) = VarPtr(lng_ContainsFullScreenElement)
+    args_Type(0) = vbLongPtr
+    args_Ptr(0) = VarPtr(args(0))
+    Dim hr As Long, res As Variant
+    hr = DispCallFunc(ppWebView2, 54 * LenB(ppWebView2), CC_STDCALL, vbLong, 1, args_Type(0), args_Ptr(0), res)
+    If hr = 0 Then
+        If res = 0 Then
+            If lng_ContainsFullScreenElement = 1 Then
+                ContainsFullScreenElement = True
+            Else
+                ContainsFullScreenElement = False
+            End If
+        Else
+            Debug.Print "ContainsFullScreenElement failed. res:" & res
+        End If
+    Else
+        Debug.Print "ContainsFullScreenElement failed. hr:" & hr
+    End If
+End Property
 
 '55
 ' virtual HRESULT STDMETHODCALLTYPE add_WebResourceRequested(
