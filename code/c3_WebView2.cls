@@ -29,11 +29,10 @@ Public Event ContainsFullScreenElementChanged()
 Public Event WebResourceRequested()
 Public Event AddScriptToExecuteOnDocumentCreatedCompleted()
 Public Event CapturePreviewCompleted(ByVal errorCode As Long)
-
 Public Event ReceiveScriptResult(ByVal result As String)
 Public LastScriptResult As String
-
 Public Event CallDevToolsProtocolMethodCompleted(ByVal errorCode As String, ByVal result As String)
+Public Event DevToolsProtocolEventReceived()
 
 Public Col_Handler As New Collection
 Private m_IsNavigating As Boolean
@@ -49,6 +48,8 @@ Private m_ScriptId As String
 
 Public col_DTPEventReceiver As New Collection
 
+Private erPtr As LongPtr
+Private vTblePtrs(4) As LongPtr
 
 ' --- For internal notifications ---
 Public Sub NotifyNavigationStarting()
@@ -124,7 +125,9 @@ Public Sub NotifyCallDevToolsProtocolMethodCompleted(ByVal errorCode As Long, re
     strResult = PtrToStrW(result)
     RaiseEvent CallDevToolsProtocolMethodCompleted(errorCode, strResult)
 End Sub
-
+Public Sub NotifyDevToolsProtocolEventReceived()
+    RaiseEvent DevToolsProtocolEventReceived
+End Sub
 
 ' --- Cleaning up ---
 Public Sub Finalize()
@@ -691,13 +694,38 @@ Public Sub GetDevToolsProtocolEventReceiver(ByVal eventName As String) ' As c7_D
     On Error Resume Next
     If Not col_DTPEventReceiver(eventName) Is Nothing Then
         col_DTPEventReceiver.Remove eventName
-        Debug.Print "çÌèúÇµÇ‹ÇµÇΩ"
+        Debug.Print "delete."
     End If
-    Dim DTPER As c7_DTPEventReceiver
-    Set DTPER = New c7_DTPEventReceiver
-    col_DTPEventReceiver.Add DTPER, eventName
-    Debug.Print "í«â¡ÇµÇ‹ÇµÇΩ"
-    Call DTPER.SetupEventReceiver(Me, eventName)
+    On Error GoTo 0
+    Dim args(1) As Variant, args_Type(1) As Integer, args_Ptr(1) As LongPtr
+    args(0) = StrPtr(eventName)
+    args_Type(0) = vbLongPtr
+    args_Ptr(0) = VarPtr(args(0))
+    
+    args(1) = VarPtr(erPtr)
+    args_Type(1) = vbLongPtr
+    args_Ptr(1) = VarPtr(args(1))
+    
+    Dim hr As Long, res As Variant
+    hr = DispCallFunc(ppWebView2, 42 * LenB(ppWebView2), CC_STDCALL, vbLong, 2, args_Type(0), args_Ptr(0), res)
+    If hr = 0 Then
+        If res = 0 Then
+            Debug.Print "erPtr:" & erPtr
+            OutputDebugString StrPtr("erPtr: " & erPtr)
+            col_DTPEventReceiver.Add erPtr, eventName
+
+            'public HRESULT add_DevToolsProtocolEventReceived(
+            '   ICoreWebView2DevToolsProtocolEventReceivedEventHandler * handler,
+            '   EventRegistrationToken * token)
+            Call mHelpers.DCF_RegisterHandler2(Me, erPtr, 3, "add_DevToolsProtocolEventReceived", AddressOf DevToolsProtocolEventReceivedHandler_Invoke, "DevToolsProtocolEventReceived")
+            
+            
+        Else
+            Debug.Print "res:" & res
+        End If
+    Else
+        Debug.Print "hr:" & hr
+    End If
     
 End Sub
 

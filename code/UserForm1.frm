@@ -155,7 +155,20 @@ End Sub
 
 
 Private Sub CommandButton4_Click()
+    
     Call WV2Controller.WebView2.GetDevToolsProtocolEventReceiver("Network.responseReceived")
+
+    ' ネットワーク監視機能を有効化する（これを投げないとイベントが来ない）
+    Dim strMethodName As String
+    strMethodName = "Network.enable"
+    
+    Dim strParametersAsJson As String
+    strParametersAsJson = "{}" ' パラメータは空のJSONオブジェクトでOK
+    
+    Dim hr As Long
+    hr = WV2Controller.WebView2.CallDevToolsProtocolMethod(strMethodName, strParametersAsJson)
+    Debug.Print "登録結果：" & hr
+    
 End Sub
 
 Private Sub Console_QueryClose()
@@ -173,6 +186,9 @@ Private Sub WV2_AddScriptToExecuteOnDocumentCreatedCompleted()
 End Sub
 
 Private Sub wv2_CallDevToolsProtocolMethodCompleted(ByVal errorCode As String, ByVal result As String)
+    
+    Exit Sub
+    
     'Debug.Print "CallDevToolsProtocolMethodCompleted result:" & result
     
     ' VBA can directly access JavaScript properties (e.g., .data) retrieved from JScript!
@@ -221,6 +237,10 @@ Private Sub WV2_ContainsFullScreenElementChanged()
     Me.Caption = Title & " ContainsFullScreenElement:" & WV2Controller.WebView2.ContainsFullScreenElement
 End Sub
 
+Private Sub wv2_DevToolsProtocolEventReceived()
+    Debug.Print "DevToolsProtocolEventReceived"
+End Sub
+
 Private Sub WV2_DocumentTitleChanged()
     Debug.Print "DocumentTitleChanged"
 End Sub
@@ -251,6 +271,11 @@ Private Sub CommandButton3_Click()
 End Sub
 
 Private Sub UserForm_Initialize()
+'    Me.width = 1920 * 0.75
+'    Me.Height = 1080 * 0.75
+'    Frame1.width = 1800 * 0.75
+'    Frame1.Height = 1000 * 0.75
+    
     #If Win64 Then
     Set NavigationCompletedHandler = New c4_Handler2
     #End If

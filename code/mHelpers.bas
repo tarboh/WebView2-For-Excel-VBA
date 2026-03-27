@@ -240,6 +240,51 @@ Public Function DCF_RegisterHandler(WB2 As c3_WebView2, vTblIndex As Long, strFu
     End If
 End Function
 
+Public Function DCF_RegisterHandler2(WB2 As c3_WebView2, pObj As LongPtr, vTblIndex As Long, strFuncName As String, funcPtr As LongPtr, Optional HandlerName As String) As Long
+    
+    Dim Handler As c4_Handler: Set Handler = New c4_Handler
+    Handler.CreateVTble funcPtr, pObj
+    
+    Debug.Print "CreateVTble Complete."
+    Debug.Print "ParentPtr:" & Handler.ParentPtr
+    Debug.Print "Pointer  :" & Handler.Pointer
+    
+    WB2.Col_Handler.Add Handler
+    Handler.Namae = HandlerName ' (Rename c4_Handler.Namae to HandlerName if refactoring properties)
+    m_InstanceMap.Add CStr(Handler.Pointer), WB2
+    'RegisterInstance Handler.Pointer, WB2
+    
+    Dim token As LongPtr, hr As Long, res As Variant
+    Dim args(1) As Variant, argTypes(1) As Integer, argPtrs(1) As LongPtr
+    
+    args(0) = Handler.Pointer
+    args(1) = VarPtr(token)
+    argTypes(0) = vbLongPtr: argTypes(1) = vbLongPtr
+    argPtrs(0) = VarPtr(args(0)): argPtrs(1) = VarPtr(args(1))
+    
+    hr = DispCallFunc(pObj, vTblIndex * LenB(pObj), CC_STDCALL, vbLong, 2, argTypes(0), argPtrs(0), res)
+    
+    If hr = 0 Then
+        If res = 0 Then
+            Handler.token = token
+            On Error GoTo 0
+            Debug.Print "a"
+            Debug.Print "Exists:" & m_InstanceMap.Exists(CStr(Handler.Pointer))
+            'RegisterInstance Handler.Pointer, WB2
+            
+            Debug.Print "Handler.Pointer" & Handler.Pointer
+            Debug.Print "Exists:" & m_InstanceMap.Exists(CStr(Handler.Pointer))
+            Debug.Print "b"
+            DCF_RegisterHandler2 = res
+        Else
+            Debug.Print strFuncName & " failed. res: " & res
+        End If
+    Else
+        Debug.Print strFuncName & " DispCallFunc failed. hr: " & hr
+    End If
+End Function
+
+
 Public Function DCF_RegisterHandlerWithString(WB2 As c3_WebView2, vTblIndex As Long, strFuncName As String, str As String, funcPtr As LongPtr) As Long
     
     Dim Handler As c4_Handler: Set Handler = New c4_Handler

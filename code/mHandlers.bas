@@ -11,14 +11,21 @@ End Function
 ' IUnknown::QueryInterface
 Public Function Handler_QueryInterface(ByVal this As LongPtr, ByVal riid As LongPtr, ByRef ppvObject As LongPtr) As Long
     ' Normally used to check GUID, but for now it returns itself
+    OutputDebugString StrPtr("QI Called from WebView2! " & this)
     Debug.Print "QueryInterface called!"
     ppvObject = this
     Handler_QueryInterface = S_OK
 End Function
 
 ' IUnknown::AddRef / Release (Returns 1 as a stub/dummy)
-Public Function Handler_AddRef(ByVal this As LongPtr) As Long: Handler_AddRef = 1: End Function
-Public Function Handler_Release(ByVal this As LongPtr) As Long: Handler_Release = 1: End Function
+Public Function Handler_AddRef(ByVal this As LongPtr) As Long:
+    OutputDebugString StrPtr("AddRef Called from WebView2! " & this)
+    Handler_AddRef = 1
+End Function
+Public Function Handler_Release(ByVal this As LongPtr) As Long
+    OutputDebugString StrPtr("Release Called from WebView2! " & this)
+    Handler_Release = 1
+End Function
 
 ' ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler::Invoke
 ' Receives the initialization result from WebView2
@@ -398,6 +405,57 @@ Public Function CallDevToolsProtocolMethodCompletedHandler_Invoke(ByVal this As 
     
 End Function
 
+'public HRESULT Invoke(ICoreWebView2 * sender, ICoreWebView2DevToolsProtocolEventReceivedEventArgs * args)
+''' <summary>
+''' Event handler for ICoreWebView2DevToolsProtocolEventReceivedEventHandler::Invoke.
+''' This intercepts real-time CDP events (Console logs, Network interception, etc.).
+''' </summary>
+Public Function DevToolsProtocolEventReceivedHandler_Invoke( _
+    ByVal this As LongPtr, _
+    ByVal sender As LongPtr, _
+    ByVal args As LongPtr) As Long
+
+    Debug.Print "DTPEventHandler_Invoke. this: " & this & " sender: " & sender
+
+    ' S_OK (Success) by default
+    DevToolsProtocolEventReceivedHandler_Invoke = 0
+    
+    'OutputDebugString StrPtr("DTPEventHandler_Invoke. this: " & this & " sender: " & sender)
+    
+    ' Fail-safe: Ensure args pointer is valid
+    If args = 0 Then
+        Debug.Print "Exit"
+        Exit Function
+    End If
+    ' To prevent crashes, use standard error handling for low-level COM operations
+    On Error GoTo ErrorHandler
+    
+    Dim wv2 As c3_WebView2
+    Set wv2 = GetInstance(this)
+    
+    If Not wv2 Is Nothing Then
+        wv2.NotifyDevToolsProtocolEventReceived
+        'wv2.Col_Handler.Remove "NotifyDevToolsProtocolEventReceivedHandler"
+        ' For stability, do not remove the handler from the collection here.
+        ' Let the Class_Terminate (destruction of c3_WebView2) handle the cleanup to prevent crashes.
+    End If
+    
+    'UnregisterInstance this
+
+    ' 1. Capture the specific event parameters (e.g., Get the JSON data payload)
+    ' (Assuming you have a helper class c3_WebView2 or similar to wrap ICoreWebView2DevToolsProtocolEventReceivedEventArgs)
+    ' Example:
+    ' Dim eventArgs As New c6_DevToolsEventArgs
+    ' eventArgs.Initialize args
+    ' Debug.Print eventArgs.ParameterObjectAsJson
+
+    Exit Function
+
+ErrorHandler:
+    ' Return HRESULT E_FAIL on crash/error to notify the WebView2 runtime
+    Debug.Print "Error!"
+    DevToolsProtocolEventReceivedHandler_Invoke = &H80004005
+End Function
 
 ' Helper: PtrToStrW (Converts Unicode pointer to VBA String)
 Public Function PtrToStrW(ByVal pWStr As LongPtr) As String
