@@ -237,8 +237,8 @@ Private Sub WV2_ContainsFullScreenElementChanged()
     Me.Caption = Title & " ContainsFullScreenElement:" & WV2Controller.WebView2.ContainsFullScreenElement
 End Sub
 
-Private Sub wv2_DevToolsProtocolEventReceived()
-    Debug.Print "DevToolsProtocolEventReceived"
+Private Sub wv2_DevToolsProtocolEventReceived(ByRef parameterObjectAsJson As String)
+    Debug.Print "DevToolsProtocolEventReceived. JSON:" & parameterObjectAsJson
 End Sub
 
 Private Sub WV2_DocumentTitleChanged()

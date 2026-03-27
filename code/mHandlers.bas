@@ -414,13 +414,17 @@ Public Function DevToolsProtocolEventReceivedHandler_Invoke( _
     ByVal this As LongPtr, _
     ByVal sender As LongPtr, _
     ByVal args As LongPtr) As Long
+    
+    ' this   : DevToolsProctocoleventReceiverHandler *
+    ' sender : ICoreWebView2 *
+    ' args   : ICoreWebView2DevToolsProtocolEventReceivedEventArgs *
 
-    Debug.Print "DTPEventHandler_Invoke. this: " & this & " sender: " & sender
+    'Debug.Print "DTPEventHandler_Invoke. this: " & this & " sender: " & sender
+    'OutputDebugString StrPtr("DTPEventHandler_Invoke. this: " & this & " sender: " & sender)
 
     ' S_OK (Success) by default
     DevToolsProtocolEventReceivedHandler_Invoke = 0
     
-    'OutputDebugString StrPtr("DTPEventHandler_Invoke. this: " & this & " sender: " & sender)
     
     ' Fail-safe: Ensure args pointer is valid
     If args = 0 Then
@@ -434,7 +438,7 @@ Public Function DevToolsProtocolEventReceivedHandler_Invoke( _
     Set wv2 = GetInstance(this)
     
     If Not wv2 Is Nothing Then
-        wv2.NotifyDevToolsProtocolEventReceived
+        wv2.NotifyDevToolsProtocolEventReceived this, sender, args
         'wv2.Col_Handler.Remove "NotifyDevToolsProtocolEventReceivedHandler"
         ' For stability, do not remove the handler from the collection here.
         ' Let the Class_Terminate (destruction of c3_WebView2) handle the cleanup to prevent crashes.

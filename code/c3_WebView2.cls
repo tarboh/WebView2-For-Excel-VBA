@@ -32,7 +32,7 @@ Public Event CapturePreviewCompleted(ByVal errorCode As Long)
 Public Event ReceiveScriptResult(ByVal result As String)
 Public LastScriptResult As String
 Public Event CallDevToolsProtocolMethodCompleted(ByVal errorCode As String, ByVal result As String)
-Public Event DevToolsProtocolEventReceived()
+Public Event DevToolsProtocolEventReceived(ByRef parameterObjectAsJson As String)
 
 Public Col_Handler As New Collection
 Private m_IsNavigating As Boolean
@@ -118,15 +118,28 @@ Public Sub NotifyCapturePreviewCompleted(ByVal errorCode As Long)
     
     RaiseEvent CapturePreviewCompleted(errorCode)
     
-    
 End Sub
 Public Sub NotifyCallDevToolsProtocolMethodCompleted(ByVal errorCode As Long, result As LongPtr)
     Dim strResult As String
     strResult = PtrToStrW(result)
     RaiseEvent CallDevToolsProtocolMethodCompleted(errorCode, strResult)
 End Sub
-Public Sub NotifyDevToolsProtocolEventReceived()
-    RaiseEvent DevToolsProtocolEventReceived
+Public Sub NotifyDevToolsProtocolEventReceived(ByVal this As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr)
+    
+    ' this   : DevToolsProctocoleventReceiverHandler *
+    ' sender : ICoreWebView2 *
+    ' args   : ICoreWebView2DevToolsProtocolEventReceivedEventArgs *
+    
+'    The parameter object of the corresponding DevToolsProtocol event represented as a JSON string.
+'
+'    public HRESULT get_ParameterObjectAsJson(LPWSTR * parameterObjectAsJson)
+'
+'    The caller must free the returned string with CoTaskMemFree. See API Conventions.
+    
+    Dim parameterObjectAsJson As String, paramObjPtr As LongPtr
+    parameterObjectAsJson = DCF_GetStringNoArgs(args, 3, "get_ParameterObjectAsJson")
+    
+    RaiseEvent DevToolsProtocolEventReceived(parameterObjectAsJson)
 End Sub
 
 ' --- Cleaning up ---
@@ -166,10 +179,10 @@ Public Function get_Settings() As Long
     Dim psettings As LongPtr
     Dim args(0) As Variant: args(0) = VarPtr(psettings)
     Dim args_Ptr(0) As LongPtr: args_Ptr(0) = VarPtr(args(0))
-    Dim args_Type(0) As Integer: args_Type(0) = vbLongPtr
+    Dim args_type(0) As Integer: args_type(0) = vbLongPtr
     Dim hr As Long, res As Variant
     
-    hr = DispCallFunc(ppWebView2, 3 * LenB(ppWebView2), CC_STDCALL, vbLong, 1, args_Type(0), args_Ptr(0), res)
+    hr = DispCallFunc(ppWebView2, 3 * LenB(ppWebView2), CC_STDCALL, vbLong, 1, args_type(0), args_Ptr(0), res)
     If hr = 0 Then
         Debug.Print "get_Settings Result:" & res
         get_Settings = res
@@ -379,11 +392,11 @@ End Function
 '    /* [in] */ ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler *handler) = 0;
 Public Function AddScriptToExecuteOnDocumentCreated(ByVal javascript As String) As Long
     Dim pStr As LongPtr: pStr = StrPtr(javascript)
-    Dim args(1) As Variant, args_Ptr(1) As LongPtr, args_Type(1) As Integer
+    Dim args(1) As Variant, args_Ptr(1) As LongPtr, args_type(1) As Integer
     
     args(0) = pStr
     args_Ptr(0) = VarPtr(args(0))
-    args_Type(0) = vbLongPtr
+    args_type(0) = vbLongPtr
     
     Dim Handler As c4_Handler
     Set Handler = New c4_Handler
@@ -393,10 +406,10 @@ Public Function AddScriptToExecuteOnDocumentCreated(ByVal javascript As String) 
     
     args(1) = Handler.Pointer
     args_Ptr(1) = VarPtr(args(1))
-    args_Type(1) = vbLongPtr
+    args_type(1) = vbLongPtr
     
     Dim hr As Long, res As Variant
-    hr = DispCallFunc(ppWebView2, 27 * LenB(ppWebView2), CC_STDCALL, vbLong, 2, args_Type(0), args_Ptr(0), res)
+    hr = DispCallFunc(ppWebView2, 27 * LenB(ppWebView2), CC_STDCALL, vbLong, 2, args_type(0), args_Ptr(0), res)
     If hr = 0 Then
         If res = 0 Then
             Debug.Print "AddScriptToExecuteOnDocumentCreated Success."
@@ -416,9 +429,9 @@ End Function
 Public Function RemoveScriptToExecuteOnDocumentCreated(ScriptId As String) As Long
     Dim args(0) As Variant:      args(0) = StrPtr(ScriptId)
     Dim args_Ptr(0)  As LongPtr: args_Ptr(0) = VarPtr(args(0))
-    Dim args_Type(0) As Integer: args_Type(0) = vbLongPtr
+    Dim args_type(0) As Integer: args_type(0) = vbLongPtr
     Dim hr As Long, res As Variant
-    hr = DispCallFunc(ppWebView2, 28 * LenB(ppWebView2), CC_STDCALL, vbLong, 1, args_Type(0), args_Ptr(0), res)
+    hr = DispCallFunc(ppWebView2, 28 * LenB(ppWebView2), CC_STDCALL, vbLong, 1, args_type(0), args_Ptr(0), res)
     If hr = 0 Then
         If res = 0 Then
             Debug.Print "RemoveScriptToExecuteOnDocumentCreated Success."
@@ -472,17 +485,17 @@ Public Function CapturePreview(ByVal format As Long, ByVal pStream As LongPtr) A
     ' Å¶ format: 0=PNG, 1=JPEG
     ' Å¶ pStream: Pointer to the pre-created IStream
     
-    Dim args(2) As Variant, args_Ptr(2) As LongPtr, args_Type(2) As Integer
+    Dim args(2) As Variant, args_Ptr(2) As LongPtr, args_type(2) As Integer
     
     ' 1. Fomat (Enum / Long)
     args(0) = format
     args_Ptr(0) = VarPtr(args(0))
-    args_Type(0) = vbLong
+    args_type(0) = vbLong
     
     ' 2. Pointer to the pre-created IStream
     args(1) = pStream
     args_Ptr(1) = VarPtr(args(1))
-    args_Type(1) = vbLongPtr
+    args_type(1) = vbLongPtr
     
     ' 3. Completion handler (c4_Handler)
     Dim Handler As c4_Handler
@@ -493,11 +506,11 @@ Public Function CapturePreview(ByVal format As Long, ByVal pStream As LongPtr) A
     
     args(2) = Handler.Pointer
     args_Ptr(2) = VarPtr(args(2))
-    args_Type(2) = vbLongPtr
+    args_type(2) = vbLongPtr
     
     ' Call ICoreWebView2::CapturePreview (VTable Index 30)
     Dim hr As Long, res As Variant
-    hr = DispCallFunc(ppWebView2, 30 * LenB(ppWebView2), CC_STDCALL, vbLong, 3, args_Type(0), args_Ptr(0), res)
+    hr = DispCallFunc(ppWebView2, 30 * LenB(ppWebView2), CC_STDCALL, vbLong, 3, args_type(0), args_Ptr(0), res)
     
     If hr = 0 Then
         RegisterInstance Handler.Pointer, Me
@@ -518,12 +531,12 @@ End Function
 'virtual HRESULT STDMETHODCALLTYPE PostWebMessageAsJson(
 '    /* [in] */ LPCWSTR webMessageAsJson) = 0;
 Public Function PostWebMessageAsJson(ByVal jsonString As String) As String
-    Dim args(0) As Variant, args_Type(0) As Integer, args_Ptr(0) As LongPtr
+    Dim args(0) As Variant, args_type(0) As Integer, args_Ptr(0) As LongPtr
     args(0) = StrPtr(jsonString)
-    args_Type(0) = vbLongPtr
+    args_type(0) = vbLongPtr
     args_Ptr(0) = VarPtr(args(0))
     Dim hr As Long, res As Variant
-    hr = DispCallFunc(ppWebView2, 32 * LenB(ppWebView2), CC_STDCALL, vbLong, 1, args_Type(0), args_Ptr(0), res)
+    hr = DispCallFunc(ppWebView2, 32 * LenB(ppWebView2), CC_STDCALL, vbLong, 1, args_type(0), args_Ptr(0), res)
     If hr = 0 Then
         If res = 0 Then
             Debug.Print "PostWebMessageAsJson success."
@@ -541,12 +554,12 @@ End Function
 'virtual HRESULT STDMETHODCALLTYPE PostWebMessageAsString(
 '    /* [in] */ LPCWSTR webMessageAsString) = 0;
 Public Function PostWebMessageAsString(ByVal webMessage As String) As Long
-    Dim args(0) As Variant, args_Type(0) As Integer, args_Ptr(0) As LongPtr
+    Dim args(0) As Variant, args_type(0) As Integer, args_Ptr(0) As LongPtr
     args(0) = StrPtr(webMessage)
-    args_Type(0) = vbLongPtr
+    args_type(0) = vbLongPtr
     args_Ptr(0) = VarPtr(args(0))
     Dim hr As Long, res As Variant
-    hr = DispCallFunc(ppWebView2, 33 * LenB(ppWebView2), CC_STDCALL, vbLong, 1, args_Type(0), args_Ptr(0), res)
+    hr = DispCallFunc(ppWebView2, 33 * LenB(ppWebView2), CC_STDCALL, vbLong, 1, args_type(0), args_Ptr(0), res)
     If hr = 0 Then
         If res = 0 Then
             Debug.Print "PostWebMessageAsString success."
@@ -593,21 +606,21 @@ Public Function CallDevToolsProtocolMethod(ByVal methodName As String, parameter
     Col_Handler.Add Handler, "CallDevToolsProtocolMethodCompletedHandler"
     Call Handler.CreateVTble(AddressOf CallDevToolsProtocolMethodCompletedHandler_Invoke, ppWebView2)
     
-    Dim args(2) As Variant, args_Type(2) As Integer, args_Ptr(2) As LongPtr
+    Dim args(2) As Variant, args_type(2) As Integer, args_Ptr(2) As LongPtr
     args(0) = StrPtr(methodName)
-    args_Type(0) = vbLongPtr
+    args_type(0) = vbLongPtr
     args_Ptr(0) = VarPtr(args(0))
     
     args(1) = StrPtr(parameterAsJson)
-    args_Type(1) = vbLongPtr
+    args_type(1) = vbLongPtr
     args_Ptr(1) = VarPtr(args(1))
     
     args(2) = Handler.Pointer
-    args_Type(2) = vbLongPtr
+    args_type(2) = vbLongPtr
     args_Ptr(2) = VarPtr(args(2))
     
     Dim hr As Long, res As Variant
-    hr = DispCallFunc(ppWebView2, 36 * LenB(ppWebView2), CC_STDCALL, vbLong, 3, args_Type(0), args_Ptr(0), res)
+    hr = DispCallFunc(ppWebView2, 36 * LenB(ppWebView2), CC_STDCALL, vbLong, 3, args_type(0), args_Ptr(0), res)
     If hr = 0 Then
         If res = 0 Then
             Debug.Print "CallDevToolsProtocolMethod success."
@@ -629,12 +642,12 @@ End Function
 '    /* [retval][out] */ UINT32 *value) = 0;
 Public Property Get BrowserProcessId() As Long
     Dim value As Long: value = 0
-    Dim args(0) As Variant, args_Type(0) As Integer, args_Ptr(0) As LongPtr
+    Dim args(0) As Variant, args_type(0) As Integer, args_Ptr(0) As LongPtr
     args(0) = VarPtr(value)
-    args_Type(0) = vbLongPtr
+    args_type(0) = vbLongPtr
     args_Ptr(0) = VarPtr(args(0))
     Dim hr As Long, res As Variant
-    hr = DispCallFunc(ppWebView2, 37 * LenB(ppWebView2), CC_STDCALL, vbLong, 1, args_Type(0), args_Ptr(0), res)
+    hr = DispCallFunc(ppWebView2, 37 * LenB(ppWebView2), CC_STDCALL, vbLong, 1, args_type(0), args_Ptr(0), res)
     If hr = 0 Then
         If res = 0 Then
             BrowserProcessId = value
@@ -697,17 +710,17 @@ Public Sub GetDevToolsProtocolEventReceiver(ByVal eventName As String) ' As c7_D
         Debug.Print "delete."
     End If
     On Error GoTo 0
-    Dim args(1) As Variant, args_Type(1) As Integer, args_Ptr(1) As LongPtr
+    Dim args(1) As Variant, args_type(1) As Integer, args_Ptr(1) As LongPtr
     args(0) = StrPtr(eventName)
-    args_Type(0) = vbLongPtr
+    args_type(0) = vbLongPtr
     args_Ptr(0) = VarPtr(args(0))
     
     args(1) = VarPtr(erPtr)
-    args_Type(1) = vbLongPtr
+    args_type(1) = vbLongPtr
     args_Ptr(1) = VarPtr(args(1))
     
     Dim hr As Long, res As Variant
-    hr = DispCallFunc(ppWebView2, 42 * LenB(ppWebView2), CC_STDCALL, vbLong, 2, args_Type(0), args_Ptr(0), res)
+    hr = DispCallFunc(ppWebView2, 42 * LenB(ppWebView2), CC_STDCALL, vbLong, 2, args_type(0), args_Ptr(0), res)
     If hr = 0 Then
         If res = 0 Then
             Debug.Print "erPtr:" & erPtr
@@ -810,12 +823,12 @@ End Function
 '    /* [retval][out] */ BOOL *containsFullScreenElement) = 0;
 Public Property Get ContainsFullScreenElement() As Boolean
     Dim lng_ContainsFullScreenElement As Long
-    Dim args(0) As Variant, args_Type(0) As Integer, args_Ptr(0) As LongPtr
+    Dim args(0) As Variant, args_type(0) As Integer, args_Ptr(0) As LongPtr
     args(0) = VarPtr(lng_ContainsFullScreenElement)
-    args_Type(0) = vbLongPtr
+    args_type(0) = vbLongPtr
     args_Ptr(0) = VarPtr(args(0))
     Dim hr As Long, res As Variant
-    hr = DispCallFunc(ppWebView2, 54 * LenB(ppWebView2), CC_STDCALL, vbLong, 1, args_Type(0), args_Ptr(0), res)
+    hr = DispCallFunc(ppWebView2, 54 * LenB(ppWebView2), CC_STDCALL, vbLong, 1, args_type(0), args_Ptr(0), res)
     If hr = 0 Then
         If res = 0 Then
             If lng_ContainsFullScreenElement = 1 Then
@@ -977,18 +990,18 @@ Public Function CapturePreviewToFile(ByVal folderPath As String, ByVal filePath 
     End If
 
     Dim format As Long: format = IIf(isJpeg, 1, 0)
-    Dim args(2) As Variant, args_Ptr(2) As LongPtr, args_Type(2) As Integer
+    Dim args(2) As Variant, args_Ptr(2) As LongPtr, args_type(2) As Integer
     Dim res As Variant
     
     ' Arg 0: Image format (0: PNG, 1: JPEG)
     args(0) = format
     args_Ptr(0) = VarPtr(args(0))
-    args_Type(0) = vbLong
+    args_type(0) = vbLong
 
     ' Arg 1: Pointer to the pre-created IStream
     args(1) = pStream
     args_Ptr(1) = VarPtr(args(1))
-    args_Type(1) = vbLongPtr
+    args_type(1) = vbLongPtr
 
     Dim Handler As c4_Handler
     Set Handler = New c4_Handler
@@ -1002,10 +1015,10 @@ Public Function CapturePreviewToFile(ByVal folderPath As String, ByVal filePath 
     ' Arg 2: Completion handler (c4_Handler)
     args(2) = Handler.Pointer
     args_Ptr(2) = VarPtr(args(2))
-    args_Type(2) = vbLongPtr
+    args_type(2) = vbLongPtr
 
     ' Call ICoreWebView2::CapturePreview (VTable Index 30)
-    hr = DispCallFunc(ppWebView2, 30 * LenB(ppWebView2), CC_STDCALL, vbLong, 3, args_Type(0), args_Ptr(0), res)
+    hr = DispCallFunc(ppWebView2, 30 * LenB(ppWebView2), CC_STDCALL, vbLong, 3, args_type(0), args_Ptr(0), res)
 
     If hr = 0 Then
         RegisterInstance Handler.Pointer, Me
