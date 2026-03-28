@@ -463,20 +463,29 @@ CleanUp_ITypeInfo:
 End Function
 
 Public Function dcf(ptr As LongPtr, vTblIndex As Long, funcName As String, ParamArray args() As Variant) As Long
-    Debug.Print "dcf called for " & funcName
+    
+    'Debug.Print "dcf called for " & funcName
     Dim l As Long: l = LBound(args)
     Dim u As Long: u = UBound(args)
     Dim cnt As Long: cnt = u - l + 1
     Dim hr As Long, res As Variant
     Dim args_Type() As Integer
     Dim args_Ptr() As LongPtr
+    Dim localVar() As Variant
+    ' IMPORTANT: Do NOT use VarPtr(args(i)) directly.
+    ' ParamArray elements are temporary Variants managed by the VBA runtime stack.
+    ' Their addresses become invalid by the time DispCallFunc internally reads rgpvarg,
+    ' causing the COM method to receive garbage values.
+    ' Copying into a heap-allocated dynamic array (localArgs) ensures the Variant
+    ' addresses remain stable throughout the DispCallFunc call.
     If cnt > 0 Then
-        ReDim args_Type(l To u): ReDim args_Ptr(l To u)
+        ReDim args_Type(l To u): ReDim args_Ptr(l To u): ReDim localVar(l To u)
         Dim i As Long
         For i = l To u
-            args_Type(i) = VarType(args(i))
-            args_Ptr(i) = VarPtr(args(i))
-            Debug.Print "args(" & i & ")", "Type:" & args_Type(i), "Value:" & args(i)
+            localVar(i) = args(i)
+            args_Type(i) = VarType(localVar(i))
+            args_Ptr(i) = VarPtr(localVar(i))
+            'Debug.Print "args(" & i & ")", "Type:" & args_Type(i), "Ptr:" & Hex(args_Ptr(i)),"Value:" & localVar(i)
         Next
         hr = DispCallFunc(ptr, vTblIndex * LenB(ptr), CC_STDCALL, vbLong, cnt, args_Type(l), args_Ptr(l), res)
     Else

@@ -59,7 +59,10 @@ Public Enum COREWEBVIEW2_WEB_RESOURCE_CONTEXT
     COREWEBVIEW2_WEB_RESOURCE_CONTEXT_IMAGE = 4
 End Enum
 
-
+Public Enum COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT
+    PNG = 0
+    JPEG = 1
+End Enum
 ' --- For internal notifications ---
 Public Sub NotifyNavigationStarting()
     RaiseEvent NavigationStarting
@@ -190,22 +193,12 @@ End Sub
 '    /* [retval][out] */ ICoreWebView2Settings **settings) = 0;
 Public Function get_Settings() As Long
     Dim psettings As LongPtr
-    Dim args(0) As Variant: args(0) = VarPtr(psettings)
-    Dim args_Ptr(0) As LongPtr: args_Ptr(0) = VarPtr(args(0))
-    Dim args_Type(0) As Integer: args_Type(0) = vbLongPtr
-    Dim hr As Long, res As Variant
-    
-    hr = DispCallFunc(ppWebView2, 3 * LenB(ppWebView2), CC_STDCALL, vbLong, 1, args_Type(0), args_Ptr(0), res)
+    Dim hr As Long
+    hr = dcf(ppWebView2, 3, "get_Settings", VarPtr(psettings))
     If hr = 0 Then
-        Debug.Print "get_Settings Result:" & res
-        get_Settings = res
-        If res = 0 Then
-            Debug.Print "psettings:" & psettings
-            Set Settings = New c6_WebView2Settings
-            Settings.Init psettings
-        End If
-    Else
-        Debug.Print "DispCallFunc(get_Settings) Failed. HR:" & hr
+        Debug.Print "psettings:" & psettings
+        Set Settings = New c6_WebView2Settings
+        Settings.Init psettings
     End If
 End Function
 
@@ -404,56 +397,36 @@ End Function
 '    /* [in] */ LPCWSTR javaScript,
 '    /* [in] */ ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler *handler) = 0;
 Public Function AddScriptToExecuteOnDocumentCreated(ByVal javascript As String) As Long
-    Dim pStr As LongPtr: pStr = StrPtr(javascript)
-    Dim args(1) As Variant, args_Ptr(1) As LongPtr, args_Type(1) As Integer
-    
-    args(0) = pStr
-    args_Ptr(0) = VarPtr(args(0))
-    args_Type(0) = vbLongPtr
-    
     Dim Handler As c4_Handler
     Set Handler = New c4_Handler
     Col_Handler.Add Handler
     Call Handler.CreateVTble(AddressOf AddScriptToExecuteOnDocumentCreatedCompletedHandler_Invoke, ppWebView2)
     Handler.Namae = "AddScriptToExecuteOnDocumentCreated"
-    
-    args(1) = Handler.Pointer
-    args_Ptr(1) = VarPtr(args(1))
-    args_Type(1) = vbLongPtr
-    
-    Dim hr As Long, res As Variant
-    hr = DispCallFunc(ppWebView2, 27 * LenB(ppWebView2), CC_STDCALL, vbLong, 2, args_Type(0), args_Ptr(0), res)
+
+    Dim hr As Long
+    hr = dcf(ppWebView2, 27, "AddScriptToExecuteOnDocumentCreated", StrPtr(javascript), Handler.Pointer)
     If hr = 0 Then
-        If res = 0 Then
-            Debug.Print "AddScriptToExecuteOnDocumentCreated Success."
-            RegisterInstance Handler.Pointer, Me
-        Else
-            Debug.Print "AddScriptToExecuteOnDocumentCreated Failed. Res:" & res
-        End If
+        Debug.Print "AddScriptToExecuteOnDocumentCreated Success."
+        RegisterInstance Handler.Pointer, Me
     Else
         Debug.Print "AddScriptToExecuteOnDocumentCreated Failed. Hr:" & hr
     End If
-    
+
 End Function
 
 '28
 'virtual HRESULT STDMETHODCALLTYPE RemoveScriptToExecuteOnDocumentCreated(
 '    /* [in] */ LPCWSTR id) = 0;
 Public Function RemoveScriptToExecuteOnDocumentCreated(ScriptId As String) As Long
-    Dim args(0) As Variant:      args(0) = StrPtr(ScriptId)
-    Dim args_Ptr(0)  As LongPtr: args_Ptr(0) = VarPtr(args(0))
-    Dim args_Type(0) As Integer: args_Type(0) = vbLongPtr
-    Dim hr As Long, res As Variant
-    hr = DispCallFunc(ppWebView2, 28 * LenB(ppWebView2), CC_STDCALL, vbLong, 1, args_Type(0), args_Ptr(0), res)
+    Dim hr As Long
+    hr = dcf(ppWebView2, 28, "RemoveScriptToExecuteOnDocumentCreated", StrPtr(ScriptId))
     If hr = 0 Then
-        If res = 0 Then
-            Debug.Print "RemoveScriptToExecuteOnDocumentCreated Success."
-        Else
-            Debug.Print "RemoveScriptToExecuteOnDocumentCreated Failed. Res:" & res
-        End If
+        Debug.Print "RemoveScriptToExecuteOnDocumentCreated Success."
     Else
         Debug.Print "RemoveScriptToExecuteOnDocumentCreated Failed. Hr:" & hr
     End If
+    RemoveScriptToExecuteOnDocumentCreated = hr
+
 End Function
 
 Public Property Get ScriptId() As String
@@ -494,96 +467,43 @@ End Function
 '    /* [in] */ COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT imageFormat,
 '    /* [in] */ IStream *imageStream,
 '    /* [in] */ ICoreWebView2CapturePreviewCompletedHandler *handler) = 0;
-Public Function CapturePreview(ByVal format As Long, ByVal pStream As LongPtr) As Long
+Public Function CapturePreview(ByVal format As COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT, ByVal pStream As LongPtr) As Long
     ' Å¶ format: 0=PNG, 1=JPEG
     ' Å¶ pStream: Pointer to the pre-created IStream
     
-    Dim args(2) As Variant, args_Ptr(2) As LongPtr, args_Type(2) As Integer
-    
-    ' 1. Fomat (Enum / Long)
-    args(0) = format
-    args_Ptr(0) = VarPtr(args(0))
-    args_Type(0) = vbLong
-    
-    ' 2. Pointer to the pre-created IStream
-    args(1) = pStream
-    args_Ptr(1) = VarPtr(args(1))
-    args_Type(1) = vbLongPtr
-    
-    ' 3. Completion handler (c4_Handler)
+    ' Completion handler (c4_Handler)
     Dim Handler As c4_Handler
     Set Handler = New c4_Handler
-    
     Col_Handler.Add Handler, "CapturePreviewCompletedHandler"
     Call Handler.CreateVTble(AddressOf CapturePreviewCompletedHandler_Invoke, ppWebView2)
     
-    args(2) = Handler.Pointer
-    args_Ptr(2) = VarPtr(args(2))
-    args_Type(2) = vbLongPtr
-    
     ' Call ICoreWebView2::CapturePreview (VTable Index 30)
-    Dim hr As Long, res As Variant
-    hr = DispCallFunc(ppWebView2, 30 * LenB(ppWebView2), CC_STDCALL, vbLong, 3, args_Type(0), args_Ptr(0), res)
-    
+    Dim hr As Long
+    hr = dcf(ppWebView2, 30, "CapturePreview", format, pStream, Handler.Pointer)
     If hr = 0 Then
         RegisterInstance Handler.Pointer, Me
-        CapturePreview = res
+        CapturePreview = hr
     End If
 End Function
-
 
 '31
 'virtual HRESULT STDMETHODCALLTYPE Reload( void) = 0;
 Public Function Reload() As Long
-    Dim hr As Long, res As Variant
-    hr = DispCallFunc(ppWebView2, 31 * LenB(ppWebView2), CC_STDCALL, vbLong, 0, 0, 0, res)
-    Reload = res
+    Reload = dcf(ppWebView2, 31, "Reload")
 End Function
 
 '32
 'virtual HRESULT STDMETHODCALLTYPE PostWebMessageAsJson(
 '    /* [in] */ LPCWSTR webMessageAsJson) = 0;
 Public Function PostWebMessageAsJson(ByVal jsonString As String) As String
-    Dim args(0) As Variant, args_Type(0) As Integer, args_Ptr(0) As LongPtr
-    args(0) = StrPtr(jsonString)
-    args_Type(0) = vbLongPtr
-    args_Ptr(0) = VarPtr(args(0))
-    Dim hr As Long, res As Variant
-    hr = DispCallFunc(ppWebView2, 32 * LenB(ppWebView2), CC_STDCALL, vbLong, 1, args_Type(0), args_Ptr(0), res)
-    If hr = 0 Then
-        If res = 0 Then
-            Debug.Print "PostWebMessageAsJson success."
-        Else
-            Debug.Print "PostWebMessageAsJson failed. res:" & res
-        End If
-        PostWebMessageAsJson = res
-    Else
-        Debug.Print "PostWebMessageAsJson failed. hr:" & hr
-        PostWebMessageAsJson = hr
-    End If
+    PostWebMessageAsJson = dcf(ppWebView2, 32, "PostWebMessageAsJson", StrPtr(jsonString))
 End Function
 
 '33
 'virtual HRESULT STDMETHODCALLTYPE PostWebMessageAsString(
 '    /* [in] */ LPCWSTR webMessageAsString) = 0;
 Public Function PostWebMessageAsString(ByVal webMessage As String) As Long
-    Dim args(0) As Variant, args_Type(0) As Integer, args_Ptr(0) As LongPtr
-    args(0) = StrPtr(webMessage)
-    args_Type(0) = vbLongPtr
-    args_Ptr(0) = VarPtr(args(0))
-    Dim hr As Long, res As Variant
-    hr = DispCallFunc(ppWebView2, 33 * LenB(ppWebView2), CC_STDCALL, vbLong, 1, args_Type(0), args_Ptr(0), res)
-    If hr = 0 Then
-        If res = 0 Then
-            Debug.Print "PostWebMessageAsString success."
-        Else
-            Debug.Print "PostWebMessageAsString failed. res:" & res
-        End If
-        PostWebMessageAsString = res
-    Else
-        Debug.Print "PostWebMessageAsJson failed. hr:" & hr
-        PostWebMessageAsString = hr
-    End If
+    PostWebMessageAsString = dcf(ppWebView2, 33, "PostWebMessageAsString", StrPtr(webMessage))
 End Function
 
 '34

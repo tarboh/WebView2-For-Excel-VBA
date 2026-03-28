@@ -141,6 +141,10 @@ Private Sub CommandButton_PostWebMessageAsString_Click()
     Debug.Print WV2Controller.WebView2.PostWebMessageAsString(webMessage)
 End Sub
 
+Private Sub CommandButton_Reload_Click()
+    Call WV2Controller.WebView2.Reload
+End Sub
+
 Private Sub CommandButton_RunScript_Click()
     Dim script As String
     script = TextBox_Script.text
@@ -155,8 +159,6 @@ Private Sub CommandButton_StopAutoJS_Click()
     WV2Controller.WebView2.RemoveScriptToExecuteOnDocumentCreated ( _
         WV2Controller.WebView2.ScriptId)
 End Sub
-
-
 
 Private Sub CommandButton4_Click()
     
