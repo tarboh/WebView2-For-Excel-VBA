@@ -33,6 +33,7 @@ Public Event ReceiveScriptResult(ByVal result As String)
 Public LastScriptResult As String
 Public Event CallDevToolsProtocolMethodCompleted(ByVal errorCode As String, ByVal result As String)
 Public Event DevToolsProtocolEventReceived(ByRef parameterObjectAsJson As String)
+Public Event WindowCloseRequested(ByVal this As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr)
 
 Public Col_Handler As New Collection
 Private m_IsNavigating As Boolean
@@ -50,6 +51,14 @@ Public col_DTPEventReceiver As New Collection
 
 Private erPtr As LongPtr
 Private vTblePtrs(4) As LongPtr
+
+Public Enum COREWEBVIEW2_WEB_RESOURCE_CONTEXT
+    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL = 0
+    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT = 1
+    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_STYLESHEET = 2
+    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_IMAGE = 4
+End Enum
+
 
 ' --- For internal notifications ---
 Public Sub NotifyNavigationStarting()
@@ -142,6 +151,10 @@ Public Sub NotifyDevToolsProtocolEventReceived(ByVal this As LongPtr, ByVal send
     RaiseEvent DevToolsProtocolEventReceived(parameterObjectAsJson)
 End Sub
 
+Public Sub NotifyWindowCloseRequested(ByVal this As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr)
+    RaiseEvent WindowCloseRequested(this, sender, args)
+End Sub
+
 ' --- Cleaning up ---
 Public Sub Finalize()
     Dim h As c4_Handler
@@ -179,10 +192,10 @@ Public Function get_Settings() As Long
     Dim psettings As LongPtr
     Dim args(0) As Variant: args(0) = VarPtr(psettings)
     Dim args_Ptr(0) As LongPtr: args_Ptr(0) = VarPtr(args(0))
-    Dim args_type(0) As Integer: args_type(0) = vbLongPtr
+    Dim args_Type(0) As Integer: args_Type(0) = vbLongPtr
     Dim hr As Long, res As Variant
     
-    hr = DispCallFunc(ppWebView2, 3 * LenB(ppWebView2), CC_STDCALL, vbLong, 1, args_type(0), args_Ptr(0), res)
+    hr = DispCallFunc(ppWebView2, 3 * LenB(ppWebView2), CC_STDCALL, vbLong, 1, args_Type(0), args_Ptr(0), res)
     If hr = 0 Then
         Debug.Print "get_Settings Result:" & res
         get_Settings = res
@@ -392,11 +405,11 @@ End Function
 '    /* [in] */ ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler *handler) = 0;
 Public Function AddScriptToExecuteOnDocumentCreated(ByVal javascript As String) As Long
     Dim pStr As LongPtr: pStr = StrPtr(javascript)
-    Dim args(1) As Variant, args_Ptr(1) As LongPtr, args_type(1) As Integer
+    Dim args(1) As Variant, args_Ptr(1) As LongPtr, args_Type(1) As Integer
     
     args(0) = pStr
     args_Ptr(0) = VarPtr(args(0))
-    args_type(0) = vbLongPtr
+    args_Type(0) = vbLongPtr
     
     Dim Handler As c4_Handler
     Set Handler = New c4_Handler
@@ -406,10 +419,10 @@ Public Function AddScriptToExecuteOnDocumentCreated(ByVal javascript As String) 
     
     args(1) = Handler.Pointer
     args_Ptr(1) = VarPtr(args(1))
-    args_type(1) = vbLongPtr
+    args_Type(1) = vbLongPtr
     
     Dim hr As Long, res As Variant
-    hr = DispCallFunc(ppWebView2, 27 * LenB(ppWebView2), CC_STDCALL, vbLong, 2, args_type(0), args_Ptr(0), res)
+    hr = DispCallFunc(ppWebView2, 27 * LenB(ppWebView2), CC_STDCALL, vbLong, 2, args_Type(0), args_Ptr(0), res)
     If hr = 0 Then
         If res = 0 Then
             Debug.Print "AddScriptToExecuteOnDocumentCreated Success."
@@ -429,9 +442,9 @@ End Function
 Public Function RemoveScriptToExecuteOnDocumentCreated(ScriptId As String) As Long
     Dim args(0) As Variant:      args(0) = StrPtr(ScriptId)
     Dim args_Ptr(0)  As LongPtr: args_Ptr(0) = VarPtr(args(0))
-    Dim args_type(0) As Integer: args_type(0) = vbLongPtr
+    Dim args_Type(0) As Integer: args_Type(0) = vbLongPtr
     Dim hr As Long, res As Variant
-    hr = DispCallFunc(ppWebView2, 28 * LenB(ppWebView2), CC_STDCALL, vbLong, 1, args_type(0), args_Ptr(0), res)
+    hr = DispCallFunc(ppWebView2, 28 * LenB(ppWebView2), CC_STDCALL, vbLong, 1, args_Type(0), args_Ptr(0), res)
     If hr = 0 Then
         If res = 0 Then
             Debug.Print "RemoveScriptToExecuteOnDocumentCreated Success."
@@ -485,17 +498,17 @@ Public Function CapturePreview(ByVal format As Long, ByVal pStream As LongPtr) A
     ' Å¶ format: 0=PNG, 1=JPEG
     ' Å¶ pStream: Pointer to the pre-created IStream
     
-    Dim args(2) As Variant, args_Ptr(2) As LongPtr, args_type(2) As Integer
+    Dim args(2) As Variant, args_Ptr(2) As LongPtr, args_Type(2) As Integer
     
     ' 1. Fomat (Enum / Long)
     args(0) = format
     args_Ptr(0) = VarPtr(args(0))
-    args_type(0) = vbLong
+    args_Type(0) = vbLong
     
     ' 2. Pointer to the pre-created IStream
     args(1) = pStream
     args_Ptr(1) = VarPtr(args(1))
-    args_type(1) = vbLongPtr
+    args_Type(1) = vbLongPtr
     
     ' 3. Completion handler (c4_Handler)
     Dim Handler As c4_Handler
@@ -506,11 +519,11 @@ Public Function CapturePreview(ByVal format As Long, ByVal pStream As LongPtr) A
     
     args(2) = Handler.Pointer
     args_Ptr(2) = VarPtr(args(2))
-    args_type(2) = vbLongPtr
+    args_Type(2) = vbLongPtr
     
     ' Call ICoreWebView2::CapturePreview (VTable Index 30)
     Dim hr As Long, res As Variant
-    hr = DispCallFunc(ppWebView2, 30 * LenB(ppWebView2), CC_STDCALL, vbLong, 3, args_type(0), args_Ptr(0), res)
+    hr = DispCallFunc(ppWebView2, 30 * LenB(ppWebView2), CC_STDCALL, vbLong, 3, args_Type(0), args_Ptr(0), res)
     
     If hr = 0 Then
         RegisterInstance Handler.Pointer, Me
@@ -531,12 +544,12 @@ End Function
 'virtual HRESULT STDMETHODCALLTYPE PostWebMessageAsJson(
 '    /* [in] */ LPCWSTR webMessageAsJson) = 0;
 Public Function PostWebMessageAsJson(ByVal jsonString As String) As String
-    Dim args(0) As Variant, args_type(0) As Integer, args_Ptr(0) As LongPtr
+    Dim args(0) As Variant, args_Type(0) As Integer, args_Ptr(0) As LongPtr
     args(0) = StrPtr(jsonString)
-    args_type(0) = vbLongPtr
+    args_Type(0) = vbLongPtr
     args_Ptr(0) = VarPtr(args(0))
     Dim hr As Long, res As Variant
-    hr = DispCallFunc(ppWebView2, 32 * LenB(ppWebView2), CC_STDCALL, vbLong, 1, args_type(0), args_Ptr(0), res)
+    hr = DispCallFunc(ppWebView2, 32 * LenB(ppWebView2), CC_STDCALL, vbLong, 1, args_Type(0), args_Ptr(0), res)
     If hr = 0 Then
         If res = 0 Then
             Debug.Print "PostWebMessageAsJson success."
@@ -554,12 +567,12 @@ End Function
 'virtual HRESULT STDMETHODCALLTYPE PostWebMessageAsString(
 '    /* [in] */ LPCWSTR webMessageAsString) = 0;
 Public Function PostWebMessageAsString(ByVal webMessage As String) As Long
-    Dim args(0) As Variant, args_type(0) As Integer, args_Ptr(0) As LongPtr
+    Dim args(0) As Variant, args_Type(0) As Integer, args_Ptr(0) As LongPtr
     args(0) = StrPtr(webMessage)
-    args_type(0) = vbLongPtr
+    args_Type(0) = vbLongPtr
     args_Ptr(0) = VarPtr(args(0))
     Dim hr As Long, res As Variant
-    hr = DispCallFunc(ppWebView2, 33 * LenB(ppWebView2), CC_STDCALL, vbLong, 1, args_type(0), args_Ptr(0), res)
+    hr = DispCallFunc(ppWebView2, 33 * LenB(ppWebView2), CC_STDCALL, vbLong, 1, args_Type(0), args_Ptr(0), res)
     If hr = 0 Then
         If res = 0 Then
             Debug.Print "PostWebMessageAsString success."
@@ -606,21 +619,21 @@ Public Function CallDevToolsProtocolMethod(ByVal methodName As String, parameter
     Col_Handler.Add Handler, "CallDevToolsProtocolMethodCompletedHandler"
     Call Handler.CreateVTble(AddressOf CallDevToolsProtocolMethodCompletedHandler_Invoke, ppWebView2)
     
-    Dim args(2) As Variant, args_type(2) As Integer, args_Ptr(2) As LongPtr
+    Dim args(2) As Variant, args_Type(2) As Integer, args_Ptr(2) As LongPtr
     args(0) = StrPtr(methodName)
-    args_type(0) = vbLongPtr
+    args_Type(0) = vbLongPtr
     args_Ptr(0) = VarPtr(args(0))
     
     args(1) = StrPtr(parameterAsJson)
-    args_type(1) = vbLongPtr
+    args_Type(1) = vbLongPtr
     args_Ptr(1) = VarPtr(args(1))
     
     args(2) = Handler.Pointer
-    args_type(2) = vbLongPtr
+    args_Type(2) = vbLongPtr
     args_Ptr(2) = VarPtr(args(2))
     
     Dim hr As Long, res As Variant
-    hr = DispCallFunc(ppWebView2, 36 * LenB(ppWebView2), CC_STDCALL, vbLong, 3, args_type(0), args_Ptr(0), res)
+    hr = DispCallFunc(ppWebView2, 36 * LenB(ppWebView2), CC_STDCALL, vbLong, 3, args_Type(0), args_Ptr(0), res)
     If hr = 0 Then
         If res = 0 Then
             Debug.Print "CallDevToolsProtocolMethod success."
@@ -642,12 +655,12 @@ End Function
 '    /* [retval][out] */ UINT32 *value) = 0;
 Public Property Get BrowserProcessId() As Long
     Dim value As Long: value = 0
-    Dim args(0) As Variant, args_type(0) As Integer, args_Ptr(0) As LongPtr
+    Dim args(0) As Variant, args_Type(0) As Integer, args_Ptr(0) As LongPtr
     args(0) = VarPtr(value)
-    args_type(0) = vbLongPtr
+    args_Type(0) = vbLongPtr
     args_Ptr(0) = VarPtr(args(0))
     Dim hr As Long, res As Variant
-    hr = DispCallFunc(ppWebView2, 37 * LenB(ppWebView2), CC_STDCALL, vbLong, 1, args_type(0), args_Ptr(0), res)
+    hr = DispCallFunc(ppWebView2, 37 * LenB(ppWebView2), CC_STDCALL, vbLong, 1, args_Type(0), args_Ptr(0), res)
     If hr = 0 Then
         If res = 0 Then
             BrowserProcessId = value
@@ -710,17 +723,17 @@ Public Sub GetDevToolsProtocolEventReceiver(ByVal eventName As String) ' As c7_D
         Debug.Print "delete."
     End If
     On Error GoTo 0
-    Dim args(1) As Variant, args_type(1) As Integer, args_Ptr(1) As LongPtr
+    Dim args(1) As Variant, args_Type(1) As Integer, args_Ptr(1) As LongPtr
     args(0) = StrPtr(eventName)
-    args_type(0) = vbLongPtr
+    args_Type(0) = vbLongPtr
     args_Ptr(0) = VarPtr(args(0))
     
     args(1) = VarPtr(erPtr)
-    args_type(1) = vbLongPtr
+    args_Type(1) = vbLongPtr
     args_Ptr(1) = VarPtr(args(1))
     
     Dim hr As Long, res As Variant
-    hr = DispCallFunc(ppWebView2, 42 * LenB(ppWebView2), CC_STDCALL, vbLong, 2, args_type(0), args_Ptr(0), res)
+    hr = DispCallFunc(ppWebView2, 42 * LenB(ppWebView2), CC_STDCALL, vbLong, 2, args_Type(0), args_Ptr(0), res)
     If hr = 0 Then
         If res = 0 Then
             Debug.Print "erPtr:" & erPtr
@@ -744,6 +757,16 @@ End Sub
 
 '43
 'virtual HRESULT STDMETHODCALLTYPE Stop( void) = 0;
+Public Function Stop_() As Long
+    Dim hr As Long, res As Variant
+    hr = DispCallFunc(ppWebView2, 43 * LenB(ppWebView2), CC_STDCALL, vbLong, 0, 0, 0, res)
+    If hr = 0 And res = 0 Then
+        Stop_ = res
+    Else
+        Debug.Print "Stop Failed."
+        Stop_ = hr + res
+    End If
+End Function
 
 '44
 'virtual HRESULT STDMETHODCALLTYPE add_NewWindowRequested(
@@ -823,12 +846,12 @@ End Function
 '    /* [retval][out] */ BOOL *containsFullScreenElement) = 0;
 Public Property Get ContainsFullScreenElement() As Boolean
     Dim lng_ContainsFullScreenElement As Long
-    Dim args(0) As Variant, args_type(0) As Integer, args_Ptr(0) As LongPtr
+    Dim args(0) As Variant, args_Type(0) As Integer, args_Ptr(0) As LongPtr
     args(0) = VarPtr(lng_ContainsFullScreenElement)
-    args_type(0) = vbLongPtr
+    args_Type(0) = vbLongPtr
     args_Ptr(0) = VarPtr(args(0))
     Dim hr As Long, res As Variant
-    hr = DispCallFunc(ppWebView2, 54 * LenB(ppWebView2), CC_STDCALL, vbLong, 1, args_type(0), args_Ptr(0), res)
+    hr = DispCallFunc(ppWebView2, 54 * LenB(ppWebView2), CC_STDCALL, vbLong, 1, args_Type(0), args_Ptr(0), res)
     If hr = 0 Then
         If res = 0 Then
             If lng_ContainsFullScreenElement = 1 Then
@@ -854,7 +877,10 @@ End Property
 ' which URLs (e.g., "*" for all, or a specific domain) and resource types to intercept.
 ' If this filter is not registered, the event will never fire.
 Public Function add_WebResourceRequested() As Long
-    add_WebResourceRequested = mHelpers.DCF_RegisterHandler(Me, 55, "add_WebResourceRequested", AddressOf WebResourceRequested_Invoke, "WebResourceRequested")
+    Dim hr As Long
+    hr = mHelpers.DCF_RegisterHandler(Me, 55, "add_WebResourceRequested", AddressOf WebResourceRequested_Invoke, "WebResourceRequested")
+    Debug.Print "add_WebResourceRequested :" & hr
+    add_WebResourceRequested = hr
 End Function
 
 '56
@@ -868,16 +894,66 @@ End Function
 'virtual HRESULT STDMETHODCALLTYPE AddWebResourceRequestedFilter(
 '    /* [in] */ const LPCWSTR uri,
 '    /* [in] */ const COREWEBVIEW2_WEB_RESOURCE_CONTEXT resourceContext) = 0;
+''' <summary>
+''' Adds a filter to intercept specific web resources (Index 57).
+''' </summary>
+Public Sub AddWebResourceRequestedFilter(ByVal uri As String, ByVal resourceContext As COREWEBVIEW2_WEB_RESOURCE_CONTEXT)
+    Dim args(1) As Variant, args_Type(1) As Integer, args_Ptr(1) As LongPtr
+    
+    args(0) = StrPtr(uri)
+    args_Type(0) = vbLongPtr
+    args_Ptr(0) = VarPtr(args(0))
+    
+    args(1) = resourceContext
+    args_Type(1) = vbLong ' 4-byte Enum
+    args_Ptr(1) = VarPtr(args(1))
+    
+    Dim hr As Long, res As Variant
+    hr = DispCallFunc(ppWebView2, 57 * LenB(ppWebView2), CC_STDCALL, vbLong, 2, args_Type(0), args_Ptr(0), res)
+    
+    If hr = 0 And res = 0 Then
+        Debug.Print "AddWebResourceRequestedFilter success."
+    Else
+        Debug.Print "AddWebResourceRequestedFilter failed. HRESULT: " & Hex(res)
+    End If
+End Sub
 
 '58
 'virtual HRESULT STDMETHODCALLTYPE RemoveWebResourceRequestedFilter(
 '    /* [in] */ const LPCWSTR uri,
 '    /* [in] */ const COREWEBVIEW2_WEB_RESOURCE_CONTEXT resourceContext) = 0;
+''' <summary>
+''' Removes an intercept filter (Index 58).
+''' </summary>
+Public Sub RemoveWebResourceRequestedFilter(ByVal uri As String, ByVal resourceContext As COREWEBVIEW2_WEB_RESOURCE_CONTEXT)
+    Dim args(1) As Variant, args_Type(1) As Integer, args_Ptr(1) As LongPtr
+    
+    args(0) = StrPtr(uri)
+    args_Type(0) = vbLongPtr
+    args_Ptr(0) = VarPtr(args(0))
+    
+    args(1) = resourceContext
+    args_Type(1) = vbLong
+    args_Ptr(1) = VarPtr(args(1))
+    
+    Dim hr As Long, res As Variant
+    hr = DispCallFunc(ppWebView2, 58 * LenB(ppWebView2), CC_STDCALL, vbLong, 2, args_Type(0), args_Ptr(0), res)
+    
+    If hr <> 0 Or res < 0 Then
+        Debug.Print "RemoveWebResourceRequestedFilter failed. HRESULT: " & Hex(res)
+    End If
+End Sub
 
 '59
 'virtual HRESULT STDMETHODCALLTYPE add_WindowCloseRequested(
 '    /* [in] */ ICoreWebView2WindowCloseRequestedEventHandler *eventHandler,
 '    /* [out] */ EventRegistrationToken *token) = 0;
+''' <summary>
+''' Registers a handler for when the WebView window requests to close (Index 59).
+''' </summary>
+Public Function add_WindowCloseRequested() As Long
+    add_WindowCloseRequested = mHelpers.DCF_RegisterHandler(Me, 59, "add_WindowCloseRequested", AddressOf WindowCloseRequested_Invoke, "WindowCloseRequested")
+End Function
 
 '60
 'virtual HRESULT STDMETHODCALLTYPE remove_WindowCloseRequested(
@@ -990,18 +1066,18 @@ Public Function CapturePreviewToFile(ByVal folderPath As String, ByVal filePath 
     End If
 
     Dim format As Long: format = IIf(isJpeg, 1, 0)
-    Dim args(2) As Variant, args_Ptr(2) As LongPtr, args_type(2) As Integer
+    Dim args(2) As Variant, args_Ptr(2) As LongPtr, args_Type(2) As Integer
     Dim res As Variant
     
     ' Arg 0: Image format (0: PNG, 1: JPEG)
     args(0) = format
     args_Ptr(0) = VarPtr(args(0))
-    args_type(0) = vbLong
+    args_Type(0) = vbLong
 
     ' Arg 1: Pointer to the pre-created IStream
     args(1) = pStream
     args_Ptr(1) = VarPtr(args(1))
-    args_type(1) = vbLongPtr
+    args_Type(1) = vbLongPtr
 
     Dim Handler As c4_Handler
     Set Handler = New c4_Handler
@@ -1015,10 +1091,10 @@ Public Function CapturePreviewToFile(ByVal folderPath As String, ByVal filePath 
     ' Arg 2: Completion handler (c4_Handler)
     args(2) = Handler.Pointer
     args_Ptr(2) = VarPtr(args(2))
-    args_type(2) = vbLongPtr
+    args_Type(2) = vbLongPtr
 
     ' Call ICoreWebView2::CapturePreview (VTable Index 30)
-    hr = DispCallFunc(ppWebView2, 30 * LenB(ppWebView2), CC_STDCALL, vbLong, 3, args_type(0), args_Ptr(0), res)
+    hr = DispCallFunc(ppWebView2, 30 * LenB(ppWebView2), CC_STDCALL, vbLong, 3, args_Type(0), args_Ptr(0), res)
 
     If hr = 0 Then
         RegisterInstance Handler.Pointer, Me

@@ -82,8 +82,8 @@ Public Function ControllerHandler_Invoke(ByVal this As LongPtr, ByVal errorCode 
     Call UserForm1.WV2Controller.WebView2.add_NewWindowRequested
     Call UserForm1.WV2Controller.WebView2.add_DocumentTitleChanged
     Call UserForm1.WV2Controller.WebView2.add_ContainsFullScreenElementChanged
-    Call UserForm1.WV2Controller.WebView2.add_WebResourceRequested
     Call UserForm1.WV2Controller.WebView2.AddScriptToExecuteOnDocumentCreated("console.log('script on document created!');")
+    Call UserForm1.WV2Controller.WebView2.add_WindowCloseRequested
 
     
     ' Register events via Handler2 approach
@@ -332,7 +332,8 @@ Public Function ContainsFullScreenElementChanged_Invoke(ByVal this As LongPtr, B
 End Function
 
 Public Function WebResourceRequested_Invoke(ByVal this As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
-    On Error Resume Next
+    'On Error Resume Next
+    Debug.Print "WebResourceRequested_Invoke"
     Dim target As c3_WebView2
     Set target = GetInstance(this)
     
@@ -460,6 +461,59 @@ ErrorHandler:
     Debug.Print "Error!"
     DevToolsProtocolEventReceivedHandler_Invoke = &H80004005
 End Function
+
+'WindowCloseRequested_Invoke
+Public Function WindowCloseRequested_Invoke( _
+    ByVal this As LongPtr, _
+    ByVal sender As LongPtr, _
+    ByVal args As LongPtr) As Long
+    
+    ' this   : DevToolsProctocoleventReceiverHandler *
+    ' sender : ICoreWebView2 *
+    ' args   : ICoreWebView2DevToolsProtocolEventReceivedEventArgs *
+
+    'Debug.Print "DTPEventHandler_Invoke. this: " & this & " sender: " & sender
+    'OutputDebugString StrPtr("DTPEventHandler_Invoke. this: " & this & " sender: " & sender)
+
+    ' S_OK (Success) by default
+    WindowCloseRequested_Invoke = 0
+    
+    
+    ' Fail-safe: Ensure args pointer is valid
+    If args = 0 Then
+        Debug.Print "Exit"
+        Exit Function
+    End If
+    ' To prevent crashes, use standard error handling for low-level COM operations
+    On Error GoTo ErrorHandler
+    
+    Dim wv2 As c3_WebView2
+    Set wv2 = GetInstance(this)
+    
+    If Not wv2 Is Nothing Then
+        wv2.NotifyWindowCloseRequested this, sender, args
+        'wv2.Col_Handler.Remove "NotifyDevToolsProtocolEventReceivedHandler"
+        ' For stability, do not remove the handler from the collection here.
+        ' Let the Class_Terminate (destruction of c3_WebView2) handle the cleanup to prevent crashes.
+    End If
+    
+    'UnregisterInstance this
+
+    ' 1. Capture the specific event parameters (e.g., Get the JSON data payload)
+    ' (Assuming you have a helper class c3_WebView2 or similar to wrap ICoreWebView2DevToolsProtocolEventReceivedEventArgs)
+    ' Example:
+    ' Dim eventArgs As New c6_DevToolsEventArgs
+    ' eventArgs.Initialize args
+    ' Debug.Print eventArgs.ParameterObjectAsJson
+
+    Exit Function
+
+ErrorHandler:
+    ' Return HRESULT E_FAIL on crash/error to notify the WebView2 runtime
+    Debug.Print "Error!"
+    WindowCloseRequested_Invoke = &H80004005
+End Function
+
 
 ' Helper: PtrToStrW (Converts Unicode pointer to VBA String)
 Public Function PtrToStrW(ByVal pWStr As LongPtr) As String

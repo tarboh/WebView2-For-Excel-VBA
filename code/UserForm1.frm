@@ -147,6 +147,10 @@ Private Sub CommandButton_RunScript_Click()
     Call WV2Controller.WebView2.ExecuteScriptAsync(script)
 End Sub
 
+Private Sub CommandButton_Stop_Click()
+    WV2Controller.WebView2.Stop_
+End Sub
+
 Private Sub CommandButton_StopAutoJS_Click()
     WV2Controller.WebView2.RemoveScriptToExecuteOnDocumentCreated ( _
         WV2Controller.WebView2.ScriptId)
@@ -169,6 +173,11 @@ Private Sub CommandButton4_Click()
     hr = WV2Controller.WebView2.CallDevToolsProtocolMethod(strMethodName, strParametersAsJson)
     Debug.Print "ìoò^åãâ ÅF" & hr
     
+End Sub
+
+Private Sub CommandButton5_Click()
+    Call WV2Controller.WebView2.AddWebResourceRequestedFilter("*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_IMAGE)
+    Call WV2Controller.WebView2.add_WebResourceRequested
 End Sub
 
 Private Sub Console_QueryClose()
@@ -369,6 +378,10 @@ End Sub
 
 Private Sub WV2_WebResourceRequested()
     Debug.Print "WebResourceRequested"
+End Sub
+
+Private Sub wv2_WindowCloseRequested(ByVal this As LongLong, ByVal sender As LongLong, ByVal args As LongLong)
+    Debug.Print "WindowCloseRequested"
 End Sub
 
 Private Sub WV2Controller_ScriptResultReceived(ByVal result As String)
