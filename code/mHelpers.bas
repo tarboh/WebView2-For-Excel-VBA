@@ -463,6 +463,7 @@ CleanUp_ITypeInfo:
 End Function
 
 Public Function dcf(ptr As LongPtr, vTblIndex As Long, funcName As String, ParamArray args() As Variant) As Long
+    Debug.Print "dcf called for " & funcName
     Dim l As Long: l = LBound(args)
     Dim u As Long: u = UBound(args)
     Dim cnt As Long: cnt = u - l + 1
@@ -475,8 +476,9 @@ Public Function dcf(ptr As LongPtr, vTblIndex As Long, funcName As String, Param
         For i = l To u
             args_Type(i) = VarType(args(i))
             args_Ptr(i) = VarPtr(args(i))
+            Debug.Print "args(" & i & ")", "Type:" & args_Type(i), "Value:" & args(i)
         Next
-        hr = DispCallFunc(ptr, vTblIndex * LenB(ptr), CC_STDCALL, vbLong, cnt, args_Type(u), args_Ptr(u), res)
+        hr = DispCallFunc(ptr, vTblIndex * LenB(ptr), CC_STDCALL, vbLong, cnt, args_Type(l), args_Ptr(l), res)
     Else
         hr = DispCallFunc(ptr, vTblIndex * LenB(ptr), CC_STDCALL, vbLong, cnt, 0, 0, res)
     End If
