@@ -538,33 +538,11 @@ Public Function CallDevToolsProtocolMethod(ByVal methodName As String, parameter
     On Error GoTo 0
     Col_Handler.Add Handler, "CallDevToolsProtocolMethodCompletedHandler"
     Call Handler.CreateVTble(AddressOf CallDevToolsProtocolMethodCompletedHandler_Invoke, ppWebView2)
-    
-    Dim args(2) As Variant, args_Type(2) As Integer, args_Ptr(2) As LongPtr
-    args(0) = StrPtr(methodName)
-    args_Type(0) = vbLongPtr
-    args_Ptr(0) = VarPtr(args(0))
-    
-    args(1) = StrPtr(parameterAsJson)
-    args_Type(1) = vbLongPtr
-    args_Ptr(1) = VarPtr(args(1))
-    
-    args(2) = Handler.Pointer
-    args_Type(2) = vbLongPtr
-    args_Ptr(2) = VarPtr(args(2))
-    
-    Dim hr As Long, res As Variant
-    hr = DispCallFunc(ppWebView2, 36 * LenB(ppWebView2), CC_STDCALL, vbLong, 3, args_Type(0), args_Ptr(0), res)
+  
+    Dim hr As Long
+    hr = dcf(ppWebView2, 36, "CallDevToolsProtocolMethod", StrPtr(methodName), StrPtr(parameterAsJson), Handler.Pointer)
     If hr = 0 Then
-        If res = 0 Then
-            Debug.Print "CallDevToolsProtocolMethod success."
-        Else
-            Debug.Print "CallDevToolsProtocolMethod failed. res:" & res
-        End If
         RegisterInstance Handler.Pointer, Me
-
-        CallDevToolsProtocolMethod = res
-    Else
-        Debug.Print "CallDevToolsProtocolMethod failed. hr:" & hr
         CallDevToolsProtocolMethod = hr
     End If
     
@@ -575,21 +553,9 @@ End Function
 '    /* [retval][out] */ UINT32 *value) = 0;
 Public Property Get BrowserProcessId() As Long
     Dim value As Long: value = 0
-    Dim args(0) As Variant, args_Type(0) As Integer, args_Ptr(0) As LongPtr
-    args(0) = VarPtr(value)
-    args_Type(0) = vbLongPtr
-    args_Ptr(0) = VarPtr(args(0))
-    Dim hr As Long, res As Variant
-    hr = DispCallFunc(ppWebView2, 37 * LenB(ppWebView2), CC_STDCALL, vbLong, 1, args_Type(0), args_Ptr(0), res)
-    If hr = 0 Then
-        If res = 0 Then
-            BrowserProcessId = value
-        Else
-            Debug.Print "BrowserProcessId failed. res:" & res
-        End If
-    Else
-        Debug.Print "BrowserProcessId failed. hr:" & hr
-    End If
+    Dim hr As Long
+    hr = dcf(ppWebView2, 37, "", VarPtr(value))
+    BrowserProcessId = value
 End Property
 
 '38
@@ -640,52 +606,27 @@ Public Sub GetDevToolsProtocolEventReceiver(ByVal eventName As String) ' As c7_D
     On Error Resume Next
     If Not col_DTPEventReceiver(eventName) Is Nothing Then
         col_DTPEventReceiver.Remove eventName
-        Debug.Print "delete."
+        Debug.Print "GetDevToolsProtocolEventReceiver: delete from Collection " & eventName
     End If
     On Error GoTo 0
-    Dim args(1) As Variant, args_Type(1) As Integer, args_Ptr(1) As LongPtr
-    args(0) = StrPtr(eventName)
-    args_Type(0) = vbLongPtr
-    args_Ptr(0) = VarPtr(args(0))
     
-    args(1) = VarPtr(erPtr)
-    args_Type(1) = vbLongPtr
-    args_Ptr(1) = VarPtr(args(1))
-    
-    Dim hr As Long, res As Variant
-    hr = DispCallFunc(ppWebView2, 42 * LenB(ppWebView2), CC_STDCALL, vbLong, 2, args_Type(0), args_Ptr(0), res)
+    Dim hr As Long
+    hr = dcf(ppWebView2, 42, "GetDevToolsProtocolEventReceiver", StrPtr(eventName), VarPtr(erPtr))
     If hr = 0 Then
-        If res = 0 Then
-            Debug.Print "erPtr:" & erPtr
-            OutputDebugString StrPtr("erPtr: " & erPtr)
-            col_DTPEventReceiver.Add erPtr, eventName
-
-            'public HRESULT add_DevToolsProtocolEventReceived(
-            '   ICoreWebView2DevToolsProtocolEventReceivedEventHandler * handler,
-            '   EventRegistrationToken * token)
-            Call mHelpers.DCF_RegisterHandler2(Me, erPtr, 3, "add_DevToolsProtocolEventReceived", AddressOf DevToolsProtocolEventReceivedHandler_Invoke, "DevToolsProtocolEventReceived")
-            
-            
-        Else
-            Debug.Print "res:" & res
-        End If
-    Else
-        Debug.Print "hr:" & hr
+        Debug.Print "erPtr:" & erPtr
+        OutputDebugString StrPtr("erPtr: " & erPtr)
+        col_DTPEventReceiver.Add erPtr, eventName
+        'public HRESULT add_DevToolsProtocolEventReceived(
+        '   ICoreWebView2DevToolsProtocolEventReceivedEventHandler * handler,
+        '   EventRegistrationToken * token)
+        Call mHelpers.DCF_RegisterHandler2(Me, erPtr, 3, "add_DevToolsProtocolEventReceived", AddressOf DevToolsProtocolEventReceivedHandler_Invoke, "DevToolsProtocolEventReceived")
     End If
-    
 End Sub
 
 '43
 'virtual HRESULT STDMETHODCALLTYPE Stop( void) = 0;
 Public Function Stop_() As Long
-    Dim hr As Long, res As Variant
-    hr = DispCallFunc(ppWebView2, 43 * LenB(ppWebView2), CC_STDCALL, vbLong, 0, 0, 0, res)
-    If hr = 0 And res = 0 Then
-        Stop_ = res
-    Else
-        Debug.Print "Stop Failed."
-        Stop_ = hr + res
-    End If
+    Stop_ = dcf(ppWebView2, 43, "Stop_")
 End Function
 
 '44
@@ -766,24 +707,12 @@ End Function
 '    /* [retval][out] */ BOOL *containsFullScreenElement) = 0;
 Public Property Get ContainsFullScreenElement() As Boolean
     Dim lng_ContainsFullScreenElement As Long
-    Dim args(0) As Variant, args_Type(0) As Integer, args_Ptr(0) As LongPtr
-    args(0) = VarPtr(lng_ContainsFullScreenElement)
-    args_Type(0) = vbLongPtr
-    args_Ptr(0) = VarPtr(args(0))
-    Dim hr As Long, res As Variant
-    hr = DispCallFunc(ppWebView2, 54 * LenB(ppWebView2), CC_STDCALL, vbLong, 1, args_Type(0), args_Ptr(0), res)
-    If hr = 0 Then
-        If res = 0 Then
-            If lng_ContainsFullScreenElement = 1 Then
-                ContainsFullScreenElement = True
-            Else
-                ContainsFullScreenElement = False
-            End If
-        Else
-            Debug.Print "ContainsFullScreenElement failed. res:" & res
-        End If
+    Dim hr As Long
+    hr = dcf(ppWebView2, 54, "ContainsFullScreenElement", VarPtr(lng_ContainsFullScreenElement))
+    If lng_ContainsFullScreenElement = 1 Then
+        ContainsFullScreenElement = True
     Else
-        Debug.Print "ContainsFullScreenElement failed. hr:" & hr
+        ContainsFullScreenElement = False
     End If
 End Property
 
@@ -817,26 +746,9 @@ End Function
 ''' <summary>
 ''' Adds a filter to intercept specific web resources (Index 57).
 ''' </summary>
-Public Sub AddWebResourceRequestedFilter(ByVal uri As String, ByVal resourceContext As COREWEBVIEW2_WEB_RESOURCE_CONTEXT)
-    Dim args(1) As Variant, args_Type(1) As Integer, args_Ptr(1) As LongPtr
-    
-    args(0) = StrPtr(uri)
-    args_Type(0) = vbLongPtr
-    args_Ptr(0) = VarPtr(args(0))
-    
-    args(1) = resourceContext
-    args_Type(1) = vbLong ' 4-byte Enum
-    args_Ptr(1) = VarPtr(args(1))
-    
-    Dim hr As Long, res As Variant
-    hr = DispCallFunc(ppWebView2, 57 * LenB(ppWebView2), CC_STDCALL, vbLong, 2, args_Type(0), args_Ptr(0), res)
-    
-    If hr = 0 And res = 0 Then
-        Debug.Print "AddWebResourceRequestedFilter success."
-    Else
-        Debug.Print "AddWebResourceRequestedFilter failed. HRESULT: " & Hex(res)
-    End If
-End Sub
+Public Function AddWebResourceRequestedFilter(ByVal uri As String, ByVal resourceContext As COREWEBVIEW2_WEB_RESOURCE_CONTEXT) As Long
+    AddWebResourceRequestedFilter = dcf(ppWebView2, 57, "AddWebResourceRequestedFilter", StrPtr(uri), resourceContext)
+End Function
 
 '58
 'virtual HRESULT STDMETHODCALLTYPE RemoveWebResourceRequestedFilter(
@@ -845,24 +757,9 @@ End Sub
 ''' <summary>
 ''' Removes an intercept filter (Index 58).
 ''' </summary>
-Public Sub RemoveWebResourceRequestedFilter(ByVal uri As String, ByVal resourceContext As COREWEBVIEW2_WEB_RESOURCE_CONTEXT)
-    Dim args(1) As Variant, args_Type(1) As Integer, args_Ptr(1) As LongPtr
-    
-    args(0) = StrPtr(uri)
-    args_Type(0) = vbLongPtr
-    args_Ptr(0) = VarPtr(args(0))
-    
-    args(1) = resourceContext
-    args_Type(1) = vbLong
-    args_Ptr(1) = VarPtr(args(1))
-    
-    Dim hr As Long, res As Variant
-    hr = DispCallFunc(ppWebView2, 58 * LenB(ppWebView2), CC_STDCALL, vbLong, 2, args_Type(0), args_Ptr(0), res)
-    
-    If hr <> 0 Or res < 0 Then
-        Debug.Print "RemoveWebResourceRequestedFilter failed. HRESULT: " & Hex(res)
-    End If
-End Sub
+Public Function RemoveWebResourceRequestedFilter(ByVal uri As String, ByVal resourceContext As COREWEBVIEW2_WEB_RESOURCE_CONTEXT) As Long
+    RemoveWebResourceRequestedFilter = dcf(ppWebView2, 58, "RemoveWebResourceRequestedFilter", StrPtr(uri), resourceContext)
+End Function
 
 '59
 'virtual HRESULT STDMETHODCALLTYPE add_WindowCloseRequested(
@@ -884,79 +781,25 @@ End Function
 '
 '};
 
-
 ''' <summary>
 ''' Registers the NavigationCompleted event handler
 ''' </summary>
 #If Win64 Then
 Public Function AddNavigationCompletedHandler(ByVal Handler As c4_Handler2) As Long
-    On Error GoTo ErrorHandler
 
-    ' 1. Initialize the handler collection (First time only)
     If Col_Handler Is Nothing Then Set Col_Handler = New Collection
-
     Handler.ppWebView2 = ppWebView2
 
-    ' 2. Prepare the registration for WebView2 (COM Interface)
-    ' ICoreWebView2::add_NavigationCompleted VTable Index is 15 (x64)
-    Const IDX_ADD_NAV_COMPLETED As Long = 15
-
-    Dim pWebView2 As LongPtr: pWebView2 = Me.ppWebView2 ' Cached ICoreWebView2 pointer
-    Dim pHandlerObj As LongPtr: pHandlerObj = Handler.Pointer ' Emulated/Fake COM Object Pointer
     Dim tkn As LongPtr ' Variable to receive the EventRegistrationToken for unregistering
-
-    ' DispCallFunc argument preparation
-    ' HRESULT add_NavigationCompleted([in] ICoreWebView2NavigationCompletedEventHandler* eventHandler, [out] EventRegistrationToken* token)
-    Dim args(1) As Variant
-    Dim argTypes(1) As Integer
-    Dim argPtrs(1) As LongPtr
-    Dim res As Variant
     Dim hr As Long
-
-    ' Arg 1: [in] Pointer to our fake COM Object
-    args(0) = pHandlerObj
-    argTypes(0) = vbLongPtr
-    argPtrs(0) = VarPtr(args(0))
-
-    ' Arg 2: [out] Pointer to the Token variable
-    args(1) = VarPtr(tkn)
-    argTypes(1) = vbLongPtr
-    argPtrs(1) = VarPtr(args(1))
-
-    ' 3. Execute via DispCallFunc
-    hr = DispCallFunc(pWebView2, _
-                      IDX_ADD_NAV_COMPLETED * LenB(pWebView2), _
-                      CC_STDCALL, _
-                      vbLong, _
-                      2, _
-                      argTypes(0), _
-                      argPtrs(0), _
-                      res)
-
-    ' 4. Evaluate results
+    hr = dcf(ppWebView2, 15, "AddNavigationCompletedHandler", Handler.Pointer, VarPtr(tkn))
     If hr = 0 Then
-        If res = 0 Then
-            ' Success: Save the token and keep the handler instance alive in the collection
-            Handler.token = tkn
-            Col_Handler.Add Handler, CStr(tkn) ' Using the token as a unique key to keep reference
-
-            Debug.Print "--- Event Handler Registered Successfully ---"
-            Debug.Print "Token:", tkn
-            AddNavigationCompletedHandler = 0 ' S_OK
-        Else
-            Debug.Print "WebView2 error occurred. HRESULT: &H" & Hex(res)
-            AddNavigationCompletedHandler = res
-        End If
-    Else
-        Debug.Print "DispCallFunc itself failed. hr: &H" & Hex(hr)
-        AddNavigationCompletedHandler = hr
+        Handler.token = tkn
+        Col_Handler.Add Handler, CStr(tkn)
+        Debug.Print "--- Event Handler Registered Successfully ---"
+        Debug.Print "Token:", tkn
     End If
-
-    Exit Function
-
-ErrorHandler:
-    Debug.Print "Unexpected error in AddNavigationCompletedHandler: " & Err.Description
-    AddNavigationCompletedHandler = -1
+    AddNavigationCompletedHandler = hr
 End Function
 #End If
 
@@ -986,18 +829,6 @@ Public Function CapturePreviewToFile(ByVal folderPath As String, ByVal filePath 
     End If
 
     Dim format As Long: format = IIf(isJpeg, 1, 0)
-    Dim args(2) As Variant, args_Ptr(2) As LongPtr, args_Type(2) As Integer
-    Dim res As Variant
-    
-    ' Arg 0: Image format (0: PNG, 1: JPEG)
-    args(0) = format
-    args_Ptr(0) = VarPtr(args(0))
-    args_Type(0) = vbLong
-
-    ' Arg 1: Pointer to the pre-created IStream
-    args(1) = pStream
-    args_Ptr(1) = VarPtr(args(1))
-    args_Type(1) = vbLongPtr
 
     Dim Handler As c4_Handler
     Set Handler = New c4_Handler
@@ -1005,27 +836,20 @@ Public Function CapturePreviewToFile(ByVal folderPath As String, ByVal filePath 
     ' Use ObjPtr (numeric address) instead of a literal string key to avoid collection collisions
     Handler.Namae = "Cap_" & ObjPtr(Handler)
     Col_Handler.Add Handler, Handler.Namae
-    
     Call Handler.CreateVTble(AddressOf CapturePreviewCompletedHandler_Invoke, ppWebView2)
 
-    ' Arg 2: Completion handler (c4_Handler)
-    args(2) = Handler.Pointer
-    args_Ptr(2) = VarPtr(args(2))
-    args_Type(2) = vbLongPtr
-
     ' Call ICoreWebView2::CapturePreview (VTable Index 30)
-    hr = DispCallFunc(ppWebView2, 30 * LenB(ppWebView2), CC_STDCALL, vbLong, 3, args_Type(0), args_Ptr(0), res)
+    hr = dcf(ppWebView2, 30, "CapturePreview", format, pStream, Handler.Pointer)
 
     If hr = 0 Then
         RegisterInstance Handler.Pointer, Me
-        CapturePreviewToFile = res
     End If
+    CapturePreviewToFile = hr
 
     ' Release the IStream pointer to unlock the file (Decrements the reference count)
     If pStream <> 0 Then
-        Dim resRelease As Variant
         ' IUnknown::Release is VTable Index 2
-        Call DispCallFunc(pStream, 2 * LenB(pStream), CC_STDCALL, vbLong, 0, 0, 0, resRelease)
+        Call dcf(pStream, 2, "IUnknown::Release")
     End If
     
 End Function

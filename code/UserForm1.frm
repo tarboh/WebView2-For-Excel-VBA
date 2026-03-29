@@ -27,6 +27,7 @@ Attribute wv2.VB_VarHelpID = -1
 Public c5 As New c5_ObjectForJS
 
 Private WithEvents Console As fm_Console
+Attribute Console.VB_VarHelpID = -1
 
 #If Win64 Then
 Public WithEvents NavigationCompletedHandler As c4_Handler2
@@ -197,8 +198,6 @@ Private Sub WV2_AddScriptToExecuteOnDocumentCreatedCompleted()
 End Sub
 
 Private Sub wv2_CallDevToolsProtocolMethodCompleted(ByVal errorCode As String, ByVal result As String)
-    
-    Exit Sub
     
     'Debug.Print "CallDevToolsProtocolMethodCompleted result:" & result
     
