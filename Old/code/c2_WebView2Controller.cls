@@ -22,11 +22,11 @@ Public Event WebView2ReadyCompleted()
 '  ICoreWebView2Controller::get_IsVisible (VTable Index 3)
 ' ---------------------------------------------------------
 Public Property Get IsVisible() As Boolean
-    Dim value As Long ' BOOL variable to receive output
+    Dim Value As Long ' BOOL variable to receive output
     Dim hr As Long    ' DispCallFunc HRESULT
     Dim res As Variant ' Method HRESULT
     
-    Dim vArgs(0) As Variant: vArgs(0) = VarPtr(value)
+    Dim vArgs(0) As Variant: vArgs(0) = VarPtr(Value)
     Dim vTypes(0) As Integer: vTypes(0) = vbLongPtr
     Dim vPtrs(0) As LongPtr: vPtrs(0) = VarPtr(vArgs(0))
     
@@ -34,7 +34,7 @@ Public Property Get IsVisible() As Boolean
     
     If hr = 0 Then
         If res = 0 Then
-            IsVisible = (value <> 0)
+            IsVisible = (Value <> 0)
         Else
             Debug.Print "Failed to get IsVisible property. res: " & res
         End If
@@ -46,12 +46,12 @@ End Property
 ' ---------------------------------------------------------
 '  ICoreWebView2Controller::put_IsVisible (VTable Index 4)
 ' ---------------------------------------------------------
-Public Property Let IsVisible(ByVal value As Boolean)
+Public Property Let IsVisible(ByVal Value As Boolean)
     Dim hr As Long
     Dim res As Variant
 
     Dim vArgs(0) As Variant
-    vArgs(0) = CLng(IIf(value, 1, 0))
+    vArgs(0) = CLng(IIf(Value, 1, 0))
     Dim vTypes(0) As Integer: vTypes(0) = vbLong
     Dim vPtrs(0) As LongPtr: vPtrs(0) = VarPtr(vArgs(0))
     
@@ -100,9 +100,9 @@ Public Function GetWebView2() As c3_WebView2
     hr = DispCallFunc(pController, 25 * LenB(pController), CC_STDCALL, vbLong, 1, argTypes(0), argPtrs(0), result)
     
     If hr = 0 And result = 0 Then
-        Dim wv2 As New c3_WebView2
-        wv2.ppWebView2 = ppWebView2
-        Set WebView2 = wv2
+        Dim WV2 As New c3_WebView2
+        WV2.ppWebView2 = ppWebView2
+        Set WebView2 = WV2
     Else
         Debug.Print "get_CoreWebView2 failed. hr: " & hr & " result: " & result
     End If
@@ -133,13 +133,10 @@ Public Sub CloseWebView2()
     pController = 0
 End Sub
 
-'Private Sub WebView2_NavigationCompleted()
-'    RaiseEvent NavigationCompleted
-'End Sub
-'
-'Private Sub WebView2_ReceiveScriptResult(ByVal result As String)
-'    RaiseEvent ScriptResultReceived(result)
-'End Sub
-Private Sub Class_Initialize()
+Private Sub WebView2_NavigationCompleted()
+    RaiseEvent NavigationCompleted
+End Sub
 
+Private Sub WebView2_ReceiveScriptResult(ByVal result As String)
+    RaiseEvent ScriptResultReceived(result)
 End Sub

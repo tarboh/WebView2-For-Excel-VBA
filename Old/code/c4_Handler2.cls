@@ -16,7 +16,7 @@ Public Event Invoked(ByVal pThis As LongPtr, ByVal sender As LongPtr, ByVal args
 ' --- API Declarations (for x64) ---
 Private Declare PtrSafe Function VirtualAlloc Lib "kernel32" (ByVal lpAddress As LongPtr, ByVal dwSize As LongPtr, ByVal flAllocationType As Long, ByVal flProtect As Long) As LongPtr
 Private Declare PtrSafe Function VirtualFree Lib "kernel32" (ByVal lpAddress As LongPtr, ByVal dwSize As LongPtr, ByVal dwFreeType As Long) As Long
-Private Declare PtrSafe Sub RtlMoveMemory Lib "kernel32" (ByVal Destination As LongPtr, ByVal source As LongPtr, ByVal Length As LongPtr)
+Private Declare PtrSafe Sub RtlMoveMemory Lib "kernel32" (ByVal Destination As LongPtr, ByVal Source As LongPtr, ByVal Length As LongPtr)
 
 ' VirtualAlloc constants
 Private Const MEM_COMMIT As Long = &H1000
@@ -119,9 +119,9 @@ End Sub
 
 Private Sub Class_Terminate()
     ' Release memory
-'    If mVTablePtr <> 0 Then VirtualFree mVTablePtr, 0, MEM_RELEASE
-'    If mThunkAddr <> 0 Then VirtualFree mThunkAddr, 0, MEM_RELEASE
-'    If mFakeObjPtr <> 0 Then VirtualFree mFakeObjPtr, 0, MEM_RELEASE
-'    Debug.Print "c4_Handler2 Memory Released."
+    If mVTablePtr <> 0 Then VirtualFree mVTablePtr, 0, MEM_RELEASE
+    If mThunkAddr <> 0 Then VirtualFree mThunkAddr, 0, MEM_RELEASE
+    If mFakeObjPtr <> 0 Then VirtualFree mFakeObjPtr, 0, MEM_RELEASE
+    Debug.Print "c4_Handler2 Memory Released."
 End Sub
 #End If

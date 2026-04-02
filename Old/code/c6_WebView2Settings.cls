@@ -34,8 +34,8 @@ End Property
 '4
 'virtual /* [propput] */ HRESULT STDMETHODCALLTYPE put_IsScriptEnabled(
 '    /* [in] */ BOOL isScriptEnabled) = 0;
-Public Property Let IsScriptEnabled(ByVal value As Boolean)
-    LetBoolProperty 4, value
+Public Property Let IsScriptEnabled(ByVal Value As Boolean)
+    LetBoolProperty 4, Value
 End Property
 '5
 'virtual /* [propget] */ HRESULT STDMETHODCALLTYPE get_IsWebMessageEnabled(
@@ -46,8 +46,8 @@ End Property
 '6
 'virtual /* [propput] */ HRESULT STDMETHODCALLTYPE put_IsWebMessageEnabled(
 '    /* [in] */ BOOL isWebMessageEnabled) = 0;
-Public Property Let IsWebMessageEnabled(ByVal value As Boolean)
-    LetBoolProperty 6, value
+Public Property Let IsWebMessageEnabled(ByVal Value As Boolean)
+    LetBoolProperty 6, Value
 End Property
 '7
 'virtual /* [propget] */ HRESULT STDMETHODCALLTYPE get_AreDefaultScriptDialogsEnabled(
@@ -58,8 +58,8 @@ End Property
 '8
 'virtual /* [propput] */ HRESULT STDMETHODCALLTYPE put_AreDefaultScriptDialogsEnabled(
 '    /* [in] */ BOOL areDefaultScriptDialogsEnabled) = 0;
-Public Property Let AreDefaultScriptDialogsEnabled(ByVal value As Boolean)
-    LetBoolProperty 8, value
+Public Property Let AreDefaultScriptDialogsEnabled(ByVal Value As Boolean)
+    LetBoolProperty 8, Value
 End Property
 '9
 'virtual /* [propget] */ HRESULT STDMETHODCALLTYPE get_IsStatusBarEnabled(
@@ -70,8 +70,8 @@ End Property
 '10
 'virtual /* [propput] */ HRESULT STDMETHODCALLTYPE put_IsStatusBarEnabled(
 '    /* [in] */ BOOL isStatusBarEnabled) = 0;
-Public Property Let IsStatusBarEnabled(ByVal value As Boolean)
-    LetBoolProperty 10, value
+Public Property Let IsStatusBarEnabled(ByVal Value As Boolean)
+    LetBoolProperty 10, Value
 End Property
 '11
 'virtual /* [propget] */ HRESULT STDMETHODCALLTYPE get_AreDevToolsEnabled(
@@ -82,8 +82,8 @@ End Property
 '12
 'virtual /* [propput] */ HRESULT STDMETHODCALLTYPE put_AreDevToolsEnabled(
 '    /* [in] */ BOOL areDevToolsEnabled) = 0;
-Public Property Let AreDevToolsEnabled(ByVal value As Boolean)
-    LetBoolProperty 12, value
+Public Property Let AreDevToolsEnabled(ByVal Value As Boolean)
+    LetBoolProperty 12, Value
 End Property
 '13
 'virtual /* [propget] */ HRESULT STDMETHODCALLTYPE get_AreDefaultContextMenusEnabled(
@@ -142,12 +142,12 @@ Private Function GetBoolProperty(ByVal Index As Long) As Boolean
     End If
 End Function
 
-Private Sub LetBoolProperty(ByVal Index As Long, ByVal value As Boolean)
+Private Sub LetBoolProperty(ByVal Index As Long, ByVal Value As Boolean)
     If m_pSettings = 0 Then Exit Sub
     
     Dim hr As Long, res As Variant
     Dim inVal As Long
-    inVal = IIf(value, 1, 0) ' C++ TRUE is 1 (VBA True is -1)
+    inVal = IIf(Value, 1, 0) ' C++ TRUE is 1 (VBA True is -1)
     
     Dim types(0) As Integer: types(0) = vbLong
     Dim args(0) As Variant:  args(0) = inVal

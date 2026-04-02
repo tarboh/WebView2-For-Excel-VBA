@@ -36,17 +36,9 @@ Attribute NavigationCompletedHandler.VB_VarHelpID = -1
 
 Private Sub CheckBox_Attach_c5ToJS_Click()
     If CheckBox_Attach_c5ToJS.value = True Then
-        If wv2.AddHostObjectToScript("VBAObj", c5) = 0 Then
-            Debug.Print "c5 attached as 'VBAObj'"
-        Else
-            Debug.Print "c5 attache failed"
-        End If
+        Call wv2.AddHostObjectToScript("VBAObj", c5)
     Else
-        If wv2.RemoveHostObjectFromScript("VBAObj") = 0 Then
-            Debug.Print "c5 remove success"
-        Else
-            Debug.Print "c5 remove failed"
-        End If
+        Call wv2.RemoveHostObjectFromScript("VBAObj")
     End If
 End Sub
 
@@ -111,7 +103,7 @@ End Sub
 Private Sub CommandButton_Navigate_Click()
     
     Dim url As String
-    url = TextBox_URL.Text
+    url = TextBox_URL.text
         
     If Left(url, 11) = "javascript:" Then
         Call WV2Controller.WebView2.ExecuteScriptAsync(url)
@@ -129,7 +121,7 @@ Private Sub CommandButton_NavToStr_Click()
     Console.Show
     
     Dim uri As String
-    uri = Console.TextBox_Console.Text
+    uri = Console.TextBox_Console.text
     Debug.Print uri
     Call WV2Controller.WebView2.NavigateToString(uri)
 End Sub
@@ -139,9 +131,9 @@ Private Sub CommandButton_OpenDevTools_Click()
 End Sub
 
 Private Sub CommandButton_PostWebMessageAsJson_Click()
-    Dim strJson As String
-    strJson = "{""funcName"": ""calculateAndDisplay"", ""args"": [""Sum Result"", 123, 456]}"
-    Debug.Print WV2Controller.WebView2.PostWebMessageAsJson(strJson)
+    Dim strjson As String
+    strjson = "{""funcName"": ""calculateAndDisplay"", ""args"": [""Sum Result"", 123, 456]}"
+    Debug.Print WV2Controller.WebView2.PostWebMessageAsJson(strjson)
 End Sub
 
 Private Sub CommandButton_PostWebMessageAsString_Click()
@@ -156,7 +148,7 @@ End Sub
 
 Private Sub CommandButton_RunScript_Click()
     Dim script As String
-    script = TextBox_Script.Text
+    script = TextBox_Script.text
     Call WV2Controller.WebView2.ExecuteScriptAsync(script)
 End Sub
 
@@ -165,13 +157,13 @@ Private Sub CommandButton_Stop_Click()
 End Sub
 
 Private Sub CommandButton_StopAutoJS_Click()
-'    WV2Controller.WebView2.RemoveScriptToExecuteOnDocumentCreated ( _
-'        WV2Controller.WebView2.scriptId)
+    WV2Controller.WebView2.RemoveScriptToExecuteOnDocumentCreated ( _
+        WV2Controller.WebView2.ScriptId)
 End Sub
 
 Private Sub CommandButton4_Click()
     
-    Call WV2Controller.WebView2.add_DevToolsProtocolEventReceived("Network.responseReceived")
+    Call WV2Controller.WebView2.GetDevToolsProtocolEventReceiver("Network.responseReceived")
 
     ' ネットワーク監視機能を有効化する（これを投げないとイベントが来ない）
     Dim strMethodName As String
@@ -191,7 +183,6 @@ Private Sub CommandButton5_Click()
     Call WV2Controller.WebView2.add_WebResourceRequested
 End Sub
 
-
 Private Sub Console_QueryClose()
     Set Console = Nothing
 End Sub
@@ -202,53 +193,42 @@ Private Sub NavigationCompletedHandler_Invoked(ByVal pThis As LongLong, ByVal se
 End Sub
 #End If
 
-
-
-Private Sub WV2_AddScriptToExecuteOnDocumentCreatedCompleted(ByVal scriptId As String, ByVal javascript As String)
+Private Sub WV2_AddScriptToExecuteOnDocumentCreatedCompleted()
     Debug.Print "AddScriptToExecuteOnDocumentCreatedCompleted"
 End Sub
 
-Private Sub wv2_AddScriptToExecuteOnDocumentCreatedFailed(ByVal javascript As String, ByVal errorCode As Long)
-    Debug.Print "AddScriptToExecuteOnDocumentCreatedFailed"
-End Sub
-
-Private Sub wv2_CallDevToolsProtocolMethodCompleted(ByVal requestId As Long, ByVal methodName As String, ByVal errorCode As String, ByVal result As String)
+Private Sub wv2_CallDevToolsProtocolMethodCompleted(ByVal errorCode As String, ByVal result As String)
     
     'Debug.Print "CallDevToolsProtocolMethodCompleted result:" & result
     
-    Debug.Print methodName
-    Select Case methodName
-        Case "Page.printToPDF"
-            ' VBA can directly access JavaScript properties (e.g., .data) retrieved from JScript!
-            Dim jsonObject As Object
-            Set jsonObject = ParseJSON(result)
-            
-            ' Safely retrieve the Base64 PDF string directly via Dot Notation
-            Dim base64PDF As String
-            base64PDF = CallByName(jsonObject, "data", VbGet)
-            
-            If Len(base64PDF) > 0 Then
-                Dim pdfBytes() As Byte
-                pdfBytes = Base64Decode(base64PDF)
-                
-                Dim folderPath As String
-                folderPath = "C:\temp\VBA_WebView2\PDF\"
-                
-                CreateDeepFolder folderPath
-                
-                Dim uniquePath As String
-                uniquePath = format(Now, "yyyymmdd_hhnnss") & "_" & Right("000" & Int(Timer * 1000) Mod 1000, 3) & ".pdf"
-                
-                SaveBytesToFile pdfBytes, folderPath & uniquePath
-                Debug.Print "PDF saved successfully to Desktop!"
-            End If
-        Case 2
-    End Select
+    ' VBA can directly access JavaScript properties (e.g., .data) retrieved from JScript!
+    Dim jsonObject As Object
+    Set jsonObject = ParseJSON(result)
+    
+    ' Safely retrieve the Base64 PDF string directly via Dot Notation
+    Dim base64PDF As String
+    base64PDF = CallByName(jsonObject, "data", VbGet)
+    
+    If Len(base64PDF) > 0 Then
+        Dim pdfBytes() As Byte
+        pdfBytes = Base64Decode(base64PDF)
+        
+        Dim folderPath As String
+        folderPath = "C:\temp\VBA_WebView2\PDF\"
+        
+        CreateDeepFolder folderPath
+        
+        Dim uniquePath As String
+        uniquePath = format(Now, "yyyymmdd_hhnnss") & "_" & Right("000" & Int(Timer * 1000) Mod 1000, 3) & ".pdf"
+        
+        SaveBytesToFile pdfBytes, folderPath & uniquePath
+        Debug.Print "PDF saved successfully to Desktop!"
+    End If
     
 End Sub
 
 Private Sub wv2_CapturePreviewCompleted(ByVal errorCode As Long)
-    Debug.Print "EventColled : CapturePreviewCompleted"
+    Debug.Print "CapturePreviewCompleted"
 End Sub
 
 Private Sub WV2_ContainsFullScreenElementChanged()
@@ -267,8 +247,8 @@ Private Sub WV2_ContainsFullScreenElementChanged()
     Me.Caption = Title & " ContainsFullScreenElement:" & WV2Controller.WebView2.ContainsFullScreenElement
 End Sub
 
-Private Sub wv2_DevToolsProtocolEventReceived(ByVal eventName As String, ByVal parameterJson As String)
-    Debug.Print "DevToolsProtocolEventReceived. JSON:" & parameterJson
+Private Sub wv2_DevToolsProtocolEventReceived(ByRef parameterObjectAsJson As String)
+    Debug.Print "DevToolsProtocolEventReceived. JSON:" & parameterObjectAsJson
 End Sub
 
 Private Sub WV2_DocumentTitleChanged()
@@ -306,13 +286,8 @@ Private Sub UserForm_Initialize()
 '    Frame1.width = 1800 * 0.75
 '    Frame1.Height = 1000 * 0.75
     
-'    Set wv2 = New c3_WebView2
-'    Call wv2.BuildFuncPtrCache
-    
-    Set c5 = New c5_ObjectForJS
-    
     #If Win64 Then
-    'Set NavigationCompletedHandler = New c4_Handler2
+    Set NavigationCompletedHandler = New c4_Handler2
     #End If
     Call Create_WebView2
 End Sub
@@ -331,46 +306,27 @@ Public Sub Create_WebView2()
 End Sub
 
 Private Sub UserForm_QueryClose(Cancel As Integer, CloseMode As Integer)
-    ' 1. まずハンドラを全解除
-    If Not WV2Controller Is Nothing Then
-        If Not WV2Controller.WebView2 Is Nothing Then
-            WV2Controller.WebView2.Finalize
-        End If
+    ' 1. Shut down the WebView2 process first
+    Call WV2Controller.CloseWebView2
+    
+    ' 2. CRITICAL: Explicitly release references like Dictionaries
+    If Not WV2Controller.WebView2 Is Nothing Then
+        WV2Controller.WebView2.Finalize
     End If
     
-    ' 2. WebView2プロセスをシャットダウン
-    If Not WV2Controller Is Nothing Then
-        WV2Controller.CloseWebView2
-    End If
-    
-'    ' WebView2プロセスの終了を待つ
-'    Dim start As Double: start = Timer
-'    Do
-'        DoEvents
-'        If Timer - start > 5 Then
-'            Debug.Print "WebView2 終了待ちタイムアウト"
-'            Exit Do
-'        End If
-'    Loop
-    
-    ' 3. 参照を解放
+    ' Currently, Class_Terminate won't fire unless the dictionary is released
     Set m_InstanceMap = Nothing
     
-    Debug.Print "WV2Controller解放前"
+    ' 3. Finally, release the main controller reference
     Set WV2Controller = Nothing
-    Debug.Print "WV2Controller解放後"
     
     #If Win64 Then
-    Debug.Print "NavigationCompletedHandler解放前"
+    ' Release the handler that allocates/holds the Thunk memory area
     Set NavigationCompletedHandler = Nothing
-    Debug.Print "NavigationCompletedHandler解放後"
     #End If
     
-    Debug.Print "Console解放前"
     Set Console = Nothing
-    Debug.Print "Console解放後"
     
-    Debug.Print "QueryClose完了"
 End Sub
 
 Private Sub WV2_ContentLoading()
@@ -390,19 +346,18 @@ Private Sub WV2_HistoryChanged()
 End Sub
 
 Private Sub WV2_NavigationCompleted()
-     
-'    Debug.Print "NavigationCompleted"
-    Dim source As String
-    source = WV2Controller.WebView2.source
-
+        
+    Dim Source As String
+    Source = WV2Controller.WebView2.Source
+    
     Dim Title As String
     Title = WV2Controller.WebView2.DocumentTitle
-
+    
     Debug.Print "NavigationCompleted(From Standard Module) "
-    Debug.Print "    Source : " & source
+    Debug.Print "    Source : " & Source
     Debug.Print "    Title  : " & Title
-
-    TextBox_URL.Text = source
+    
+    TextBox_URL.text = Source
     Me.Caption = Title & " ContainsFullScreenElement:" & WV2Controller.WebView2.ContainsFullScreenElement
     
 End Sub
@@ -418,11 +373,8 @@ Private Sub WV2_SourceChanged()
     Debug.Print "SourceChanged"
 End Sub
 
-Private Sub WV2_WebMessageReceived(ByVal source As String, ByVal messageJson As String, ByVal messageString As String)
+Private Sub WV2_WebMessageReceived()
     Debug.Print "WebMessageReceived"
-    Debug.Print "    source        :" & source
-    Debug.Print "    mssage(json)  :" & messageJson
-    Debug.Print "    mssage(string):" & messageString
 End Sub
 
 Private Sub WV2_WebResourceRequested()
@@ -433,12 +385,12 @@ Private Sub wv2_WindowCloseRequested(ByVal this As LongLong, ByVal sender As Lon
     Debug.Print "WindowCloseRequested"
 End Sub
 
-'Private Sub WV2Controller_ScriptResultReceived(ByVal result As String)
-'
-'    Debug.Print "ScriptResultReceived:", result
-'    TextBox_URL.text = WV2Controller.WebView2.Source
-'
-'End Sub
+Private Sub WV2Controller_ScriptResultReceived(ByVal result As String)
+
+    Debug.Print "ScriptResultReceived:", result
+    TextBox_URL.text = WV2Controller.WebView2.Source
+
+End Sub
 
 Private Sub WV2Controller_WebView2ReadyCompleted()
 
