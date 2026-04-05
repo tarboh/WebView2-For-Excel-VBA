@@ -14,11 +14,10 @@ Attribute VB_GlobalNameSpace = False
 Attribute VB_Creatable = False
 Attribute VB_PredeclaredId = True
 Attribute VB_Exposed = False
-
-
 'Public UserForm UserFrom1
 
 Option Explicit
+
 
 'Public WV2Loader As New c0_WebView2Loader
 'Public WV2Loader As New Class1
@@ -49,6 +48,7 @@ Private Sub CheckBox_Attach_c5ToJS_Click()
         End If
     End If
 End Sub
+
 
 Private Sub CheckBox_InterceptDialogs_Change()
     If CheckBox_InterceptDialogs.value = True Then
@@ -165,8 +165,8 @@ Private Sub CommandButton_Stop_Click()
 End Sub
 
 Private Sub CommandButton_StopAutoJS_Click()
-'    WV2Controller.WebView2.RemoveScriptToExecuteOnDocumentCreated ( _
-'        WV2Controller.WebView2.scriptId)
+'    WV2.RemoveScriptToExecuteOnDocumentCreated ( _
+'        WV2.scriptId)
 End Sub
 
 Private Sub CommandButton4_Click()
