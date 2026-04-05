@@ -14,3 +14,4 @@ Function Func1(ByVal value As Long) As Long
     Debug.Print "c5_ObjectForJS.Func1 was called."
     Func1 = value * 10
 End Function
+

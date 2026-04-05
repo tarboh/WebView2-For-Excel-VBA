@@ -14,35 +14,35 @@ Attribute VB_GlobalNameSpace = False
 Attribute VB_Creatable = False
 Attribute VB_PredeclaredId = True
 Attribute VB_Exposed = False
+
+
 'Public UserForm UserFrom1
 
 Option Explicit
 
-Public WV2Loader As New c0_WebView2Loader
-Public WV2Environment As New c1_WebView2Environment
-Public WithEvents WV2Controller As c2_WebView2Controller
-Attribute WV2Controller.VB_VarHelpID = -1
-Public WithEvents wv2 As c3_WebView2
-Attribute wv2.VB_VarHelpID = -1
+'Public WV2Loader As New c0_WebView2Loader
+'Public WV2Loader As New Class1
+'Public WV2Environment As New c1_WebView2Environment
+'Public WithEvents WV2Controller As c2_WebView2Controller
+'Public WithEvents WV2 As c3_WebView2
 Public c5 As New c5_ObjectForJS
 
 Private WithEvents Console As fm_Console
 Attribute Console.VB_VarHelpID = -1
+Private WithEvents WV2 As WebView2
+Attribute WV2.VB_VarHelpID = -1
 
-#If Win64 Then
-Public WithEvents NavigationCompletedHandler As c4_Handler2
-Attribute NavigationCompletedHandler.VB_VarHelpID = -1
-#End If
+Public m_InstanceMap As Object
 
 Private Sub CheckBox_Attach_c5ToJS_Click()
     If CheckBox_Attach_c5ToJS.value = True Then
-        If wv2.AddHostObjectToScript("VBAObj", c5) = 0 Then
+        If WV2.AddHostObjectToScript("VBAObj", c5) = 0 Then
             Debug.Print "c5 attached as 'VBAObj'"
         Else
             Debug.Print "c5 attache failed"
         End If
     Else
-        If wv2.RemoveHostObjectFromScript("VBAObj") = 0 Then
+        If WV2.RemoveHostObjectFromScript("VBAObj") = 0 Then
             Debug.Print "c5 remove success"
         Else
             Debug.Print "c5 remove failed"
@@ -52,12 +52,12 @@ End Sub
 
 Private Sub CheckBox_InterceptDialogs_Change()
     If CheckBox_InterceptDialogs.value = True Then
-        wv2.Settings.AreDefaultScriptDialogsEnabled = False
+        WV2.AreDefaultScriptDialogsEnabled = False
     Else
-        wv2.Settings.AreDefaultScriptDialogsEnabled = True
+        WV2.AreDefaultScriptDialogsEnabled = True
     End If
-    Debug.Print wv2.Settings.AreDefaultScriptDialogsEnabled
-    wv2.Reload
+    Debug.Print WV2.AreDefaultScriptDialogsEnabled
+    WV2.Reload
 End Sub
 
 Private Sub CommandButton_CallDevToolsProtocolMethod_Click()
@@ -75,7 +75,7 @@ Private Sub CommandButton_CallDevToolsProtocolMethod_Click()
         """landscape"": false," & _
         """displayHeaderFooter"": false" & _
     "}"
-    Call WV2Controller.WebView2.CallDevToolsProtocolMethod(strMethodName, strParametersAsJson)
+    Call WV2.CallDevToolsProtocolMethod(strMethodName, strParametersAsJson)
 End Sub
 
 Private Sub CommandButton_CapturePreviewToFile_Click()
@@ -86,7 +86,7 @@ Private Sub CommandButton_CapturePreviewToFile_Click()
     Dim uniquePath As String
     uniquePath = "cap_" & format(Now, "yyyymmdd_hhnnss") & "_" & Right("000" & Int(Timer * 1000) Mod 1000, 3) & ".png"
     
-    WV2Controller.WebView2.CapturePreviewToFile folderPath, uniquePath
+    WV2.CapturePreviewToFile folderPath, uniquePath
 End Sub
 
 Private Sub CommandButton_Console_Click()
@@ -97,15 +97,15 @@ End Sub
 
 
 Private Sub CommandButton_ExeCuteVBAInJavaScript_Click()
-    Call WV2Controller.WebView2.ExecuteScriptAsync("window.chrome.webview.hostObjects.sync.VBAObj.Func1(15);")
+    Call WV2.ExecuteScriptAsync("window.chrome.webview.hostObjects.sync.VBAObj.Func1(15);")
 End Sub
 
 Private Sub CommandButton_GoBack_Click()
-    WV2Controller.WebView2.GoBack
+    WV2.GoBack
 End Sub
 
 Private Sub CommandButton_GoForward_Click()
-    WV2Controller.WebView2.GoForward
+    WV2.GoForward
 End Sub
 
 Private Sub CommandButton_Navigate_Click()
@@ -114,11 +114,11 @@ Private Sub CommandButton_Navigate_Click()
     url = TextBox_URL.Text
         
     If Left(url, 11) = "javascript:" Then
-        Call WV2Controller.WebView2.ExecuteScriptAsync(url)
+        Call WV2.ExecuteScriptAsync(url)
     ElseIf Left(url, 4) = "http" Then
-        Call WV2Controller.WebView2.NavigateAsync(url)
+        Call WV2.NavigateAsync(url)
     Else
-        Call WV2Controller.WebView2.NavigateToString(url)
+        Call WV2.NavigateToString(url)
     End If
 
 End Sub
@@ -131,37 +131,37 @@ Private Sub CommandButton_NavToStr_Click()
     Dim uri As String
     uri = Console.TextBox_Console.Text
     Debug.Print uri
-    Call WV2Controller.WebView2.NavigateToString(uri)
+    Call WV2.NavigateToString(uri)
 End Sub
 
 Private Sub CommandButton_OpenDevTools_Click()
-    wv2.OpenDevToolsWindow
+    WV2.OpenDevToolsWindow
 End Sub
 
 Private Sub CommandButton_PostWebMessageAsJson_Click()
     Dim strJson As String
     strJson = "{""funcName"": ""calculateAndDisplay"", ""args"": [""Sum Result"", 123, 456]}"
-    Debug.Print WV2Controller.WebView2.PostWebMessageAsJson(strJson)
+    Debug.Print WV2.PostWebMessageAsJson(strJson)
 End Sub
 
 Private Sub CommandButton_PostWebMessageAsString_Click()
     Dim webMessage As String
     webMessage = "System Check Complete"
-    Debug.Print WV2Controller.WebView2.PostWebMessageAsString(webMessage)
+    Debug.Print WV2.PostWebMessageAsString(webMessage)
 End Sub
 
 Private Sub CommandButton_Reload_Click()
-    Call WV2Controller.WebView2.Reload
+    Call WV2.Reload
 End Sub
 
 Private Sub CommandButton_RunScript_Click()
     Dim script As String
     script = TextBox_Script.Text
-    Call WV2Controller.WebView2.ExecuteScriptAsync(script)
+    Call WV2.ExecuteScriptAsync(script)
 End Sub
 
 Private Sub CommandButton_Stop_Click()
-    WV2Controller.WebView2.Stop_
+    WV2.Stop_
 End Sub
 
 Private Sub CommandButton_StopAutoJS_Click()
@@ -171,7 +171,7 @@ End Sub
 
 Private Sub CommandButton4_Click()
     
-    Call WV2Controller.WebView2.add_DevToolsProtocolEventReceived("Network.responseReceived")
+    Call WV2.add_DevToolsProtocolEventReceived("Network.responseReceived")
 
     ' ネットワーク監視機能を有効化する（これを投げないとイベントが来ない）
     Dim strMethodName As String
@@ -181,14 +181,14 @@ Private Sub CommandButton4_Click()
     strParametersAsJson = "{}" ' パラメータは空のJSONオブジェクトでOK
     
     Dim hr As Long
-    hr = WV2Controller.WebView2.CallDevToolsProtocolMethod(strMethodName, strParametersAsJson)
+    hr = WV2.CallDevToolsProtocolMethod(strMethodName, strParametersAsJson)
     Debug.Print "登録結果：" & hr
     
 End Sub
 
 Private Sub CommandButton5_Click()
-    Call WV2Controller.WebView2.AddWebResourceRequestedFilter("*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_IMAGE)
-    Call WV2Controller.WebView2.add_WebResourceRequested
+    Call WV2.AddWebResourceRequestedFilter("*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_IMAGE)
+    Call WV2.add_WebResourceRequested
 End Sub
 
 
@@ -221,7 +221,7 @@ Private Sub wv2_CallDevToolsProtocolMethodCompleted(ByVal requestId As Long, ByV
         Case "Page.printToPDF"
             ' VBA can directly access JavaScript properties (e.g., .data) retrieved from JScript!
             Dim jsonObject As Object
-            Set jsonObject = ParseJSON(result)
+            Set jsonObject = WV2.ParseJSON(result)
             
             ' Safely retrieve the Base64 PDF string directly via Dot Notation
             Dim base64PDF As String
@@ -229,17 +229,17 @@ Private Sub wv2_CallDevToolsProtocolMethodCompleted(ByVal requestId As Long, ByV
             
             If Len(base64PDF) > 0 Then
                 Dim pdfBytes() As Byte
-                pdfBytes = Base64Decode(base64PDF)
+                pdfBytes = WV2.Base64Decode(base64PDF)
                 
                 Dim folderPath As String
                 folderPath = "C:\temp\VBA_WebView2\PDF\"
                 
-                CreateDeepFolder folderPath
+                WV2.CreateDeepFolder folderPath
                 
                 Dim uniquePath As String
                 uniquePath = format(Now, "yyyymmdd_hhnnss") & "_" & Right("000" & Int(Timer * 1000) Mod 1000, 3) & ".pdf"
                 
-                SaveBytesToFile pdfBytes, folderPath & uniquePath
+                WV2.SaveBytesToFile pdfBytes, folderPath & uniquePath
                 Debug.Print "PDF saved successfully to Desktop!"
             End If
         Case 2
@@ -257,14 +257,14 @@ Private Sub WV2_ContainsFullScreenElementChanged()
     'Source = WV2Controller.WebView2.Source
     
     Dim Title As String
-    Title = WV2Controller.WebView2.DocumentTitle
+    Title = WV2.DocumentTitle
     
     Debug.Print "NavigationCompleted(From Standard Module) "
     'Debug.Print "    Source : " & Source
     Debug.Print "    Title  : " & Title
     
     'TextBox_URL.text = Source
-    Me.Caption = Title & " ContainsFullScreenElement:" & WV2Controller.WebView2.ContainsFullScreenElement
+    Me.Caption = Title & " ContainsFullScreenElement:" & WV2.ContainsFullScreenElement
 End Sub
 
 Private Sub wv2_DevToolsProtocolEventReceived(ByVal eventName As String, ByVal parameterJson As String)
@@ -297,7 +297,7 @@ Private Sub WV2_ScriptDialogOpening()
 End Sub
 
 Private Sub CommandButton3_Click()
-    Call WV2Controller.WebView2.ExecuteScriptAsync("alert('Dialog On WebView2 !');")
+    Call WV2.ExecuteScriptAsync("alert('Dialog On WebView2 !');")
 End Sub
 
 Private Sub UserForm_Initialize()
@@ -309,11 +309,10 @@ Private Sub UserForm_Initialize()
 '    Set wv2 = New c3_WebView2
 '    Call wv2.BuildFuncPtrCache
     
+    Set m_InstanceMap = CreateObject("Scripting.Dictionary")
+    
     Set c5 = New c5_ObjectForJS
     
-    #If Win64 Then
-    'Set NavigationCompletedHandler = New c4_Handler2
-    #End If
     Call Create_WebView2
 End Sub
 
@@ -323,25 +322,27 @@ Public Sub Create_WebView2()
 
     'Use Hidden Property
     'Notified by KallunWillock via GitHub Issue. Thank you!
-    TargetHwnd = Frame1.[_GethWnd]
-    Debug.Print TargetHwnd
+    Dim targetHWnd As LongPtr
+    targetHWnd = Frame1.[_GethWnd]
+    Debug.Print targetHWnd
     
-    Call WV2Loader.CreateWebView2Environment
+    Set WV2 = New WebView2
+    
+    'Call WV2Loader.CreateWebView2Environment
+    Call WV2.CreateWebView2Environment(Frame1) 'targetHWnd)
     
 End Sub
 
 Private Sub UserForm_QueryClose(Cancel As Integer, CloseMode As Integer)
     ' 1. まずハンドラを全解除
-    If Not WV2Controller Is Nothing Then
-        If Not WV2Controller.WebView2 Is Nothing Then
-            WV2Controller.WebView2.Finalize
+        If Not WV2 Is Nothing Then
+            WV2.Finalize
         End If
-    End If
     
     ' 2. WebView2プロセスをシャットダウン
-    If Not WV2Controller Is Nothing Then
-        WV2Controller.CloseWebView2
-    End If
+    
+        WV2.CloseWebView2
+
     
 '    ' WebView2プロセスの終了を待つ
 '    Dim start As Double: start = Timer
@@ -356,15 +357,15 @@ Private Sub UserForm_QueryClose(Cancel As Integer, CloseMode As Integer)
     ' 3. 参照を解放
     Set m_InstanceMap = Nothing
     
-    Debug.Print "WV2Controller解放前"
-    Set WV2Controller = Nothing
-    Debug.Print "WV2Controller解放後"
+'    Debug.Print "WV2Controller解放前"
+'    Set WV2Controller = Nothing
+'    Debug.Print "WV2Controller解放後"
     
-    #If Win64 Then
-    Debug.Print "NavigationCompletedHandler解放前"
-    Set NavigationCompletedHandler = Nothing
-    Debug.Print "NavigationCompletedHandler解放後"
-    #End If
+'    #If Win64 Then
+'    Debug.Print "NavigationCompletedHandler解放前"
+'    Set NavigationCompletedHandler = Nothing
+'    Debug.Print "NavigationCompletedHandler解放後"
+'    #End If
     
     Debug.Print "Console解放前"
     Set Console = Nothing
@@ -392,18 +393,18 @@ End Sub
 Private Sub WV2_NavigationCompleted()
      
 '    Debug.Print "NavigationCompleted"
-    Dim source As String
-    source = WV2Controller.WebView2.source
+    Dim Source As String
+    Source = WV2.Source
 
     Dim Title As String
-    Title = WV2Controller.WebView2.DocumentTitle
+    Title = WV2.DocumentTitle
 
     Debug.Print "NavigationCompleted(From Standard Module) "
-    Debug.Print "    Source : " & source
+    Debug.Print "    Source : " & Source
     Debug.Print "    Title  : " & Title
 
-    TextBox_URL.Text = source
-    Me.Caption = Title & " ContainsFullScreenElement:" & WV2Controller.WebView2.ContainsFullScreenElement
+    TextBox_URL.Text = Source
+    Me.Caption = Title & " ContainsFullScreenElement:" & WV2.ContainsFullScreenElement
     
 End Sub
 
@@ -413,14 +414,14 @@ Private Sub WV2_NavigationStarting()
 End Sub
 
 Private Sub WV2_SourceChanged()
-    CommandButton_GoBack.Enabled = WV2Controller.WebView2.CanGoBack
-    CommandButton_GoForward.Enabled = WV2Controller.WebView2.CanGoForward
+    CommandButton_GoBack.Enabled = WV2.CanGoBack
+    CommandButton_GoForward.Enabled = WV2.CanGoForward
     Debug.Print "SourceChanged"
 End Sub
 
-Private Sub WV2_WebMessageReceived(ByVal source As String, ByVal messageJson As String, ByVal messageString As String)
+Private Sub WV2_WebMessageReceived(ByVal Source As String, ByVal messageJson As String, ByVal messageString As String)
     Debug.Print "WebMessageReceived"
-    Debug.Print "    source        :" & source
+    Debug.Print "    source        :" & Source
     Debug.Print "    mssage(json)  :" & messageJson
     Debug.Print "    mssage(string):" & messageString
 End Sub
@@ -429,7 +430,7 @@ Private Sub WV2_WebResourceRequested()
     Debug.Print "WebResourceRequested"
 End Sub
 
-Private Sub wv2_WindowCloseRequested(ByVal this As LongLong, ByVal sender As LongLong, ByVal args As LongLong)
+Private Sub wv2_WindowCloseRequested(ByVal this As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr)
     Debug.Print "WindowCloseRequested"
 End Sub
 
@@ -440,10 +441,12 @@ End Sub
 '
 'End Sub
 
-Private Sub WV2Controller_WebView2ReadyCompleted()
+'Private Sub WV2Controller_WebView2ReadyCompleted()
+'
+'    Debug.Print "WV2Controller_WebView2ReadyCompleted proccessid:" & WV2Controller.WebView2.BrowserProcessId
+'    Call WV2Controller.WebView2.NavigateAsync("https://www.google.com/")
+'
+'End Sub
 
-    Debug.Print "WV2Controller_WebView2ReadyCompleted proccessid:" & WV2Controller.WebView2.BrowserProcessId
-    Call WV2Controller.WebView2.NavigateAsync("https://www.google.com/")
 
-End Sub
 
