@@ -7,15 +7,87 @@ Attribute VB_GlobalNameSpace = False
 Attribute VB_Creatable = False
 Attribute VB_PredeclaredId = False
 Attribute VB_Exposed = False
-' Public Class Class1 （このクラス単独でローダー実行からICoreWebView2のイベントハンドラ登録、Invoke受信まで全部やりたいけど・・・）
+' Public Class WebView2
 Option Explicit
 
-'Public WithEvents wv2 As c3_WebView2
+#Const 目次 = 0
+#If 目次 = 1 Then
+---- 目次 ----
+    
+    Sub a(s As String): End Sub
+    
+    自分でディレクティブ定数を用意すれば､ 過去バージョンを切り捨てる必要なし!
+    プロシージャとして括る必要すら無い!
+    
+    コメントアウトも不要!
+    a "色を変えたいなら文字列で括ったり"
+    ' コメントアウトしても良い。
+    # わざと構文エラーを起こすことで色を付けるのもアリ。
+    
+    'ICoreWebView2の常駐イベントハンドラ登録
+    Call Registar_IcoreWebView2_Handlers
+    ※中の処理は全て RegisterHandler から RegisterHandlerEx に書き換え済み
+    '                   ↑ これと             ↑ これ、 どっちも正しくジャンプできます
+
+    'ハンドラ登録解除について
+    remove_Handler ← 単体の解除処理
+    Finalize       ← 全ハンドラに対してremove_Handlerをループ実行
+    
+    
+    'ICoreWebView2Controller系の関数はここから
+    Controller_IsVisible
+
+    'ICoreWebView2Settings系の関数はここから
+    IsScriptEnabled
+    
+    'ICoreWebView2系の関数はここから
+    get_Settings
+
+#End If
+
+
+' 管理用の構造体（インターフェースが増えてもこれ1つでOK）
+Private Type EventRegistrationData
+    pInterface  As LongPtr      ' ICoreWebView2, IController 等のポインタ
+    vtblIndex   As Long         ' add_xxx の Index
+    fakeObj     As LongPtr      ' VirtualAlloc したオブジェクト
+    vTable      As LongPtr      ' 作成した VTable
+    token       As LongPtr      ' 登録解除用のトークン
+End Type
+' 内部で動的配列、あるいは Dictionary でこれらを管理する
+Private m_eventList() As EventRegistrationData
+Private m_eventCount As Long
+
+Public Enum COREWEBVIEW2_WEB_RESOURCE_CONTEXT
+    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL = 0
+    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT = 1
+    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_STYLESHEET = 2
+    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_IMAGE = 4
+End Enum
+
+Public Enum COREWEBVIEW2_MOVE_FOCUS_REASON
+    COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC = 0
+    COREWEBVIEW2_MOVE_FOCUS_REASON_NEXT = 1
+    COREWEBVIEW2_MOVE_FOCUS_REASON_PREVIOUS = 2
+End Enum
+
+Public Enum COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT
+    PNG = 0
+    JPEG = 1
+End Enum
+
+' RECT構造体 (put_Bounds用)
+Private Type RECT
+    Left   As Long
+    Top    As Long
+    Right  As Long
+    Bottom As Long
+End Type
 
 Private m_targetFrame As MSForms.Control
 
-Private Declare PtrSafe Function SetTimer Lib "user32" (ByVal hWnd As LongPtr, ByVal nIDEvent As LongPtr, ByVal uElapse As Long, ByVal lpTimerFunc As LongPtr) As LongPtr
-Private Declare PtrSafe Function KillTimer Lib "user32" (ByVal hWnd As LongPtr, ByVal uIDEvent As LongPtr) As Long
+Private Declare PtrSafe Function SetTimer Lib "user32" (ByVal hwnd As LongPtr, ByVal nIDEvent As LongPtr, ByVal uElapse As Long, ByVal lpTimerFunc As LongPtr) As LongPtr
+Private Declare PtrSafe Function KillTimer Lib "user32" (ByVal hwnd As LongPtr, ByVal uIDEvent As LongPtr) As Long
 
 Private m_pStubQI As LongPtr
 Private m_pStubAR As LongPtr
@@ -32,13 +104,6 @@ Private m_pWebView As LongPtr ' ICoreWebView2 ポインタ
 
 Private m_pSettings As LongPtr ' ICoreWebView2Settings ポインタ
 
-' RECT構造体 (put_Bounds用)
-Private Type RECT
-    Left   As Long
-    Top    As Long
-    Right  As Long
-    Bottom As Long
-End Type
 
 Private Declare PtrSafe Function VirtualAlloc Lib "kernel32" (ByVal lpAddress As LongPtr, ByVal dwSize As LongPtr, ByVal flAllocationType As Long, ByVal flProtect As Long) As LongPtr
 Private Declare PtrSafe Function VirtualFree Lib "kernel32" (ByVal lpAddress As LongPtr, ByVal dwSize As LongPtr, ByVal dwFreeType As Long) As Long
@@ -127,7 +192,7 @@ Private Declare PtrSafe Function FindWindowEx Lib "user32" Alias "FindWindowExA"
     ByVal hWndChildAfter As LongPtr, _
     ByVal lpszClass As String, _
     ByVal lpszWindow As String) As LongPtr
-Private Declare PtrSafe Function MoveWindow Lib "user32" (ByVal hWnd As LongPtr, ByVal x As Long, ByVal y As Long, ByVal nWidth As Long, ByVal nHeight As Long, ByVal bRepaint As Long) As Long
+Private Declare PtrSafe Function MoveWindow Lib "user32" (ByVal hwnd As LongPtr, ByVal x As Long, ByVal y As Long, ByVal nWidth As Long, ByVal nHeight As Long, ByVal bRepaint As Long) As Long
 
 Private m_funcPtrs As Object  ' Scripting.Dictionary: 関数名(小文字) → LongPtr
 Private m_vtbls(7 To 60)    As LongPtr  ' vTblIndex → vtble+サンク ブロック
@@ -137,17 +202,7 @@ Private m_tokens(7 To 60)   As Long  ' vTblIndex → 登録解除用トークン
 Private m_pStubAddRefRelease As LongPtr  ' AddRef と Release で共用
 'Private m_pStubQI            As LongPtr
 
-Public Enum COREWEBVIEW2_WEB_RESOURCE_CONTEXT
-    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL = 0
-    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT = 1
-    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_STYLESHEET = 2
-    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_IMAGE = 4
-End Enum
 
-Public Enum COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT
-    PNG = 0
-    JPEG = 1
-End Enum
 
 'Public Settings As c6_WebView2Settings
 Private Declare PtrSafe Function lstrlenW Lib "kernel32" (ByVal lpString As LongPtr) As Long
@@ -158,11 +213,14 @@ Private m_IsScriptPending As Boolean  ' True の間は追加登録を拒否
 Private Const E_PENDING As Long = &H8000000A   ' → -2147483638 :COMの標準HRESULT
 Private m_PendingScript As String  ' Invoke で受け取るまでの一時保管
 Private m_ScriptCount As Long
-Private m_Scripts() As ScriptEntry
-Private Type ScriptEntry
+
+Private Type ScriptEntry             ' ← 型定義を先に
     scriptId As String
     javascript As String
 End Type
+
+Private m_Scripts() As ScriptEntry
+
 Private m_IsExcecuteScriptPending As Boolean
 Public LastScriptResult As String
 Private m_IsScriptRunning As Boolean
@@ -205,13 +263,19 @@ Private Declare PtrSafe Function CryptStringToBinary Lib "crypt32.dll" Alias "Cr
 
 ' Use in a Standard Module
 Private Declare PtrSafe Function GetDeviceCaps Lib "gdi32" (ByVal hdc As LongPtr, ByVal nIndex As Long) As Long
-Private Declare PtrSafe Function GetDC Lib "user32" (ByVal hWnd As LongPtr) As LongPtr
-Private Declare PtrSafe Function ReleaseDC Lib "user32" (ByVal hWnd As LongPtr, ByVal hdc As LongPtr) As Long
+Private Declare PtrSafe Function GetDC Lib "user32" (ByVal hwnd As LongPtr) As LongPtr
+Private Declare PtrSafe Function ReleaseDC Lib "user32" (ByVal hwnd As LongPtr, ByVal hdc As LongPtr) As Long
 
 ' Device capabilities indices for retrieving screen DPI (Used with GetDeviceCaps)
 Private Const LOGPIXELSX As Long = 88 ' Logical pixels per inch (X-axis)
 Private Const LOGPIXELSY As Long = 90 ' Logical pixels per inch (Y-axis)
 
+'ControllerEvents
+Public Event ControllerZoomFactorChanged()
+Public Event ControllerMoveFocusRequested() 'WebViewから別要素（フォームコントロールなど）にフォーカスを返そうとするときに発動
+Public Event ControllerGotFocus()
+Public Event ControllerLostFocus()
+Public Event ControllerAcceleratorKeyPressed()
 
 'Events
 Public Event NavigationStarting()       ' 7
@@ -278,7 +342,7 @@ Private Function dcf(ptr As LongPtr, vtblIndex As Long, funcName As String, Para
     End If
 End Function
 
-Private Function GetBoolProperty(ByVal Index As Long) As Boolean
+Private Function GetBoolProperty(ByVal pObj As LongPtr, ByVal Index As Long) As Boolean
     If m_pSettings = 0 Then Exit Function
     
     Dim hr As Long, res As Variant
@@ -288,14 +352,14 @@ Private Function GetBoolProperty(ByVal Index As Long) As Boolean
     Dim args(0) As Variant:  args(0) = VarPtr(outVal)
     Dim ptrs(0) As LongPtr: ptrs(0) = VarPtr(args(0))
     
-    hr = DispCallFunc(m_pSettings, Index * LenB(m_pSettings), CC_STDCALL, vbLong, 1, types(0), ptrs(0), res)
+    hr = DispCallFunc(pObj, Index * LenB(m_pSettings), CC_STDCALL, vbLong, 1, types(0), ptrs(0), res)
     
     If hr = 0 Then
         GetBoolProperty = (outVal <> 0)
     End If
 End Function
 
-Private Sub LetBoolProperty(ByVal Index As Long, ByVal value As Boolean)
+Private Sub LetBoolProperty(ByVal pObj As LongPtr, ByVal Index As Long, ByVal value As Boolean)
     If m_pSettings = 0 Then Exit Sub
     
     Dim hr As Long, res As Variant
@@ -306,7 +370,7 @@ Private Sub LetBoolProperty(ByVal Index As Long, ByVal value As Boolean)
     Dim args(0) As Variant:  args(0) = inVal
     Dim ptrs(0) As LongPtr: ptrs(0) = VarPtr(args(0))
     
-    hr = DispCallFunc(m_pSettings, Index * LenB(m_pSettings), CC_STDCALL, vbLong, 1, types(0), ptrs(0), res)
+    hr = DispCallFunc(pObj, Index * LenB(m_pSettings), CC_STDCALL, vbLong, 1, types(0), ptrs(0), res)
     If hr = 0 And res = 0 Then
         Debug.Print "LetBoolProperty Success."
     End If
@@ -524,6 +588,7 @@ Private Sub Class_Initialize()
 End Sub
 
 Private Sub Class_Terminate()
+    Call Finalize
     If m_vtbl <> 0 Then VirtualFree m_vtbl, 0, MEM_RELEASE
     If m_fakeObj <> 0 Then VirtualFree m_fakeObj, 0, MEM_RELEASE
     If m_pStubQI <> 0 Then VirtualFree m_pStubQI, 0, MEM_RELEASE
@@ -640,23 +705,34 @@ Public Sub Invoke_ControllerCompleted( _
     ' 引数: RECT(Left, Top, Right, Bottom), double(Zoom)
     ' ※x64のdcfで構造体渡しが厳しい場合、一旦既存コードのように Win32 API で強制するのも手です。
     
-    Dim rc As RECT
-    rc.Right = 800: rc.Bottom = 600
+'    Dim rc As RECT
+'    rc.Right = 800: rc.Bottom = 600
     
     
     ' 暫定的に既存コードの「Win32 APIで強制」をここでも発動させる
     ' (targetHWnd は Invoke_EnvironmentCompleted で取ったものを使用)
-    Dim childHwnd As LongPtr
-    childHwnd = FindWindowEx(targetHWnd, 0, "Chrome_WidgetWin_0", vbNullString)
-    If childHwnd <> 0 Then
-        MoveWindow childHwnd, 0, 0, 800, 600, 1
-        Debug.Print "Forced visibility via Win32. HWND: " & Hex(childHwnd)
-    End If
+'    Dim childHwnd As LongPtr
+'    childHwnd = FindWindowEx(targetHWnd, 0, "Chrome_WidgetWin_0", vbNullString)
+'    If childHwnd <> 0 Then
+'        MoveWindow childHwnd, 0, 0, 800, 600, 1
+'        Debug.Print "Forced visibility via Win32. HWND: " & Hex(childHwnd)
+'    End If
 
-    ResizeWebView2Force targetHWnd, PtsToPx(m_targetFrame.InsideWidth, False), PtsToPx(m_targetFrame.InsideHeight, True)
+    'ResizeWebView2Force targetHWnd, PtsToPx(m_targetFrame.InsideWidth, False), PtsToPx(m_targetFrame.InsideHeight, True)
+    
+    'バカめ、きっちり制御して見せたわ！
+    Dim l(3) As Long
+    l(0) = 0
+    l(1) = 0
+    l(2) = PtsToPx(m_targetFrame.InsideWidth, False)
+    l(3) = PtsToPx(m_targetFrame.InsideHeight, True)
+    Dim hrPutBounds As Long
+    hrPutBounds = dcf(m_pController, 6, "Controler_put_Bounds", VarPtr(l(0)))
+    Debug.Print "hrPutBounds:", hrPutBounds
 
     ' --- 4. WebView2本体を取得 ---
-    Call dcf(m_pController, 25, "get_CoreWebView2", VarPtr(m_pWebView))
+    m_pWebView = Controller_get_CoreWebView2
+    'Call dcf(m_pController, 25, "get_CoreWebView2", VarPtr(m_pWebView))
     'これでモジュールレベル変数のm_pWebViewにICoreWebView2のポインタが入る
     
     If m_pWebView = 0 Then
@@ -683,6 +759,213 @@ Public Sub Invoke_ControllerCompleted( _
     
     DoEvents
 End Sub
+
+
+'MIDL_INTERFACE ("4d00c0d1-9434-4eb6-8078-8697a560334f")
+'ICoreWebView2Controller:  Public IUnknown
+'{
+'public:
+'//3
+'virtual /* [propget] */ HRESULT STDMETHODCALLTYPE get_IsVisible(
+'    /* [retval][out] */ BOOL *isVisible) = 0;
+Public Property Get Controller_IsVisible() As Boolean
+    Controller_IsVisible = GetBoolProperty(m_pController, 3)
+End Property
+'//4
+'virtual /* [propput] */ HRESULT STDMETHODCALLTYPE put_IsVisible(
+'    /* [in] */ BOOL isVisible) = 0;
+Public Property Let Controller_IsVisible(ByVal value As Boolean)
+    LetBoolProperty m_pController, 4, value
+End Property
+'//5
+'virtual /* [propget] */ HRESULT STDMETHODCALLTYPE get_Bounds(
+'    /* [retval][out] */ RECT *bounds) = 0;
+Public Function Controller_get_Bounds(l() As Long) As Long
+    Dim hr As Long
+    hr = dcf(m_pController, 5, "Controler_get_Bounds", VarPtr(l(0)))
+    Controller_get_Bounds = hr
+End Function
+'//6
+'virtual /* [propput] */ HRESULT STDMETHODCALLTYPE put_Bounds(
+'    /* [in] */ RECT bounds) = 0;
+Public Function Controller_put_Bounds(l() As Long) As Long
+    Dim hr As Long
+    hr = dcf(m_pController, 6, "Controler_put_Bounds", VarPtr(l(0)))
+    Controller_put_Bounds = hr
+End Function
+'//7
+'virtual /* [propget] */ HRESULT STDMETHODCALLTYPE get_ZoomFactor(
+'    /* [retval][out] */ double *zoomFactor) = 0;
+Public Property Get Controller_ZoomFactor() As Double
+    Dim hr As Long, zoomFactor As Double
+    hr = dcf(m_pController, 7, "get_ZoomFactor", VarPtr(zoomFactor))
+    Debug.Print "Controller_get_ZoomFactor Hr:" & hr
+    Controller_ZoomFactor = zoomFactor
+End Property
+'//8
+'virtual /* [propput] */ HRESULT STDMETHODCALLTYPE put_ZoomFactor(
+'    /* [in] */ double zoomFactor) = 0;
+Public Property Let Controller_ZoomFactor(zoomFactor As Double)
+    Dim hr As Long
+    hr = dcf(m_pController, 8, "put_ZoomFactor", zoomFactor)
+    Debug.Print "Controller_put_ZoomFactor Hr:" & hr
+End Property
+'//9
+'virtual HRESULT STDMETHODCALLTYPE add_ZoomFactorChanged(
+'    /* [in] */ ICoreWebView2ZoomFactorChangedEventHandler *eventHandler,
+'    /* [out] */ EventRegistrationToken *token) = 0;
+Public Function Controller_add_ZoomFactorChanged() As Long
+    Controller_add_ZoomFactorChanged = RegisterHandlerEx(m_pController, 9, "Invoke_Controller_ZoomFactorChanged")
+End Function
+Public Function Invoke_Controller_ZoomFactorChanged(ByVal pThis As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
+    RaiseEvent ControllerZoomFactorChanged
+    Invoke_Controller_ZoomFactorChanged = 0
+End Function
+
+'//10
+'virtual HRESULT STDMETHODCALLTYPE remove_ZoomFactorChanged(
+'    /* [in] */ EventRegistrationToken token) = 0;
+Public Function Controller_remove_ZoomFactorChanged(token As Long)
+    Controller_remove_ZoomFactorChanged = remove_Handler(Me, 10, m_tokens(9), "Controller_remove_ZoomFactorChanged")
+End Function
+    
+'//11
+'virtual HRESULT STDMETHODCALLTYPE SetBoundsAndZoomFactor(
+'    /* [in] */ RECT bounds,
+'    /* [in] */ double zoomFactor) = 0;
+Public Function Controller_SetBoundsAndZoomFactor(ByVal Left As Long, Top As Long, Right As Long, Bottom As Long, zoomFactor As Double)
+    Dim hr As Long, bounds(3) As Long
+    bounds(0) = Left
+    bounds(1) = Top
+    bounds(2) = Right
+    bounds(3) = Bottom
+    hr = dcf(m_pController, 11, "Controller_SetBoundsAndZoomFactor", VarPtr(bounds(0)), zoomFactor)
+    Debug.Print "Controller_SetBoundsAndZoomFactor Hr:" & hr
+End Function
+    
+'//12
+'virtual HRESULT STDMETHODCALLTYPE MoveFocus(
+'    /* [in] */ COREWEBVIEW2_MOVE_FOCUS_REASON reason) = 0;
+    'Enum COREWEBVIEW2_MOVE_FOCUS_REASON
+    '{
+    '    COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC = 0,
+    '    COREWEBVIEW2_MOVE_FOCUS_REASON_NEXT = ( COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC + 1 ) ,
+    '    COREWEBVIEW2_MOVE_FOCUS_REASON_PREVIOUS = (COREWEBVIEW2_MOVE_FOCUS_REASON_NEXT + 1)
+    '}   COREWEBVIEW2_MOVE_FOCUS_REASON;
+Public Function Controller_MoveFocus(ByVal reason As COREWEBVIEW2_MOVE_FOCUS_REASON) As Long
+    Dim hr As Long
+    hr = dcf(m_pController, 12, "MoveFocus", reason)
+    Debug.Print "Controller_MoveFocus Hr:" & hr
+End Function
+
+'//13
+'virtual HRESULT STDMETHODCALLTYPE add_MoveFocusRequested(
+'    /* [in] */ ICoreWebView2MoveFocusRequestedEventHandler *eventHandler,
+'    /* [out] */ EventRegistrationToken *token) = 0;
+Public Function Controller_add_MoveFocusRequested() As Long
+    Controller_add_MoveFocusRequested = RegisterHandlerEx(m_pController, 13, "Invoke_Controller_MoveFocusRequested")
+End Function
+Public Function Invoke_Controller_MoveFocusRequested(ByVal pThis As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
+    RaiseEvent ControllerMoveFocusRequested
+    Invoke_Controller_MoveFocusRequested = 0
+End Function
+'//14
+'virtual HRESULT STDMETHODCALLTYPE remove_MoveFocusRequested(
+'    /* [in] */ EventRegistrationToken token) = 0;
+Public Function Controller_remove_MoveFocusRequested(token As Long)
+    Controller_remove_MoveFocusRequested = remove_Handler(Me, 14, m_tokens(13), "Controller_remove_MoveFocusRequested")
+End Function
+'//15
+'virtual HRESULT STDMETHODCALLTYPE add_GotFocus(
+'    /* [in] */ ICoreWebView2FocusChangedEventHandler *eventHandler,
+'    /* [out] */ EventRegistrationToken *token) = 0;
+Public Function Controller_add_GotFocus() As Long
+    Controller_add_GotFocus = RegisterHandlerEx(m_pController, 15, "Invoke_Controller_GotFocus")
+End Function
+Public Function Invoke_Controller_GotFocus(ByVal pThis As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
+    RaiseEvent ControllerGotFocus
+    Invoke_Controller_GotFocus = 0
+End Function
+'//16
+'virtual HRESULT STDMETHODCALLTYPE remove_GotFocus(
+'    /* [in] */ EventRegistrationToken token) = 0;
+Public Function Controller_remove_GotFocus(token As Long)
+    Controller_remove_GotFocus = remove_Handler(Me, 16, m_tokens(15), "Controller_remove_GotFocus")
+End Function
+'//17
+'virtual HRESULT STDMETHODCALLTYPE add_LostFocus(
+'    /* [in] */ ICoreWebView2FocusChangedEventHandler *eventHandler,
+'    /* [out] */ EventRegistrationToken *token) = 0;
+Public Function Controller_add_LostFocus() As Long
+    Controller_add_LostFocus = RegisterHandlerEx(m_pController, 17, "Invoke_Controller_LostFocus")
+End Function
+Public Function Invoke_Controller_LostFocus(ByVal pThis As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
+    RaiseEvent ControllerLostFocus
+    Invoke_Controller_LostFocus = 0
+End Function
+'//18
+'virtual HRESULT STDMETHODCALLTYPE remove_LostFocus(
+'    /* [in] */ EventRegistrationToken token) = 0;
+Public Function Controller_remove_LostFocus(token As Long)
+    Controller_remove_LostFocus = remove_Handler(Me, 18, m_tokens(17), "Controller_remove_LostFocus")
+End Function
+'//19
+'virtual HRESULT STDMETHODCALLTYPE add_AcceleratorKeyPressed(
+'    /* [in] */ ICoreWebView2AcceleratorKeyPressedEventHandler *eventHandler,
+'    /* [out] */ EventRegistrationToken *token) = 0;
+Public Function Controller_add_AcceleratorKeyPressed() As Long
+    Controller_add_AcceleratorKeyPressed = RegisterHandlerEx(m_pController, 17, "Invoke_Controller_AcceleratorKeyPressed")
+End Function
+Public Function Invoke_Controller_AcceleratorKeyPressed(ByVal pThis As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
+    RaiseEvent ControllerAcceleratorKeyPressed
+    Invoke_Controller_AcceleratorKeyPressed = 0
+End Function
+'//20
+'virtual HRESULT STDMETHODCALLTYPE remove_AcceleratorKeyPressed(
+'    /* [in] */ EventRegistrationToken token) = 0;
+Public Function Controller_remove_AcceleratorKeyPressed(token As Long)
+    Controller_remove_AcceleratorKeyPressed = remove_Handler(Me, 20, m_tokens(19), "Controller_remove_AcceleratorKeyPressed")
+End Function
+'//21
+'virtual /* [propget] */ HRESULT STDMETHODCALLTYPE get_ParentWindow(
+'    /* [retval][out] */ HWND *parentWindow) = 0;
+Public Property Get Controller_ParentWindow() As LongPtr
+    Dim hr As Long, parentWindow As LongPtr
+    hr = dcf(m_pController, 21, "Controller_get_ParentWindow", VarPtr(parentWindow))
+    Controller_ParentWindow = parentWindow
+End Property
+
+'//22
+'virtual /* [propput] */ HRESULT STDMETHODCALLTYPE put_ParentWindow(
+'    /* [in] */ HWND parentWindow) = 0;
+Public Property Let Controller_ParentWindow(parentWindow As LongPtr)
+    Dim hr As Long
+    hr = dcf(m_pController, 22, "Controller_put_ParentWindow", parentWindow)
+End Property
+
+
+'//23
+'virtual HRESULT STDMETHODCALLTYPE NotifyParentWindowPositionChanged( void) = 0;
+Public Sub Controller_NotifyParentWindowPositionChanged()
+    Call dcf(m_pController, 23, "Controller_NotifyParentWindowPositionChanged")
+End Sub
+'//24
+'virtual HRESULT STDMETHODCALLTYPE Close( void) = 0;
+Public Sub Controller_Close()
+    Call dcf(m_pController, 24, "Controller_Close")
+End Sub
+'//25
+'virtual /* [propget] */ HRESULT STDMETHODCALLTYPE get_CoreWebView2(
+'    /* [retval][out] */ ICoreWebView2 **coreWebView2) = 0;
+Public Function Controller_get_CoreWebView2() As LongPtr
+    Dim hr As Long, pWebView2 As LongPtr
+    hr = dcf(m_pController, 25, "Controller_get_CoreWebView2", VarPtr(pWebView2))
+    Controller_get_CoreWebView2 = pWebView2
+End Function
+'
+'};
+
+
 
 ' Converts VBA Points (twips/points) to Pixel coordinates based on monitor DPI scaling
 Private Function PtsToPx(ByVal pts As Single, ByVal isVertical As Boolean) As Long
@@ -767,6 +1050,74 @@ Private Function remove_Handler(pWebView2 As LongPtr, vtblIndex As Long, token A
     End If
 End Function
 
+Public Function RegisterHandlerEx( _
+    ByVal pTargetInterface As LongPtr, _
+    ByVal vtblIndex As Long, _
+    ByVal methodName As String) As Long
+
+    If pTargetInterface = 0 Then Exit Function
+
+    ' 1. 管理用ストレージの拡張
+    m_eventCount = m_eventCount + 1
+    ReDim Preserve m_eventList(1 To m_eventCount)
+    
+    With m_eventList(m_eventCount)
+        .pInterface = pTargetInterface
+        .vtblIndex = vtblIndex
+        
+        ' 2. VTable 生成
+        .vTable = CreateHandlerVTable(methodName)
+        
+        ' 3. fakeObj 生成
+        .fakeObj = VirtualAlloc(0, 8, MEM_COMMIT Or MEM_RESERVE, PAGE_EXECUTE_READWRITE)
+        RtlMoveMemory .fakeObj, VarPtr(.vTable), 8
+        
+        ' 4. ターゲットに対して登録実行
+        ' ※ 第4引数に fakeObj, 第5引数に token のアドレスを渡す
+        RegisterHandlerEx = dcf(pTargetInterface, vtblIndex, methodName, _
+                                .fakeObj, VarPtr(.token))
+                                
+        Debug.Print "Event Registered: " & methodName & " on " & Hex(pTargetInterface)
+    End With
+End Function
+''' <summary>
+''' 指定した登録番号のイベントハンドラを解除し、メモリを解放する
+''' </summary>
+''' <param name="eventIndex">m_eventList のインデックス</param>
+Public Function remove_HandlerEx(ByVal eventIndex As Long) As Long
+    If eventIndex < 1 Or eventIndex > m_eventCount Then Exit Function
+    
+    Dim hr As Long
+    Dim res As Variant
+    
+    With m_eventList(eventIndex)
+        ' ターゲットポインタやトークンが空ならスキップ
+        If .pInterface = 0 Or .token = 0 Then Exit Function
+        
+        ' --- 1. COMの remove_xxx メソッドを呼び出す ---
+        ' 通常、remove は add の直後のインデックス (vtblIndex + 1) にあります
+        ' 引数：EventRegistrationToken (8byte / Int64相当)
+        ' ※ x64では token をそのまま LongPtr として渡せばOK
+        hr = dcf(.pInterface, .vtblIndex + 1, "remove_Handler", .token)
+        
+        If hr = 0 Then
+            ' --- 2. メモリの解放 (後始末) ---
+            If .fakeObj <> 0 Then
+                VirtualFree .fakeObj, 0, MEM_RELEASE
+                .fakeObj = 0
+            End If
+            
+            ' 管理データをクリア（二重解放防止）
+            .token = 0
+            .pInterface = 0
+            Debug.Print "Event Removed Successfully (Index: " & .vtblIndex & ")"
+        Else
+            Debug.Print "remove_Handler Failed. hr: " & hr
+        End If
+    End With
+    
+    remove_HandlerEx = hr
+End Function
 
 ' 指定された関数名を元に該当関数のポインタをこのクラス内から検索し、
 ' WebView2側からの呼び出しに対し引数"Me"を追加して
@@ -915,10 +1266,10 @@ CleanUp_ITypeInfo:
     Call DispCallFunc(pTInfo, 2 * LenB(pTInfo), CC_STDCALL, vbLong, 0, 0, 0, res)
 End Sub
 
-' Helper function to receive AddressOf as LongPtr
-Public Function GetAddr(ByVal addr As LongPtr) As LongPtr
-    GetAddr = addr
-End Function
+'' Helper function to receive AddressOf as LongPtr
+'Public Function GetAddr(ByVal addr As LongPtr) As LongPtr
+'    GetAddr = addr
+'End Function
 
 ' Dummy Sub to prevent VBA compiler optimization / address loss
 Public Sub RegisterNavigationCompleted_()
@@ -1055,6 +1406,15 @@ Public Sub CreateDeepFolder(ByVal folderPath As String)
 End Sub
 
 Public Sub Registar_IcoreWebView2_Handlers()
+    
+    'ICoreWebView2Controller
+    Call Controller_add_ZoomFactorChanged
+    Call Controller_add_MoveFocusRequested
+    Call Controller_add_GotFocus
+    Call Controller_add_LostFocus
+    Call Controller_add_AcceleratorKeyPressed
+    
+    'ICoreWebView2
     Call add_NavigationStarting
     Call add_ContentLoading                           ' 9
     Call add_SourceChanged                            '11
@@ -1150,94 +1510,110 @@ End Sub
 'virtual /* [propget] */ HRESULT STDMETHODCALLTYPE get_IsScriptEnabled(
 '    /* [retval][out] */ BOOL *isScriptEnabled) = 0;
 Public Property Get IsScriptEnabled() As Boolean
-    IsScriptEnabled = GetBoolProperty(3)
+    IsScriptEnabled = GetBoolProperty(m_pSettings, 3)
 End Property
 '4
 'virtual /* [propput] */ HRESULT STDMETHODCALLTYPE put_IsScriptEnabled(
 '    /* [in] */ BOOL isScriptEnabled) = 0;
 Public Property Let IsScriptEnabled(ByVal value As Boolean)
-    LetBoolProperty 4, value
+    LetBoolProperty m_pSettings, 4, value
 End Property
 '5
 'virtual /* [propget] */ HRESULT STDMETHODCALLTYPE get_IsWebMessageEnabled(
 '    /* [retval][out] */ BOOL *isWebMessageEnabled) = 0;
 Public Property Get IsWebMessageEnabled() As Boolean
-    IsWebMessageEnabled = GetBoolProperty(5)
+    IsWebMessageEnabled = GetBoolProperty(m_pSettings, 5)
 End Property
 '6
 'virtual /* [propput] */ HRESULT STDMETHODCALLTYPE put_IsWebMessageEnabled(
 '    /* [in] */ BOOL isWebMessageEnabled) = 0;
 Public Property Let IsWebMessageEnabled(ByVal value As Boolean)
-    LetBoolProperty 6, value
+    LetBoolProperty m_pSettings, 6, value
 End Property
 '7
 'virtual /* [propget] */ HRESULT STDMETHODCALLTYPE get_AreDefaultScriptDialogsEnabled(
 '    /* [retval][out] */ BOOL *areDefaultScriptDialogsEnabled) = 0;
 Public Property Get AreDefaultScriptDialogsEnabled() As Boolean
-    AreDefaultScriptDialogsEnabled = GetBoolProperty(7)
+    AreDefaultScriptDialogsEnabled = GetBoolProperty(m_pSettings, 7)
 End Property
 '8
 'virtual /* [propput] */ HRESULT STDMETHODCALLTYPE put_AreDefaultScriptDialogsEnabled(
 '    /* [in] */ BOOL areDefaultScriptDialogsEnabled) = 0;
 Public Property Let AreDefaultScriptDialogsEnabled(ByVal value As Boolean)
-    LetBoolProperty 8, value
+    LetBoolProperty m_pSettings, 8, value
 End Property
 '9
 'virtual /* [propget] */ HRESULT STDMETHODCALLTYPE get_IsStatusBarEnabled(
 '    /* [retval][out] */ BOOL *isStatusBarEnabled) = 0;
 Public Property Get IsStatusBarEnabled() As Boolean
-    IsStatusBarEnabled = GetBoolProperty(9)
+    IsStatusBarEnabled = GetBoolProperty(m_pSettings, 9)
 End Property
 '10
 'virtual /* [propput] */ HRESULT STDMETHODCALLTYPE put_IsStatusBarEnabled(
 '    /* [in] */ BOOL isStatusBarEnabled) = 0;
 Public Property Let IsStatusBarEnabled(ByVal value As Boolean)
-    LetBoolProperty 10, value
+    LetBoolProperty m_pSettings, 10, value
 End Property
 '11
 'virtual /* [propget] */ HRESULT STDMETHODCALLTYPE get_AreDevToolsEnabled(
 '    /* [retval][out] */ BOOL *areDevToolsEnabled) = 0;
 Public Property Get AreDevToolsEnabled() As Boolean
-    AreDevToolsEnabled = GetBoolProperty(11)
+    AreDevToolsEnabled = GetBoolProperty(m_pSettings, 11)
 End Property
 '12
 'virtual /* [propput] */ HRESULT STDMETHODCALLTYPE put_AreDevToolsEnabled(
 '    /* [in] */ BOOL areDevToolsEnabled) = 0;
 Public Property Let AreDevToolsEnabled(ByVal value As Boolean)
-    LetBoolProperty 12, value
+    LetBoolProperty m_pSettings, 12, value
 End Property
 '13
 'virtual /* [propget] */ HRESULT STDMETHODCALLTYPE get_AreDefaultContextMenusEnabled(
 '    /* [retval][out] */ BOOL *enabled) = 0;
-'
+Public Property Get AreDefaultContextMenusEnabled() As Boolean
+    AreDefaultContextMenusEnabled = GetBoolProperty(m_pSettings, 13)
+End Property
 '14
 'virtual /* [propput] */ HRESULT STDMETHODCALLTYPE put_AreDefaultContextMenusEnabled(
 '    /* [in] */ BOOL enabled) = 0;
-'
+Public Property Let AreDefaultContextMenusEnabled(ByVal value As Boolean)
+    LetBoolProperty m_pSettings, 14, value
+End Property
 '15
 'virtual /* [propget] */ HRESULT STDMETHODCALLTYPE get_AreHostObjectsAllowed(
 '    /* [retval][out] */ BOOL *allowed) = 0;
-'
+Public Property Get AreHostObjectsAllowed() As Boolean
+    AreHostObjectsAllowed = GetBoolProperty(m_pSettings, 15)
+End Property
 '16
 'virtual /* [propput] */ HRESULT STDMETHODCALLTYPE put_AreHostObjectsAllowed(
 '    /* [in] */ BOOL allowed) = 0;
-'
+Public Property Let AreHostObjectsAllowed(ByVal value As Boolean)
+    LetBoolProperty m_pSettings, 16, value
+End Property
 '17
 'virtual /* [propget] */ HRESULT STDMETHODCALLTYPE get_IsZoomControlEnabled(
 '    /* [retval][out] */ BOOL *enabled) = 0;
-'
+Public Property Get IsZoomControlEnabled() As Boolean
+    IsZoomControlEnabled = GetBoolProperty(m_pSettings, 17)
+End Property
 '18
 'virtual /* [propput] */ HRESULT STDMETHODCALLTYPE put_IsZoomControlEnabled(
 '    /* [in] */ BOOL enabled) = 0;
-'
+Public Property Let IsZoomControlEnabled(ByVal value As Boolean)
+    LetBoolProperty m_pSettings, 18, value
+End Property
 '19
 'virtual /* [propget] */ HRESULT STDMETHODCALLTYPE get_IsBuiltInErrorPageEnabled(
 '    /* [retval][out] */ BOOL *enabled) = 0;
-'
+Public Property Get IsBuiltInErrorPageEnabled() As Boolean
+    IsBuiltInErrorPageEnabled = GetBoolProperty(m_pSettings, 19)
+End Property
 '20
 'virtual /* [propput] */ HRESULT STDMETHODCALLTYPE put_IsBuiltInErrorPageEnabled(
 '    /* [in] */ BOOL enabled) = 0;
-'
+Public Property Let IsBuiltInErrorPageEnabled(ByVal value As Boolean)
+    LetBoolProperty m_pSettings, 20, value
+End Property
 '};
 
 ''''''''''''''''''''''''''''''''''''''''''''''''''''''
@@ -1257,11 +1633,7 @@ Public Function get_Settings() As Long
     'Dim psettings As LongPtr
     Dim hr As Long
     hr = dcf(m_pWebView, 3, "get_Settings", VarPtr(m_pSettings))
-    If hr = 0 Then
-        Debug.Print "m_psettings:" & m_pSettings
-        'Set Settings = New c6_WebView2Settings
-        'Settings.Init psettings
-    End If
+    get_Settings = hr
 End Function
 
 '4
@@ -1309,7 +1681,6 @@ End Sub
 'virtual HRESULT STDMETHODCALLTYPE NavigateToString(
 '    /* [in] */ LPCWSTR htmlContent) = 0;
 Public Function NavigateToString(htmlContent As String) As Long
-    'Renders the specified HTML code.
     NavigateToString = dcf(m_pWebView, 6, "NavigateToString", StrPtr(htmlContent))
 End Function
 
@@ -1318,7 +1689,8 @@ End Function
 '    /* [in] */ ICoreWebView2NavigationStartingEventHandler *eventHandler,
 '    /* [out] */ EventRegistrationToken *token) = 0;
 Public Function add_NavigationStarting() As Long
-    add_NavigationStarting = RegisterHandler(7, "Invoke_NavigationStarting")
+    'add_NavigationStarting = RegisterHandler(7, "Invoke_NavigationStarting")
+    add_NavigationStarting = RegisterHandlerEx(m_pWebView, 7, "Invoke_NavigationStarting")
 End Function
 Public Function Invoke_NavigationStarting(ByVal pThis As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
     RaiseEvent NavigationStarting
@@ -1328,7 +1700,6 @@ End Function
 'virtual HRESULT STDMETHODCALLTYPE remove_NavigationStarting(
 '    /* [in] */ EventRegistrationToken token) = 0;
 Public Function remove_NavigationStarting(token As Long) As Long
-    'remove_NavigationStarting = remove_Handler(Me, 8, token, "remove_NavigationStarting")
     remove_NavigationStarting = remove_Handler(Me, 8, m_tokens(7), "remove_NavigationStarting")
 End Function
 
@@ -1337,8 +1708,8 @@ End Function
 '    /* [in] */ ICoreWebView2ContentLoadingEventHandler *eventHandler,
 '    /* [out] */ EventRegistrationToken *token) = 0;
 Public Function add_ContentLoading() As Long
-    'add_ContentLoading = DCF_RegisterHandler(Me, 9, "add_ContentLoading", AddressOf ContentLoading_Invoke, "ContentLoadingHandler")
-    add_ContentLoading = RegisterHandler(9, "Invoke_ContentLoading")
+    'add_ContentLoading = RegisterHandler(9, "Invoke_ContentLoading")
+    add_ContentLoading = RegisterHandlerEx(m_pWebView, 9, "Invoke_ContentLoading")
 End Function
 Public Function Invoke_ContentLoading(ByVal pThis As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
     RaiseEvent ContentLoading
@@ -1348,7 +1719,6 @@ End Function
 'virtual HRESULT STDMETHODCALLTYPE remove_ContentLoading(
 '    /* [in] */ EventRegistrationToken token) = 0;
 Public Function remove_ContentLoading(token As Long) As Long
-    'remove_ContentLoading = remove_Handler(Me, 10, token, "remove_ContentLoading")
     remove_ContentLoading = remove_Handler(Me, 10, m_tokens(9), "remove_ContentLoading")
 End Function
 
@@ -1357,8 +1727,8 @@ End Function
 '    /* [in] */ ICoreWebView2SourceChangedEventHandler *eventHandler,
 '    /* [out] */ EventRegistrationToken *token) = 0;
 Public Function add_SourceChanged() As Long
-    'add_SourceChanged = DCF_RegisterHandler(Me, 11, "add_SourceChanged", AddressOf SourceChanged_Invoke, "SourceChangedHandler")
-    add_SourceChanged = RegisterHandler(11, "Invoke_SourceChanged")
+    'add_SourceChanged = RegisterHandler(11, "Invoke_SourceChanged")
+    add_SourceChanged = RegisterHandlerEx(m_pWebView, 11, "Invoke_SourceChanged")
 End Function
 Public Function Invoke_SourceChanged(ByVal pThis As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
     RaiseEvent SourceChanged
@@ -1368,7 +1738,6 @@ End Function
 'virtual HRESULT STDMETHODCALLTYPE remove_SourceChanged(
 '    /* [in] */ EventRegistrationToken token) = 0;
 Public Function remove_SourceChanged(token As Long) As Long
-    'remove_SourceChanged = remove_Handler(Me, 12, token, "remove_SourceChanged")
     remove_SourceChanged = remove_Handler(Me, 12, m_tokens(11), "remove_SourceChanged")
 End Function
 
@@ -1377,8 +1746,8 @@ End Function
 '    /* [in] */ ICoreWebView2HistoryChangedEventHandler *eventHandler,
 '    /* [out] */ EventRegistrationToken *token) = 0;
 Public Function add_HistoryChanged() As Long
-    'add_HistoryChanged = DCF_RegisterHandler(Me, 13, "add_HistoryChanged", AddressOf HistoryChanged_Invoke, "HistoryChangedHandler")
-    add_HistoryChanged = RegisterHandler(13, "Invoke_HistoryChanged")
+    'add_HistoryChanged = RegisterHandler(13, "Invoke_HistoryChanged")
+    add_HistoryChanged = RegisterHandlerEx(m_pWebView, 13, "Invoke_HistoryChanged")
 End Function
 Public Function Invoke_HistoryChanged(ByVal pThis As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
     RaiseEvent HistoryChanged
@@ -1388,7 +1757,6 @@ End Function
 'virtual HRESULT STDMETHODCALLTYPE remove_HistoryChanged(
 '    /* [in] */ EventRegistrationToken token) = 0;
 Public Function remove_HistoryChanged(token As Long) As Long
-    'remove_HistoryChanged = remove_Handler(Me, 14, token, "remove_HistoryChanged")
     remove_HistoryChanged = remove_Handler(Me, 14, m_tokens(13), "remove_HistoryChanged")
 End Function
 
@@ -1398,8 +1766,8 @@ End Function
 '    /* [out] */ EventRegistrationToken *token) = 0;
 'add_NavigationCompleted
 Public Function add_NavigationCompleted() As Long
-    'add_NavigationCompleted = mHelpers.DCF_RegisterHandler(Me, 15, "add_NavigationCompleted", AddressOf NavCompleted_Invoke, "NavigationCompleted")
-    add_NavigationCompleted = RegisterHandler(15, "Invoke_NavigationCompleted")
+    'add_NavigationCompleted = RegisterHandler(15, "Invoke_NavigationCompleted")
+    add_NavigationCompleted = RegisterHandlerEx(m_pWebView, 15, "Invoke_NavigationCompleted")
 End Function
 Public Function Invoke_NavigationCompleted(ByVal pThis As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
     RaiseEvent NavigationCompleted
@@ -1409,7 +1777,6 @@ End Function
 'virtual HRESULT STDMETHODCALLTYPE remove_NavigationCompleted(
 '    /* [in] */ EventRegistrationToken token) = 0;
 Public Function remove_NavigationCompleted(token As Long) As Long
-    'remove_NavigationCompleted = remove_Handler(Me, 16, token, "remove_NavigationCompleted")
     remove_NavigationCompleted = remove_Handler(Me, 16, m_tokens(15), "remove_NavigationCompleted")
 End Function
 
@@ -1418,8 +1785,8 @@ End Function
 '    /* [in] */ ICoreWebView2NavigationStartingEventHandler *eventHandler,
 '    /* [out] */ EventRegistrationToken *token) = 0;
 Public Function add_FrameNavigationStarting() As Long
-    'add_FrameNavigationStarting = mHelpers.DCF_RegisterHandler(Me, 17, "add_FrameNavigationStarting", AddressOf FrameNavigationStarting_Invoke, "FrameNavigationStarting")
-    add_FrameNavigationStarting = RegisterHandler(17, "Invoke_FrameNavigationStarting")
+    'add_FrameNavigationStarting = RegisterHandler(17, "Invoke_FrameNavigationStarting")
+    add_FrameNavigationStarting = RegisterHandlerEx(m_pWebView, 17, "Invoke_FrameNavigationStarting")
 End Function
 Public Function Invoke_FrameNavigationStarting(ByVal pThis As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
     RaiseEvent FrameNavigationStarting
@@ -1429,7 +1796,6 @@ End Function
 'virtual HRESULT STDMETHODCALLTYPE remove_FrameNavigationStarting(
 '    /* [in] */ EventRegistrationToken token) = 0;
 Public Function remove_FrameNavigationStarting(token As Long) As Long
-    'remove_FrameNavigationStarting = remove_Handler(Me, 18, token, "remove_FrameNavigationStarting")
     remove_FrameNavigationStarting = remove_Handler(Me, 18, m_tokens(17), "remove_FrameNavigationStarting")
 End Function
 
@@ -1438,8 +1804,8 @@ End Function
 '    /* [in] */ ICoreWebView2NavigationCompletedEventHandler *eventHandler,
 '    /* [out] */ EventRegistrationToken *token) = 0;
 Public Function add_FrameNavigationCompleted() As Long
-    'add_FrameNavigationCompleted = mHelpers.DCF_RegisterHandler(Me, 19, "add_FrameNavigationCompleted", AddressOf FrameNavigationCompleted_Invoke, "FrameNavigationCompleted")
-    add_FrameNavigationCompleted = RegisterHandler(19, "Invoke_FrameNavigationCompleted")
+    'add_FrameNavigationCompleted = RegisterHandler(19, "Invoke_FrameNavigationCompleted")
+    add_FrameNavigationCompleted = RegisterHandlerEx(m_pWebView, 19, "Invoke_FrameNavigationCompleted")
 End Function
 Public Function Invoke_FrameNavigationCompleted(ByVal pThis As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
     RaiseEvent FrameNavigationCompleted
@@ -1449,7 +1815,6 @@ End Function
 'virtual HRESULT STDMETHODCALLTYPE remove_FrameNavigationCompleted(
 '    /* [in] */ EventRegistrationToken token) = 0;
 Public Function remove_FrameNavigationCompleted(token As Long) As Long
-    'remove_FrameNavigationCompleted = remove_Handler(Me, 20, token, "remove_FrameNavigationCompleted")
     remove_FrameNavigationCompleted = remove_Handler(Me, 20, m_tokens(19), "remove_FrameNavigationCompleted")
 End Function
 
@@ -1459,8 +1824,8 @@ End Function
 '    /* [out] */ EventRegistrationToken *token) = 0;
 '   ** This event is triggered only if the ICoreWebView2Settings::AreDefaultScriptDialogsEnabled property is set to FALSE.
 Public Function add_ScriptDialogOpening() As Long
-    'add_ScriptDialogOpening = mHelpers.DCF_RegisterHandler(Me, 21, "add_ScriptDialogOpening", AddressOf ScriptDialogOpening_Invoke, "ScriptDialogOpening")
-    add_ScriptDialogOpening = RegisterHandler(21, "Invoke_ScriptDialogOpening")
+    'add_ScriptDialogOpening = RegisterHandler(21, "Invoke_ScriptDialogOpening")
+    add_ScriptDialogOpening = RegisterHandlerEx(m_pWebView, 21, "Invoke_ScriptDialogOpening")
 End Function
 Public Function Invoke_ScriptDialogOpening(ByVal pThis As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
     RaiseEvent ScriptDialogOpening
@@ -1470,7 +1835,6 @@ End Function
 'virtual HRESULT STDMETHODCALLTYPE remove_ScriptDialogOpening(
 '    /* [in] */ EventRegistrationToken token) = 0;
 Public Function remove_ScriptDialogOpening(token As Long) As Long
-    'remove_ScriptDialogOpening = remove_Handler(Me, 22, token, "remove_ScriptDialogOpening")
     remove_ScriptDialogOpening = remove_Handler(Me, 22, m_tokens(21), "remove_ScriptDialogOpening")
 End Function
 
@@ -1479,8 +1843,8 @@ End Function
 '    /* [in] */ ICoreWebView2PermissionRequestedEventHandler *eventHandler,
 '    /* [out] */ EventRegistrationToken *token) = 0;
 Public Function add_PermissionRequested() As Long
-    'add_PermissionRequested = mHelpers.DCF_RegisterHandler(Me, 23, "add_PermissionRequested", AddressOf PermissionRequested_Invoke, "PermissionRequested")
-    add_PermissionRequested = RegisterHandler(23, "Invoke_PermissionRequested")
+    'add_PermissionRequested = RegisterHandler(23, "Invoke_PermissionRequested")
+    add_PermissionRequested = RegisterHandlerEx(m_pWebView, 23, "Invoke_PermissionRequested")
 End Function
 Public Function Invoke_PermissionRequested(ByVal pThis As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
     RaiseEvent PermissionRequested
@@ -1490,7 +1854,6 @@ End Function
 'virtual HRESULT STDMETHODCALLTYPE remove_PermissionRequested(
 '    /* [in] */ EventRegistrationToken token) = 0;
 Public Function remove_PermissionRequested(token As Long) As Long
-    'remove_PermissionRequested = remove_Handler(Me, 24, token, "remove_PermissionRequested")
     remove_PermissionRequested = remove_Handler(Me, 24, m_tokens(23), "remove_PermissionRequested")
 End Function
 
@@ -1499,8 +1862,8 @@ End Function
 '    /* [in] */ ICoreWebView2ProcessFailedEventHandler *eventHandler,
 '    /* [out] */ EventRegistrationToken *token) = 0;
 Public Function add_ProcessFailed() As Long
-    'add_ProcessFailed = mHelpers.DCF_RegisterHandler(Me, 25, "add_ProcessFailed", AddressOf ProcessFailed_Invoke, "ProcessFailed")
-    add_ProcessFailed = RegisterHandler(25, "Invoke_ProcessFailed")
+    'add_ProcessFailed = RegisterHandler(25, "Invoke_ProcessFailed")
+    add_ProcessFailed = RegisterHandlerEx(m_pWebView, 25, "Invoke_ProcessFailed")
 End Function
 Public Function Invoke_ProcessFailed(ByVal pThis As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
     RaiseEvent ProcessFailed
@@ -1510,7 +1873,6 @@ End Function
 'virtual HRESULT STDMETHODCALLTYPE remove_ProcessFailed(
 '    /* [in] */ EventRegistrationToken token) = 0;
 Public Function remove_ProcessFailed(token As Long) As Long
-    'remove_ProcessFailed = remove_Handler(Me, 26, token, "remove_ProcessFailed")
     remove_ProcessFailed = remove_Handler(Me, 26, m_tokens(25), "remove_ProcessFailed")
 End Function
 
@@ -1769,8 +2131,8 @@ End Function
 '    /* [in] */ ICoreWebView2WebMessageReceivedEventHandler *handler,
 '    /* [out] */ EventRegistrationToken *token) = 0;
 Public Function add_WebMessageReceived() As Long
-    'add_WebMessageReceived = mHelpers.DCF_RegisterHandler(Me, 34, "add_WebMessageReceived", AddressOf WebMessageReceived_Invoke, "WebMessageReceived")
-    add_WebMessageReceived = RegisterHandler(34, "Invoke_WebMessageReceived")
+    'add_WebMessageReceived = RegisterHandler(34, "Invoke_WebMessageReceived")
+    add_WebMessageReceived = RegisterHandlerEx(m_pWebView, 34, "Invoke_WebMessageReceived")
 End Function
 Public Function Invoke_WebMessageReceived(ByVal this As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
     
@@ -1824,7 +2186,6 @@ End Function
 'virtual HRESULT STDMETHODCALLTYPE remove_WebMessageReceived(
 '    /* [in] */ EventRegistrationToken token) = 0;
 Public Function remove_WebMessageReceived(token As Long) As Long
-    'remove_WebMessageReceived = remove_Handler(Me, 35, token, "remove_WebMessageReceived")
     remove_WebMessageReceived = remove_Handler(Me, 35, m_tokens(34), "remove_WebMessageReceived")
 End Function
 
@@ -2075,8 +2436,8 @@ End Function
 '    /* [in] */ ICoreWebView2NewWindowRequestedEventHandler *eventHandler,
 '    /* [out] */ EventRegistrationToken *token) = 0;
 Public Function add_NewWindowRequested() As Long
-    'add_NewWindowRequested = mHelpers.DCF_RegisterHandler(Me, 44, "add_NewWindowRequested", AddressOf NewWindowRequested_Invoke, "NewWindowRequested")
-    add_NewWindowRequested = RegisterHandler(44, "Invoke_NewWindowRequested")
+    'add_NewWindowRequested = RegisterHandler(44, "Invoke_NewWindowRequested")
+    add_NewWindowRequested = RegisterHandlerEx(m_pWebView, 44, "Invoke_NewWindowRequested")
 End Function
 Public Function Invoke_NewWindowRequested(ByVal pThis As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
     RaiseEvent NewWindowRequested
@@ -2086,7 +2447,6 @@ End Function
 'virtual HRESULT STDMETHODCALLTYPE remove_NewWindowRequested(
 '    /* [in] */ EventRegistrationToken token) = 0;
 Public Function remove_NewWindowRequested(token As Long) As Long
-    'remove_NewWindowRequested = remove_Handler(Me, 45, token, "remove_NewWindowRequested")
     remove_NewWindowRequested = remove_Handler(Me, 45, m_tokens(44), "remove_NewWindowRequested")
 End Function
 
@@ -2095,8 +2455,8 @@ End Function
 '    /* [in] */ ICoreWebView2DocumentTitleChangedEventHandler *eventHandler,
 '    /* [out] */ EventRegistrationToken *token) = 0;
 Public Function add_DocumentTitleChanged() As Long
-    'add_DocumentTitleChanged = mHelpers.DCF_RegisterHandler(Me, 46, "add_DocumentTitleChanged", AddressOf DocumentTitleChanged_Invoke, "DocumentTitleChanged")
-    add_DocumentTitleChanged = RegisterHandler(46, "Invoke_DocumentTitleChanged")
+    'add_DocumentTitleChanged = RegisterHandler(46, "Invoke_DocumentTitleChanged")
+    add_DocumentTitleChanged = RegisterHandlerEx(m_pWebView, 46, "Invoke_DocumentTitleChanged")
 End Function
 Public Function Invoke_DocumentTitleChanged(ByVal pThis As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
     RaiseEvent DocumentTitleChanged
@@ -2106,7 +2466,6 @@ End Function
 'virtual HRESULT STDMETHODCALLTYPE remove_DocumentTitleChanged(
 '    /* [in] */ EventRegistrationToken token) = 0;
 Public Function remove_DocumentTitleChanged(token As Long) As Long
-    'remove_DocumentTitleChanged = remove_Handler(Me, 47, token, "remove_DocumentTitleChanged")
     remove_DocumentTitleChanged = remove_Handler(Me, 47, m_tokens(46), "remove_DocumentTitleChanged")
 End Function
 
@@ -2134,21 +2493,18 @@ Public Function AddHostObjectToScript(ByVal Name As String, ByVal Instance As Ob
     Dim vObj As Variant
     Set vObj = Instance  ' Object を Variant に包む
     AddHostObjectToScript = dcf(m_pWebView, 49, "AddHostObjectToScript", StrPtr(Name), VarPtr(vObj))
-    'AddHostObjectToScript = DCF_TwoArgsStringAndObject(m_pWebView, 49, "AddHostObjectToScript", Name, Instance)
 End Function
 
 '50
 'virtual HRESULT STDMETHODCALLTYPE RemoveHostObjectFromScript(
 '    /* [in] */ LPCWSTR name) = 0;
 Public Function RemoveHostObjectFromScript(ByVal ObjName As String) As Long
-    'RemoveHostObjectFromScript = DCF_OneArgString(m_pWebView, 50, "RemoveHostObjectFromScript", ObjName)
     RemoveHostObjectFromScript = dcf(m_pWebView, 50, "RemoveHostObjectFromScript", StrPtr(ObjName))
 End Function
 
 '51
 'virtual HRESULT STDMETHODCALLTYPE OpenDevToolsWindow( void) = 0;
 Public Function OpenDevToolsWindow()
-    'Call DispCallFunc(m_pWebView, 51 * LenB(m_pWebView), CC_STDCALL, vbLong, 0, 0, 0, OpenDevToolsWindow)
     Call dcf(m_pWebView, 51, "OpenDevToolsWindow")
 End Function
 
@@ -2157,8 +2513,8 @@ End Function
 '    /* [in] */ ICoreWebView2ContainsFullScreenElementChangedEventHandler *eventHandler,
 '    /* [out] */ EventRegistrationToken *token) = 0;
 Public Function add_ContainsFullScreenElementChanged() As Long
-    'add_ContainsFullScreenElementChanged = mHelpers.DCF_RegisterHandler(Me, 52, "add_ContainsFullScreenElementChanged", AddressOf ContainsFullScreenElementChanged_Invoke, "ContainsFullScreenElementChanged")
-    add_ContainsFullScreenElementChanged = RegisterHandler(52, "Invoke_ContainsFullScreenElementChanged")
+    'add_ContainsFullScreenElementChanged = RegisterHandler(52, "Invoke_ContainsFullScreenElementChanged")
+    add_ContainsFullScreenElementChanged = RegisterHandlerEx(m_pWebView, 52, "Invoke_ContainsFullScreenElementChanged")
 End Function
 Public Function Invoke_ContainsFullScreenElementChanged(ByVal pThis As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
     RaiseEvent ContainsFullScreenElementChanged
@@ -2168,7 +2524,6 @@ End Function
 'virtual HRESULT STDMETHODCALLTYPE remove_ContainsFullScreenElementChanged(
 '    /* [in] */ EventRegistrationToken token) = 0;
 Public Function remove_ContainsFullScreenElementChanged(token As Long) As Long
-    'remove_ContainsFullScreenElementChanged = remove_Handler(Me, 53, token, "remove_ContainsFullScreenElementChanged")
     remove_ContainsFullScreenElementChanged = remove_Handler(Me, 53, m_tokens(52), "remove_ContainsFullScreenElementChanged")
 End Function
 
@@ -2197,11 +2552,8 @@ End Property
 ' which URLs (e.g., "*" for all, or a specific domain) and resource types to intercept.
 ' If this filter is not registered, the event will never fire.
 Public Function add_WebResourceRequested() As Long
-    'Dim hr As Long
-    'hr = mHelpers.DCF_RegisterHandler(Me, 55, "add_WebResourceRequested", AddressOf WebResourceRequested_Invoke, "WebResourceRequested")
-    'Debug.Print "add_WebResourceRequested :" & hr
-    'add_WebResourceRequested = hr
-    add_WebResourceRequested = RegisterHandler(55, "Invoke_WebResourceRequested")
+    'add_WebResourceRequested = RegisterHandler(55, "Invoke_WebResourceRequested")
+    add_WebResourceRequested = RegisterHandlerEx(m_pWebView, 55, "Invoke_WebResourceRequested")
 End Function
 Public Function Invoke_WebResourceRequested(ByVal pThis As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
     RaiseEvent WebResourceRequested
@@ -2211,7 +2563,6 @@ End Function
 'virtual HRESULT STDMETHODCALLTYPE remove_WebResourceRequested(
 '    /* [in] */ EventRegistrationToken token) = 0;
 Public Function remove_WebResourceRequested(token As Long) As Long
-    'remove_WebResourceRequested = remove_Handler(Me, 56, token, "remove_WebResourceRequested")
     remove_WebResourceRequested = remove_Handler(Me, 56, m_tokens(55), "remove_WebResourceRequested")
 End Function
 
@@ -2245,8 +2596,8 @@ End Function
 ''' Registers a handler for when the WebView window requests to close (Index 59).
 ''' </summary>
 Public Function add_WindowCloseRequested() As Long
-    'add_WindowCloseRequested = mHelpers.DCF_RegisterHandler(Me, 59, "add_WindowCloseRequested", AddressOf WindowCloseRequested_Invoke, "WindowCloseRequested")
-    add_WindowCloseRequested = RegisterHandler(59, "Invoke_WindowCloseRequested")
+    'add_WindowCloseRequested = RegisterHandler(59, "Invoke_WindowCloseRequested")
+    add_WindowCloseRequested = RegisterHandlerEx(m_pWebView, 59, "Invoke_WindowCloseRequested")
 End Function
 Public Function Invoke_WindowCloseRequested(ByVal pThis As LongPtr, ByVal sender As LongPtr, ByVal args As LongPtr) As Long
     RaiseEvent WindowCloseRequested(pThis, sender, args)
@@ -2256,7 +2607,6 @@ End Function
 'virtual HRESULT STDMETHODCALLTYPE remove_WindowCloseRequested(
 '    /* [in] */ EventRegistrationToken token) = 0;
 Public Function remove_WindowCloseRequested(token As Long) As Long
-    'remove_WindowCloseRequested = remove_Handler(Me, 60, token, "remove_WindowCloseRequested")
     remove_WindowCloseRequested = remove_Handler(Me, 60, m_tokens(59), "remove_WindowCloseRequested")
 End Function
 '

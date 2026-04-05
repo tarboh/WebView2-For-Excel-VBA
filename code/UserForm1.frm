@@ -4,7 +4,7 @@ Begin {C62A69F0-16DC-11CE-9E98-00AA00574A4F} UserForm1
    ClientHeight    =   10560
    ClientLeft      =   120
    ClientTop       =   465
-   ClientWidth     =   15990
+   ClientWidth     =   20760
    OleObjectBlob   =   "UserForm1.frx":0000
    ShowModal       =   0   'False
    StartUpPosition =   1  'オーナー フォームの中央
@@ -14,6 +14,8 @@ Attribute VB_GlobalNameSpace = False
 Attribute VB_Creatable = False
 Attribute VB_PredeclaredId = True
 Attribute VB_Exposed = False
+
+
 'Public UserForm UserFrom1
 
 Option Explicit
@@ -24,7 +26,7 @@ Option Explicit
 'Public WV2Environment As New c1_WebView2Environment
 'Public WithEvents WV2Controller As c2_WebView2Controller
 'Public WithEvents WV2 As c3_WebView2
-Public c5 As New c5_ObjectForJS
+Public c5 As New ObjectForJS
 
 Private WithEvents Console As fm_Console
 Attribute Console.VB_VarHelpID = -1
@@ -49,6 +51,30 @@ Private Sub CheckBox_Attach_c5ToJS_Click()
     End If
 End Sub
 
+Private Sub CheckBox_BuiltInErrorPageEnabled_Click()
+    WV2.IsBuiltInErrorPageEnabled = CheckBox_BuiltInErrorPageEnabled.value
+    Debug.Print "IsBuiltInErrorPageEnabled:" & WV2.IsBuiltInErrorPageEnabled
+End Sub
+
+Private Sub CheckBox_Controller_IsVisible_Click()
+    WV2.Controller_IsVisible = CheckBox_Controller_IsVisible.value
+    Debug.Print "Controller_IsVisible:" & WV2.Controller_IsVisible
+End Sub
+
+Private Sub CheckBox_DefaultContextMenusEnabled_Change()
+    WV2.AreDefaultContextMenusEnabled = CheckBox_DefaultContextMenusEnabled.value
+    Debug.Print "AreDefaultContextMenusEnabled:" & WV2.AreDefaultContextMenusEnabled
+End Sub
+
+Private Sub CheckBox_DevToolsEnabled_Change()
+    WV2.AreDevToolsEnabled = CheckBox_DevToolsEnabled.value
+    Debug.Print "AreDevToolsEnabled:" & WV2.AreDevToolsEnabled
+End Sub
+
+Private Sub CheckBox_HostObjectsAllowed_Change()
+    WV2.AreHostObjectsAllowed = CheckBox_HostObjectsAllowed.value
+    Debug.Print "AreHostObjectsAllowed:" & WV2.AreHostObjectsAllowed
+End Sub
 
 Private Sub CheckBox_InterceptDialogs_Change()
     If CheckBox_InterceptDialogs.value = True Then
@@ -58,6 +84,27 @@ Private Sub CheckBox_InterceptDialogs_Change()
     End If
     Debug.Print WV2.AreDefaultScriptDialogsEnabled
     WV2.Reload
+End Sub
+
+Private Sub CheckBox_ScriptEnabled_Change()
+    WV2.IsScriptEnabled = CheckBox_ScriptEnabled.value
+End Sub
+
+Private Sub CheckBox_StatusBarEnabled_change()
+    WV2.IsStatusBarEnabled = CheckBox_StatusBarEnabled.value
+End Sub
+
+Private Sub CheckBox_WebMessageEnabled_Change()
+    WV2.IsWebMessageEnabled = CheckBox_WebMessageEnabled.value
+End Sub
+
+Private Sub CheckBox_ZoomControlEnabled_change()
+    WV2.IsZoomControlEnabled = CheckBox_ZoomControlEnabled.value
+    Debug.Print "IsZoomControlEnabled:" & WV2.IsZoomControlEnabled
+End Sub
+
+Private Sub CmdBtn_SetBoundsAndZoomFactor_Click()
+    Call WV2.Controller_SetBoundsAndZoomFactor(TextBox_Bounds_Left, TextBox_Bounds_Top, TextBox_Bounds_Right, TextBox_Bounds_Bottom, TextBox_Controller_ZoomFactor)
 End Sub
 
 Private Sub CommandButton_CallDevToolsProtocolMethod_Click()
@@ -96,6 +143,30 @@ End Sub
 
 
 
+Private Sub CommandButton_Controller_Close_Click()
+    WV2.Controller_Close
+End Sub
+
+Private Sub CommandButton_Controller_Get_ParentWindow_Click()
+    Dim hwnd As LongPtr
+    hwnd = WV2.Controller_ParentWindow
+    TextBox_Controller_ParentWindow.Text = hwnd
+End Sub
+
+Private Sub CommandButton_Controller_get_ZoomFactor_Click()
+    TextBox_Controller_ZoomFactor.Text = WV2.Controller_ZoomFactor
+End Sub
+
+Private Sub CommandButton_Controller_MoveFocus_Click()
+    Dim reason As COREWEBVIEW2_MOVE_FOCUS_REASON
+    reason = ComboBox_MOVE_FOCUS_REASON.ListIndex
+    Call WV2.Controller_MoveFocus(reason)
+End Sub
+
+Private Sub CommandButton_Controller_Put_ZoomFactor_Click()
+    WV2.Controller_ZoomFactor = TextBox_Controller_ZoomFactor.Text
+End Sub
+
 Private Sub CommandButton_ExeCuteVBAInJavaScript_Click()
     Call WV2.ExecuteScriptAsync("window.chrome.webview.hostObjects.sync.VBAObj.Func1(15);")
 End Sub
@@ -132,6 +203,10 @@ Private Sub CommandButton_NavToStr_Click()
     uri = Console.TextBox_Console.Text
     Debug.Print uri
     Call WV2.NavigateToString(uri)
+End Sub
+
+Private Sub CommandButton_Open_Click()
+    Call Create_WebView2
 End Sub
 
 Private Sub CommandButton_OpenDevTools_Click()
@@ -192,6 +267,36 @@ Private Sub CommandButton5_Click()
 End Sub
 
 
+Private Sub CommandButton_Controller_get_Bounds_Click()
+    Dim hr As Long
+    Dim l(3) As Long
+    hr = WV2.Controller_get_Bounds(l)
+    Debug.Print "get_Bounds hr:" & hr
+    TextBox_Bounds_Left.Text = l(0)
+    TextBox_Bounds_Top.Text = l(1)
+    TextBox_Bounds_Right.Text = l(2)
+    TextBox_Bounds_Bottom.Text = l(3)
+End Sub
+
+Private Sub CommandButton_Controller_put_Bounds_Click()
+    Dim hr As Long
+    Dim l(3) As Long
+    l(0) = TextBox_Bounds_Left.Text
+    l(1) = TextBox_Bounds_Top.Text
+    l(2) = TextBox_Bounds_Right.Text
+    l(3) = TextBox_Bounds_Bottom.Text
+    hr = WV2.Controller_put_Bounds(l)
+    Debug.Print "put_Bounds hr:" & hr
+End Sub
+
+Private Sub CommandButton7_Click()
+    WV2.Controller_NotifyParentWindowPositionChanged
+End Sub
+
+Private Sub CommandButtonController_Put_ParentWindow_Click()
+    WV2.Controller_ParentWindow = TextBox_Controller_ParentWindow.Text
+End Sub
+
 Private Sub Console_QueryClose()
     Set Console = Nothing
 End Sub
@@ -201,6 +306,8 @@ Private Sub NavigationCompletedHandler_Invoked(ByVal pThis As LongLong, ByVal se
     Debug.Print "C4_Handler2_NavigationCompleted!"
 End Sub
 #End If
+
+
 
 
 
@@ -267,6 +374,27 @@ Private Sub WV2_ContainsFullScreenElementChanged()
     Me.Caption = Title & " ContainsFullScreenElement:" & WV2.ContainsFullScreenElement
 End Sub
 
+Private Sub WV2_ControllerAcceleratorKeyPressed()
+    Debug.Print "ControllerAcceleratorKeyPressed"
+End Sub
+
+Private Sub WV2_ControllerGotFocus()
+    Debug.Print "ControllerGotFocus"
+End Sub
+
+Private Sub WV2_ControllerLostFocus()
+    Debug.Print "ControllerLostFocus"
+End Sub
+
+Private Sub WV2_ControllerMoveFocusRequested()
+    Debug.Print "ControllerMoveFocuceRequested"
+End Sub
+
+Private Sub WV2_ControllerZoomFactorChanged()
+    Debug.Print "ControllerZoomChanged ZoomFactor:" & WV2.Controller_ZoomFactor
+    TextBox_Controller_ZoomFactor.Text = WV2.Controller_ZoomFactor
+End Sub
+
 Private Sub wv2_DevToolsProtocolEventReceived(ByVal eventName As String, ByVal parameterJson As String)
     Debug.Print "DevToolsProtocolEventReceived. JSON:" & parameterJson
 End Sub
@@ -311,7 +439,12 @@ Private Sub UserForm_Initialize()
     
     Set m_InstanceMap = CreateObject("Scripting.Dictionary")
     
-    Set c5 = New c5_ObjectForJS
+    Set c5 = New ObjectForJS
+    
+    ComboBox_MOVE_FOCUS_REASON.AddItem "PROGRAMMATIC"
+    ComboBox_MOVE_FOCUS_REASON.AddItem "NEXT"
+    ComboBox_MOVE_FOCUS_REASON.AddItem "PREVIOUS"
+    ComboBox_MOVE_FOCUS_REASON.ListIndex = 0
     
     Call Create_WebView2
 End Sub
@@ -342,30 +475,9 @@ Private Sub UserForm_QueryClose(Cancel As Integer, CloseMode As Integer)
     ' 2. WebView2プロセスをシャットダウン
     
         WV2.CloseWebView2
-
-    
-'    ' WebView2プロセスの終了を待つ
-'    Dim start As Double: start = Timer
-'    Do
-'        DoEvents
-'        If Timer - start > 5 Then
-'            Debug.Print "WebView2 終了待ちタイムアウト"
-'            Exit Do
-'        End If
-'    Loop
     
     ' 3. 参照を解放
     Set m_InstanceMap = Nothing
-    
-'    Debug.Print "WV2Controller解放前"
-'    Set WV2Controller = Nothing
-'    Debug.Print "WV2Controller解放後"
-    
-'    #If Win64 Then
-'    Debug.Print "NavigationCompletedHandler解放前"
-'    Set NavigationCompletedHandler = Nothing
-'    Debug.Print "NavigationCompletedHandler解放後"
-'    #End If
     
     Debug.Print "Console解放前"
     Set Console = Nothing
