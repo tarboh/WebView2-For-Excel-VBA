@@ -2,3 +2,8 @@
 *.bas  -text
 *.cls  -text
 *.frm  -text
+
+# Excel book: binary (no diff / no eol conversion)
+*.xlsm binary
+*.xlsx binary
+*.frx binary

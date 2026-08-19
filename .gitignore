@@ -1,0 +1,12 @@
+# Excel のロックファイル（ブックを開くと自動生成される）
+~$*.xlsm
+~$*.xlsx
+~$*.xls
+
+# バックアップ・作業用
+*.bak
+book/backup/
+tools/tmp/
+
+# OneDrive の競合コピー
+*競合コピー*
