@@ -24,6 +24,9 @@ Attribute VB_Name = "Wv2Log"
 '       これで Debug.Print "..." -> Wv2Log.LogD "..." の機械的な 1 対 1 置換で移行でき、
 '       イミディエイトの見え方は変わらない。LogEcho = False で切れる
 '     ・★ファイルは開きっぱなし★ 毎行書く。ERROR / WARN は書いた直後に強制フラッシュ
+'       ファイルは Shared で開く。★Lock Write では ADODB も外部エディタも
+'       開けなかった (K-1 の実機検証で実測)★ 書き手はこのプロセスだけなので、
+'       ロックを掛けずに読み手を通す方が要件に合う。
 '       (閉じて開き直す)。メモリに溜めて終了時に書く方式は、仕様事実20 でクラッシュが
 '       現実的な領域なので採らない
 '     ・★再入ガードはカウンタ + 保留キュー★ (設計原則78 と同じ型)。再入中の行を
@@ -162,7 +165,7 @@ Public Sub LogStart()
 
     On Error GoTo eh
     m_logNum = FreeFile
-    Open m_logPath For Binary Access Write Lock Write As #m_logNum
+    Open m_logPath For Binary Access Write Shared As #m_logNum
     Seek #m_logNum, LOF(m_logNum) + 1
 
     Dim logHead As String
@@ -205,7 +208,7 @@ Public Sub LogFlush()
     On Error GoTo eh
     Close #m_logNum
     m_logNum = FreeFile
-    Open m_logPath For Binary Access Write Lock Write As #m_logNum
+    Open m_logPath For Binary Access Write Shared As #m_logNum
     Seek #m_logNum, LOF(m_logNum) + 1
     Exit Sub
 eh:
@@ -464,3 +467,4 @@ Private Function Utf8FromString(ByVal logText As String) As Byte()
     ReDim Preserve outBytes(0 To logCount - 1)
     Utf8FromString = outBytes
 End Function
+

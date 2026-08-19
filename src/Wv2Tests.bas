@@ -2903,21 +2903,43 @@ Public Sub Test_K1_Log()
     Wv2Log.LogFlush
 
     ' --- 読み戻して照合 ---
+    '   ★「無いことの確認」は、読み戻せて初めて意味を持つ★
+    '   読めていないのに InStr(空, x) = 0 で通ってしまうと、空振りで合格する。
+    '   K-1 の実機検証で実際にこれをやってしまったので、読めた場合だけ照合する。
     Dim k1Text As String
-    k1Text = K1ReadUtf8(k1Path)
+
+    ' (3) 実行中のまま読めるか (エディタで開けるかの確認)
+    '   ★ADODB.Stream では測れない★ ADODB は共有モードに関わらず、
+    '   他のハンドルが開いているファイルを開けない (K-1 の実機検証で実測)。
+    '   共有モードを明示する読み手なら開けるので、VBA 自身の
+    '   Open ... For Binary Access Read Shared で確かめる。
     Debug.Print ""
-    K1Bool "(3) 読み戻せた", (Len(k1Text) > 0), k1Total, k1Pass
-    K1Bool "(4) ERROR の行がある", (InStr(k1Text, "K-1: ERROR の行") > 0), k1Total, k1Pass
-    K1Bool "(5) WARN の行がある", (InStr(k1Text, "K-1: WARN の行") > 0), k1Total, k1Pass
-    K1Bool "(6) INFO の行がある", (InStr(k1Text, "K-1: INFO の行") > 0), k1Total, k1Pass
-    K1Bool "(7) DEBUG の行がある", (InStr(k1Text, "K-1: DEBUG の行") > 0), k1Total, k1Pass
-    K1Bool "(8) しきい値で切った INFO が無い", (InStr(k1Text, "この INFO は出ないはず") = 0), k1Total, k1Pass
-    K1Bool "(9) しきい値で切った DEBUG が無い", (InStr(k1Text, "この DEBUG は出ないはず") = 0), k1Total, k1Pass
-    K1Bool "(10) サロゲートペアが無傷", (InStr(k1Text, k1Emoji) > 0), k1Total, k1Pass
-    K1Bool "(11) 日本語が無傷", (InStr(k1Text, "日本語と記号 ★ ← → ① ～ ―") > 0), k1Total, k1Pass
-    K1Bool "(12) 再入中の 2 行が後から流れている", _
-           (InStr(k1Text, "K-1: 再入中の 1 行目") > InStr(k1Text, "K-1: 再入から抜けた")), _
-           k1Total, k1Pass
+    K1Bool "(3) 実行中でもログを読める (共有読み取り)", _
+           K1CanReadWhileOpen(k1Path), k1Total, k1Pass
+
+    ' 本文の照合は ADODB で読む。開いたままでは開けないので先に閉じる
+    Wv2Log.LogStop
+    k1Text = K1ReadUtf8(k1Path)
+    K1Bool "(4) ログを読み戻せた", (Len(k1Text) > 0), k1Total, k1Pass
+
+    If Len(k1Text) = 0 Then
+        Debug.Print ""
+        Debug.Print "  ★ログを読み戻せないので、以降の照合は打ち切る★"
+        Debug.Print "     (空文字に対する InStr は何でも 0 を返すので、"
+        Debug.Print "      ここで続けると空振りで合格してしまう)"
+    Else
+        K1Bool "(5) ERROR の行がある", (InStr(k1Text, "K-1: ERROR の行") > 0), k1Total, k1Pass
+        K1Bool "(6) WARN の行がある", (InStr(k1Text, "K-1: WARN の行") > 0), k1Total, k1Pass
+        K1Bool "(7) INFO の行がある", (InStr(k1Text, "K-1: INFO の行") > 0), k1Total, k1Pass
+        K1Bool "(8) DEBUG の行がある", (InStr(k1Text, "K-1: DEBUG の行") > 0), k1Total, k1Pass
+        K1Bool "(9) しきい値で切った INFO が無い", (InStr(k1Text, "この INFO は出ないはず") = 0), k1Total, k1Pass
+        K1Bool "(10) しきい値で切った DEBUG が無い", (InStr(k1Text, "この DEBUG は出ないはず") = 0), k1Total, k1Pass
+        K1Bool "(11) サロゲートペアが無傷", (InStr(k1Text, k1Emoji) > 0), k1Total, k1Pass
+        K1Bool "(12) 日本語が無傷", (InStr(k1Text, "日本語と記号 ★ ← → ① ～ ―") > 0), k1Total, k1Pass
+        K1Bool "(13) 再入中の 2 行が後から流れている", _
+               (InStr(k1Text, "K-1: 再入中の 1 行目") > InStr(k1Text, "K-1: 再入から抜けた")), _
+               k1Total, k1Pass
+    End If
 
     ' --- 連番が飛んでいないか (K-1 の動機そのもの) ---
     Dim k1Lines As Variant
@@ -2943,8 +2965,10 @@ Public Sub Test_K1_Log()
         End If
     Next k1Idx
     k1Ok = (k1Seq = k1Prev) And (k1Seq > 0)
-    K1Bool "(13) 連番に欠番が無い (" & k1Seq & " 行 / 最大 " & k1Prev & ")", _
-           k1Ok, k1Total, k1Pass
+    If Len(k1Text) > 0 Then
+        K1Bool "(14) 連番に欠番が無い (" & k1Seq & " 行 / 最大 " & k1Prev & ")", _
+               k1Ok, k1Total, k1Pass
+    End If
 
     Debug.Print ""
     Debug.Print "  結果: " & k1Pass & " / " & k1Total & " 合格"
@@ -2968,6 +2992,28 @@ Private Sub K1Bool(ByVal label As String, ByVal cond As Boolean, _
         Debug.Print "  [FAIL] " & label
     End If
 End Sub
+
+
+' 開かれたままのファイルを共有モードで読めるかどうかだけを見る
+'   ★ADODB.Stream はこの用途に使えない★ 共有モードに関わらず
+'   他のハンドルが開いているファイルを開けない (K-1 で実測)。
+Private Function K1CanReadWhileOpen(ByVal k1Path As String) As Boolean
+    On Error GoTo eh
+    Dim k1Handle As Long
+    Dim k1Bytes() As Byte
+    k1Handle = FreeFile
+    Open k1Path For Binary Access Read Shared As #k1Handle
+    If LOF(k1Handle) > 0 Then
+        ReDim k1Bytes(0 To LOF(k1Handle) - 1)
+        Get #k1Handle, 1, k1Bytes
+        K1CanReadWhileOpen = True
+    End If
+    Close #k1Handle
+    Exit Function
+eh:
+    On Error Resume Next
+    Close #k1Handle
+End Function
 
 
 ' UTF-8 / BOM なしのファイルを読む (検証専用。ADODB でよい)
@@ -3010,6 +3056,10 @@ Public Sub Test_K1_Help()
     Debug.Print "  設定:"
     Debug.Print "    Wv2Log.LogLevel = LOG_ERROR / LOG_WARN / LOG_INFO / LOG_DEBUG"
     Debug.Print "    Wv2Log.LogEcho  = False   … イミディエイトへの併記を止める"
+    Debug.Print ""
+    Debug.Print "  ★実行中のログをエディタで開ける★ (Shared で開いているため)。"
+    Debug.Print "    ただし ADODB.Stream だけは開けない。共有モードに関わらず"
+    Debug.Print "    他のハンドルが開いているファイルを開けない仕様 (K-1 で実測)。"
     Debug.Print ""
     Debug.Print "  ログは起動ごとに 1 本。20 本を超えると古いものから消える。"
     Debug.Print "  置き場所: %APPDATA%\Wv2Browser\logs\"
