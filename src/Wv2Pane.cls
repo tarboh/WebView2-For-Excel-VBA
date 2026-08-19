@@ -1,0 +1,3992 @@
+VERSION 1.0 CLASS
+BEGIN
+  MultiUse = -1  'True
+END
+Attribute VB_Name = "Wv2Pane"
+Attribute VB_GlobalNameSpace = False
+Attribute VB_Creatable = False
+Attribute VB_PredeclaredId = False
+Attribute VB_Exposed = False
+''''''''''''''''''''''''''''''''''
+' --- Wv2Pane.cls  D-2 段階 (要素レジストリ + Wv2Element の読み取り) ---
+'
+'   D-2 のスコープ (JS 側の要素レジストリと、要素ハンドルの読み取り):
+'     GetElementById / QuerySelector … 要素を 1 個探して Wv2Element を返す。
+'     ClearElementRegistry           … JS 側レジストリを手動で作り直す。
+'     CurrentDomGen                  … レジストリ世代のキャッシュ (高速パス用)。
+'     Elem_Read / Elem_CheckStale    … Wv2Element 専用の Friend 経路。
+'     ★やらないこと★ 書き込み (Value =) / Click / SetAttribute は D-3。
+'                     QuerySelectorAll (複数返し) は D-3 以降 (論点7 案a)。
+'
+'   ■ 追加した Public メンバ
+'     GetElementById(elementId) As Wv2Element
+'     QuerySelector(selector)   As Wv2Element
+'         見つかれば Wv2Element、見つからなければ ★Nothing★ を返す。
+'         ★Nothing の意味は 2 通りあるので LastEvalOk で分ける (論点4)★
+'           Nothing + LastEvalOk = True  … 本当に存在しない (正常)
+'           Nothing + LastEvalOk = False … 失敗。理由は LastEvalError
+'                                           (in-callback / timeout / セレクタの構文エラー等)
+'     ClearElementRegistry() As Boolean
+'         JS 側のレジストリを捨てて新しい世代で作り直す。既存の Wv2Element は
+'         すべて stale になる。同一ページで大量に検索して配列が伸びたときの掃除用。
+'     CurrentDomGen As String
+'         最後に JS から受け取ったレジストリ世代。まだ一度も触っていなければ空文字。
+'
+'   ■ JS 側レジストリの形 (論点1 案c: ★注入しない★)
+'     window.__wv2 = { gen: 'g<時刻>-<乱数>', els: [要素, 要素, ...] }
+'
+'     ★AddScriptToExecuteOnDocumentCreated も DOMContentLoaded での注入も使わない。★
+'     代わりに★検索式そのものが「無ければ自分で作る」★形にした:
+'
+'       (function(){ if(typeof window.__wv2==='undefined'||!window.__wv2){
+'                      window.__wv2={gen:'g'+Date.now()+'-'+Math.random(),els:[]}; }
+'                    var R=window.__wv2; ... })()
+'
+'     利点:
+'       ・新しい COM 機構が要らない (前者は完了ハンドラ用の HandlerKind と vtable が要る)
+'       ・往復が増えない (判定・生成・検索が 1 つの式に入る)
+'       ・ページ遷移 / SPA の書き換え / about:blank のどれで消えても、
+'         次のアクセスで自動的に作り直される (設計原則74 と同じ自己修復性)
+'       ・タブバー / ナビバー / 設定タブの Pane に無駄な注入をしない
+'     欠点:
+'       ・ページ読み込み★前★にフックを仕込む用途には使えない。
+'         それが要るときは AddScriptToExecuteOnDocumentCreated を独立段階で実装する。
+'
+'   ■ 世代番号 (論点2 案b: ★JS が発行する★)
+'     世代は JS 側が 'g' + Date.now() + '-' + Math.random() で作る文字列。
+'     ★VBA 側でナビゲーションを数える方式 (案a) は採らない。★
+'       SPA の pushState では DOM が残るのにイベントは飛び、逆にページ内 JS が
+'       要素を差し替えてもイベントは飛ばないので、実態とズレるため。
+'     レジストリが消える = 世代も消える = 作り直しで必ず別値、という対応が保証され、
+'     ★判定の権威は常に JS 側★になる。
+'
+'     m_domGen は「JS から最後に聞いた世代」のキャッシュで、高速パスにしか使わない:
+'       手元の世代 <> m_domGen なら★往復せずに stale と確定できる★ (安全)
+'       手元の世代 =  m_domGen でも JS が作り直しているかもしれないので必ず問い合わせる
+'     キャッシュが古いときは必ず「問い合わせる」側に倒れるので誤判定は起きない。
+'
+'     ★Math.random() を混ぜる理由★ Date.now() はミリ秒精度なので、同一ミリ秒内に
+'       レジストリが 2 回作り直されると衝突しうる。比較にしか使わない値なので
+'       文字列にして衝突の心配ごと消す (論点2 の追加合意)。
+'
+'   ■ ハンドルの解放 (論点3 案a: ★解放しない★)
+'     Wv2Element.Class_Terminate では JS 側スロットを消さない。Terminate が
+'     いつ・どの文脈で走るかを制御できず、そこから EvalSync を撃つと D-1 の
+'     in-callback ガードや Ctrl_Close 済みの Pane を踏みやすいため。
+'     レジストリはページ遷移でまるごと消えるので実害は小さい。手動掃除は
+'     ClearElementRegistry。本格的な寿命管理は D-4。
+'
+'   ■ JS 文字列の作り方 (★VBA 文字列内にバックスラッシュ + 二重引用符を書かない★)
+'     セレクタや属性名はページ由来でなくユーザー由来なので、引用符や
+'     バックスラッシュが入りうる。JsQuote が Wv2Json.JsonEscape を通して
+'     Chr$(34) で括るので、VBA のソース上にその並びが現れない。
+'     例: QuerySelector("input[name='q']") も QuerySelector("a[title=""x""]") も通る。
+'
+'   ■ 事後報告 (設計原則79)
+'     (a) ★JsonPickStr を Wv2Json.bas へ移設した★ (Private → Public)
+'         論点6 は「JsonUnescape を新設し JsonPickStr もそれを呼ぶ形に書き換える」
+'         だったが、Wv2Element も同じ復号を要るため、Wv2Pane に Private で
+'         残すと 2 実装になる。移設が論点6 の趣旨に最も忠実な形と判断した。
+'         EvalSync 内の 3 箇所の呼び出しを Wv2Json.JsonPickStr に変更した以外、
+'         ロジックは 1 文字も変えていない (走査部は Wv2Json.JsonUnescapeAt に同一移植)。
+'     (b) ★Wv2Element に LastOk / LastError を足した (論点5 の 8 メンバ + 2)★
+'         読み取り系は失敗時も空文字を返すため、「本当に空」と「stale / timeout」を
+'         区別する手段が無いと使えない。Pane 側の LastEvalOk は JS 実行自体の成否
+'         なので、stale のとき True になってしまい代用できない。
+'     (c) ★Elem_Read / Elem_CheckStale の戻り値は Enum でなく Boolean + 文字列にした★
+'         クラスモジュールの Public Enum が他モジュールから無修飾で見えるかは
+'         この設計で未検証で、コンパイルエラーになると 1 往復無駄になる。
+'         D-1 の LastEvalOk / LastEvalError と同じ流儀に揃える方が一貫もする。
+'
+''''''''''''''''''''''''''''''''''
+' --- Wv2Pane.cls  D-1 段階 (ExecuteScript の同期取得プリミティブ) ---
+'
+'   ★段階番号の体系が変わりました★
+'     第9.32b までの「9.xx」は「WebView2 をブラウザとして仕立てる」という一本の軸の
+'     里程標で、第9.32b で一区切りとした。D-1 からは軸ごとに記号を割り当てる:
+'       (無印 9.xx) … ブラウザとしての機能整備 (完了・凍結)
+'       D          … DOM / ページ自動制御 (MSHTML 相当)  ← 本段階はここ
+'       C          … フォームコントロール (TreeView / ListView 相当)
+'       K          … 基盤・借金返済 (Sentinel 等)
+'
+'   D-1 のスコープ (JS 式を投げて戻り値を VBA で同期的に受け取る):
+'     EvalSync … 本段階の成果物。JS 式 1 本を撃ち、完了まで DoEvents で待って
+'                戻り値の JSON 表現を String で返す。
+'     ★やらないこと★ 要素レジストリ (__wv2els[])、Wv2Element、DOM API。D-2 以降。
+'
+'   ■ 追加した Public メンバ
+'     EvalSync(jsExpr, [timeoutSec=5]) As String
+'         成功: JS の戻り値を JSON.stringify した文字列を返す。
+'               1+2       → 3
+'               'abc'     → 引用符ごと abc (★文字列は引用符付きで返る★)
+'               undefined → undefined   (JSON.stringify が undefined を返すため)
+'               null      → null
+'               ({a:1})   → {a:1} の JSON 表現
+'         失敗: 空文字を返す。理由は LastEvalError を見る。
+'     LastEvalOk    As Boolean … 直前の EvalSync が成功したか
+'     LastEvalError As String  … 直前の失敗理由
+'                                 closed / no-view / in-callback /
+'                                 execute-failed(n) / timeout(n s) /
+'                                 hresult(&Hxxxx) / ReferenceError: xxx /
+'                                 syntax-error-or-null (...)
+'     ResetCallbackGuard()     … in-callback ガードのカウンタを 0 に戻す (緊急用)
+'     InCallbackDepth As Long  … ガードカウンタの現在値 (検証用)
+'     Debug_SetInCallback(n)   … ガード発火を検証するための注入口 (検証専用)
+'
+'   ■ 論点と決定 (たーぼーさん合意済み)
+'     論点1 メソッド名     : 接頭辞なしの EvalSync。View_ / Ctrl_ は「COM の
+'                            インターフェースメソッドを 1 対 1 で叩く」意味なので
+'                            待ちループ内蔵の高レベル API には付けない。
+'     論点2 結果の受け口   : callbackId をキーにした保留テーブル (m_evalPending)。
+'                            単一変数で受けると並行呼び出しで取り違える。
+'                            UserForm1.OnExecuteScriptResult 直呼びは残す (ログのみ)。
+'     論点3 戻り値の形     : String (= value の JSON 表現)。成否は LastEvalOk /
+'                            LastEvalError で取る。型変換は D-2 以降で行う。
+'     論点4 Safe 経由      : 常に View_ExecuteScriptSafe を通す。生の ExecuteScript は
+'                            JS 例外が S_OK + null で返り、正常な null と区別できない。
+'     論点5 タイムアウト   : 既定 5 秒。超過したら保留エントリを★破棄済みで残し★、
+'                            遅れて来た完了通知はそれを見て捨てる (ログには残す)。
+'     論点6 並行・ネスト   : 許容する。callbackId で分離されているので取り違えない。
+'                            ネストは深さをログに出すだけ。
+'     論点7 in-callback ガード:
+'                            ★本段階で最も価値のある部分★ WebView2 のイベント
+'                            ハンドラ内から EvalSync を呼ぶと、ランタイムはハンドラの
+'                            復帰を待ち、こちらは JS の完了を待つのでタイムアウトまで
+'                            固まる (仕様事実 14)。しかも仕様事実 20 でデバッガが
+'                            使えない領域なので原因究明が苦しい。そこで
+'                            m_inCallback > 0 なら JS を撃たずに即失敗させる。
+'
+'   ■ 実装上の事後報告 (設計原則 79)
+'     (a) ★ハンドラを Core に分離した★ 合意時は「各 View_On* の入口で +1、出口で -1」
+'         と説明したが、実際のコードを読むと View_OnNewWindowRequested は途中に
+'         Exit Sub が 5 箇所あり (他も 1 箇所ずつ)、素直に 2 行足すとデクリメントを
+'         飛ばす経路ができてしまう。そこで本体を Private ... _Core にリネームし、
+'         同名の Public 薄いラッパーが +1 → Core 呼び出し → -1 を行う形にした。
+'         対象は 7 個 (NavigationStarting / NavigationCompleted / DocumentTitleChanged /
+'         WebMessageReceived / NewWindowRequested / HistoryChanged / DOMContentLoaded)。
+'     (b) ★エラー時もカウンタを戻す。ただし握り潰さない★ ラッパーは
+'         On Error GoTo GuardExit でカウンタを戻したあと、Err.Raise で★同じエラーを
+'         投げ直す★。ComCallbackHandler 側にエラー処理は無く、従来はそのまま
+'         伝播していたので、挙動を変えないためにこうした (握り潰すと不具合が
+'         見えなくなる)。それでもカウンタが残る事故に備えて ResetCallbackGuard を用意。
+'     (c) ★OnExecuteScriptCompleted にはガードを付けていない★ これは結果の受け口で
+'         あり、中でユーザーコードが走らないため。付けると EvalSync の DoEvents 中に
+'         カウンタが立ち、無害だが紛らわしい。
+'     (d) ★JSON の取り出しは Wv2Pane 内の Private 関数にした★ Wv2Json.JsonGetStr は
+'         設計原則 64 により★エスケープを解かない★実装で、次の閉じ引用符までを
+'         そのまま返す。EvalSync の戻り値は JSON.stringify を二重に通るため
+'         「バックスラッシュ + 引用符」や「バックスラッシュ + uXXXX」が必ず入る。
+'         そこで JsonPickStr (エスケープを解く限定パーサ) を Private で用意した。
+'         他所から要るようになったら Wv2Json へ昇格させる。
+'     (e) ★JSON.stringify で包む形にした★ EvalSync は
+'         View_ExecuteScriptSafe("JSON.stringify(" & jsExpr & ")") を撃つ。こうすると
+'         Safe が返す構造化 JSON の value が★必ず文字列★になり、(d) の限定パーサ
+'         だけで型を問わず取り出せる。undefined のときは value キーごと消えるので
+'         それを検出して undefined を返している。
+'
+'   ■ 利用上の注意 (D-2 以降で緩和予定)
+'     ・jsExpr は「文」ではなく「式」でなければならない (View_ExecuteScriptSafe の
+'       制約をそのまま継承)。複数文を書きたいときは即時関数で包む。
+'     ・文字列を返す式の結果は引用符付きで返る。D-2 で Wv2Element のプロパティごとに
+'       型を決めて剥がす。
+'     ・★DoEvents ループ中にブレーク/ステップ実行しないこと★ (仕様事実 20)
+''''''''''''''''''''''''''''''''''
+
+''''''''''''''''''''''''''''''''''
+' --- Wv2Pane.cls  第9.27 段階 (本丸: put_NewWindow で予備タブに遷移を載せる) ---
+'
+'   第9.27 のスコープ (POST リンクの新タブ展開を「自前のタブ」で正しく開く):
+'     View_OnNewWindowRequested のモード分岐を 2 値 → 3 値に拡張した。
+'       0 = NWM_LEGACY  : 現行動作 (put_Handled + RequestNewTabAsync)。Navigate は
+'                         ★常に GET★ なので POST リンクは 405 になる。
+'       1 = NWM_POPUP   : 9.26 のプローブ。put_Handled を立てず素通りし、ランタイムに
+'                         ポップアップを開かせる。POST は保たれる (仕様事実 23)。
+'       2 = NWM_PREWARM : ★9.27 の本命★ Browser が温めてある予備タブの CoreWebView2 を
+'                         args.put_NewWindow (vtable index 4) に渡す。ランタイムが
+'                         その WebView に元のリクエストを載せるので POST が保たれ、
+'                         しかも自前のタブに収まる。
+'
+'   ★イベント内で何も待たない★ ここでやるのは
+'       (1) m_browser.ClaimPrewarmViewPtr で予備の ViewPtr をもらう
+'       (2) dcf(pArgs, 4, put_NewWindow, pNew)
+'       (3) dcf(pArgs, 6, put_Handled, 1&)   ※ SetHandledWithNewWindow が True のとき
+'       (4) m_browser.RequestAdoptPrewarmedAsync で採用を Timer に依頼
+'     の 4 つだけ。Controller 生成も Deferral も無いので、仕様事実 14 (SafeTimer
+'     デッドロック) にも 20 (EBMode の窓) にも触れない。★これがプリウォーム方式の要点★
+'
+'   ★フォールバック★ 予備が無い / 未 Ready / 既に Claim 済み / put_NewWindow 失敗 の
+'     いずれでも、下の現行動作 (put_Handled + RequestNewTabAsync) にそのまま落ちる。
+'     POST リンクなら 405 に戻るが壊れはしない。落ちた事実は必ず ★印つきでログに出す。
+'
+'   ★vtable index の根拠 (WebView2.h の ICoreWebView2NewWindowRequestedEventArgsVtbl)★
+'       3 = get_Uri / 4 = put_NewWindow / 5 = get_NewWindow /
+'       6 = put_Handled / 7 = get_Handled / 8 = get_IsUserInitiated / 9 = GetDeferral
+'     put_Handled = 6 は 9.6b から使っている実績値で、この並びと一致する。
+'
+'   ★触らないもの★ get_Uri の取得とログ / 空 URL ガード / RequestNewTabAsync (案β
+'     Timer、仕様事実 14 の回避) / 他のイベントハンドラ一切。
+'
+' --- Wv2Pane.cls  第9.26 段階 (NewWindowRequested 委譲プローブ) ---
+'
+'   第9.26 のスコープ (POST リンクが 405 になる件の切り分け。観測だけを行う回):
+'     View_OnNewWindowRequested の冒頭に分岐を 1 個足しただけ。
+'     m_browser.PopupDelegateMode が True のときは
+'       ・args.put_Handled を立てない
+'       ・m_browser.RequestNewTabAsync を呼ばない
+'     で素通りし、WebView2 ランタイム自身にポップアップウィンドウを開かせる
+'     (第9.6a で確認済みの挙動: Excel プロセス内に Chrome_WidgetWin_1 が生える)。
+'     ランタイムが遷移そのものを担当するので、元のリクエストが POST ならボディごと
+'     継続される。これで「ランタイムに委譲すれば POST は保たれるのか」を実測する。
+'
+'     ★なぜ『同一 View で View_Navigate する』案を採らないか★
+'       9.6b にあったその形は ICoreWebView2::Navigate を呼ぶので★常に GET★。
+'       新タブに流すか同一タブに流すかは関係なく、Navigate を通した時点で 405 のまま。
+'       POST を保つ道は「ランタイムに遷移を渡す」しかない (今回の委譲か、次段の
+'       put_NewWindow か) というのが切り分けの出発点。
+'
+'     ★m_browser が Nothing のとき★ 単体 Pane 運用 (SetBrowser 未実行) ではフラグの
+'       置き場そのものが無いので、従来どおり同一 View の View_Navigate にフォールバック
+'       する。挙動は 9.10e から変更なし。
+'
+'   ★触らないもの★ get_Uri の取得とログ / 空 URL ガード / put_Handled の失敗時の扱い /
+'     RequestNewTabAsync (案β Timer、仕様事実 14 の回避) / 他のイベントハンドラ一切。
+'     設計原則・仕様事実の追加は無し。
+'
+' --- Wv2Pane.cls 第9.19段階 ---
+'
+'   第9.19 の追加事項 (設定タブの重複防止フラグ):
+'     ★m_isSettings フラグ (設定タブ識別) を新設★
+'       この Pane が「設定タブ」かどうかを保持する真偽フラグ。Wv2Browser の
+'       OpenSettingsTab が、設定タブ生成時にこの Pane に IsSettings = True を
+'       立てる。? が再び押されたとき Browser は m_tabs を頭から走査し、
+'       IsSettings = True の Pane があればそれを ActivateTab するだけで新規
+'       生成しない (? 連打で設定タブが増えるのを防ぐ)。
+'
+'     ★なぜ Pane のフラグで識別するか (案A)★
+'       設定タブは NavigateToString で data:text/html;base64,... を表示して
+'       いるため URL/内容での判定は脆く高コスト。Pane に印を付けておけば、
+'       毎回 m_tabs を走査して探すだけで「生存確認」も兼ねられる (閉じられた
+'       設定タブは m_tabs から外れるので自然に見つからなくなる)。Browser 側に
+'       Pane 参照を持たせて生存を自前で見張る案 (ダングリング検知が要る) より
+'       綻びが少ない。
+'
+' --- Wv2Pane.cls 第9.18段階 ---
+'
+'   第9.18 の追加事項 (AddHostObjectToScript による JS への VBA オブジェクト公開):
+'     ★View_AddHostObjectToScript(objName, instance) を新設★ (部品1)
+'       ICoreWebView2.AddHostObjectToScript (View 上の vtable index 49) を叩き、
+'       VBA のクラスインスタンスを JS 側に window.chrome.webview.hostObjects.<name>
+'       として公開する。JS からそのメソッド/プロパティを直接呼べるようになる
+'       (postMessage の文字列コマンドを介さない直接 RPC 経路)。
+'
+'     ★実装は旧 WebView2.cls (実機検証済み) の忠実な移植★
+'       渡し方は既存メソッドと同じ dcf 作法:
+'         Set vObj = instance      (オブジェクトを Variant に詰める)
+'         dcf(m_pView, 49, ..., StrPtr(objName), VarPtr(vObj))
+'       第1引数はホストオブジェクト名 (LPCWSTR)、第2引数は VARIANT* (詰めた
+'       オブジェクトへのポインタ)。戻り値は HRESULT。Instancing は 1 - Private の
+'       ままで機能する (旧実装で確認済み。VBA が生成する IDispatch を OS に
+'       公開できれば足りる)。
+'
+'     ★用途 (第9.18 時点)★
+'       Wv2Browser が設定タブを開くとき、この Pane に Wv2SettingsBridge を
+'       attach し、設定画面の JS から hostObjects.sync.Settings.SetEngine("bing")
+'       のように検索エンジンを直接操作させる。attach は NavigateToString の前に
+'       行う (順序A: 登録してから Navigate すれば、読み込まれた JS が最初から
+'       hostObjects を使える、という仮説を実機検証する。ダメなら ready
+'       ハンドシェイク方式=順序B にフォールバックする)。
+'
+'     ★RemoveHostObjectFromScript (vtable 50) は足さない★ (YAGNI)
+'       設定タブは閉じれば WebView2 ごと解放されるため、明示的な取り外しは
+'       第9.18 では不要。必要になったステージで足す。
+'
+' --- Wv2Pane.cls 第9.12a段階 (旧称: Class9) ---
+'
+'   第9.12a の追加事項 (アドレスバー/ナビボタンの土台: URL 変化の通知):
+'     ★構造は 9.11a の NotifyTitleChanged と全く同じ★ Pane が「自分の URL 状態が
+'       変わった」ことを所属 Browser に伝え、Browser が index を逆引きして
+'       RaiseEvent TabUrlChanged する。Pane はナビバーの存在を知らない (疎結合)。
+'     - 新規 Private Sub: NotifyUrlState(pSender)
+'         sender 経由で get_Source(4) / get_CanGoBack(38) / get_CanGoForward(39) を
+'         取り、m_browser.NotifyUrlChanged Me, url, canBack, canFwd を呼ぶ。
+'     - View_OnNavigationCompleted: 末尾で NotifyUrlState を呼ぶ (通常のページ遷移)。
+'         ★pArgs=0 の早期 Exit Sub 経路でも呼ぶこと★ (両方の経路を通す)
+'     - View_OnHistoryChanged: 既に url/canBack/canFwd を取得済みなので、その値で
+'         m_browser.NotifyUrlChanged を呼ぶ (SPA の pushState、戻る/進むを捕捉)。
+'     ★多重発火は無害★ NavigationCompleted と HistoryChanged が両方撃っても、
+'       全体同期方式 (設計原則 60) なので同じ状態を 2 回送るだけで整合する。
+'
+'   第9.11c の追加事項 (VBA->JS タブ一覧描画の土台: タイトルキャッシュ + WebMessage シンク):
+'     ★タイトルキャッシュ (選択肢3)★ タイトルを Pane オブジェクトに紐づけて
+'       保持する。タブ index がずれてもタイトルが正しいペインに追従し、
+'       全体同期の真実源を一元化できる。TabBar は Browser.PaneAt(i).DocumentTitle
+'       で読む。
+'       - 新規フィールド: m_title As String
+'       - 新規 Public Property Get DocumentTitle() As String
+'       - View_OnDocumentTitleChanged でタイトル取得後 m_title = title を保存
+'         (9.11a の NotifyTitleChanged 通知ブロックの直前に 1 行足すだけ)。
+'     ★汎用 WebMessage シンク (案P)★ JS から postMessage されたメッセージを
+'       登録された「シンク」(TabBar 等) へ転送する仕組み。m_browser 後方参照
+'       (NewWindowRequested 用) とは別系統の 1 本。
+'       - 新規フィールド: m_webMsgSink As Object (受け側は OnPaneWebMessage を実装)
+'       - 新規 Public Sub: SetWebMsgSink / ClearWebMsgSink
+'       - View_OnWebMessageReceived: シンクがあれば OnPaneWebMessage(Me, source, msg)
+'         を呼ぶブロックを追加。
+'       - View_AddWebMessageReceived は既存 (9.4c) をそのまま使い、TabBar 側で
+'         受信を有効化する。
+'     ★解放時のシンク切断★ ClearBrowserRef で m_webMsgSink も Nothing にする
+'       (設計原則 58。後方参照系の切断は Shutdown 経路に集約)。
+'
+'   第9.11a の追加事項 (疎結合タブバー用のタイトル通知):
+'     - View_OnDocumentTitleChanged に 1 ブロック追加。タイトル取得後、
+'       m_browser があれば m_browser.NotifyTitleChanged Me, title を呼ぶ。
+'       後方参照 m_browser (9.10e で NewWindowRequested 用に導入) をそのまま
+'       流用する。m_browser 未設定時 (後方参照なしの使い方) は Debug.Print の
+'       みでフォールバックし、疎結合を壊さない。Pane 側の新規フィールド/
+'       メソッドはなし (既存の m_browser を使うだけ)。
+'
+'   第9.10e の追加事項 (NewWindowRequested の新タブ化、案A + 案Y + 案β Timer):
+'     ★デッドロック回避 (案β)★ NewWindowRequested ハンドラ内で AddTabWithUrl を
+'       直接呼ぶと、AddTab の WaitPaneReady が ControllerCompleted を待つが、本
+'       ハンドラが return するまで WebView2 はそれを配送しないためデッドロック
+'       (タイムアウト) する (仕様事実 14)。そこで m_browser.RequestNewTabAsync に
+'       依頼し、SafeTimer (ワンショット) 経由でハンドラ完了後に AddTabWithUrl を
+'       実行させる。
+'     - 新規フィールド: m_browser As Wv2Browser (所属 Browser への後方参照)
+'     - 新規メソッド: SetBrowser / ClearBrowserRef (後方参照の設定・切断)
+'     - View_OnNewWindowRequested を「同一 View Navigate」(9.6b) から
+'       「m_browser.AddTabWithUrl で新タブを開く」に変更。m_browser 未設定時は
+'       同一 View Navigate にフォールバック。window.open の戻り値は null になる
+'       (put_NewWindow で新 View を渡さない簡易方式 = 案A。正攻法は将来の別段階)
+'     ★循環参照注意 (設計原則 58)★ Browser.m_tabs ? Pane.m_browser の相互参照に
+'       なる。Wv2Browser.Shutdown が各 Pane の ClearBrowserRef を呼んで断つ
+'       (UserForm_Terminate 経由)。Class_Terminate では m_browser に触らない
+'       (循環時は Class_Terminate 自体が呼ばれないため、Shutdown が唯一の経路)
+'
+'   第9.10d-2a の追加事項 (本セッション、SPA 用 https origin 基盤):
+'     - 新規モジュール変数:
+'         m_pView3 As LongPtr (ICoreWebView2_3 派生 IF のキャッシュ)
+'     - Class_Initialize に m_pView3 = 0 を追加
+'     - Class_Terminate / Ctrl_Close の Release 順序を拡張:
+'         m_pView3 → m_pView2 → m_pView → m_pCtrl (最派生から先、設計原則 51)
+'     - 新規 Private Function:
+'         EnsureView3() As Boolean
+'         (QueryInterface(IID_ICoreWebView2_3) で遅延取得、EnsureView2 と同形)
+'     - 新規 Public Function:
+'         View3_Ensure() As Boolean (検証用ラッパ、View2_Ensure と同形)
+'         View3_SetVirtualHostNameToFolderMapping(hostName, folderPath, accessKind)
+'           As Long
+'           (ICoreWebView2_3 vtable index 71。ローカルフォルダを
+'            https://<hostName>/ にマッピングし、about:blank origin の
+'            pushState/replaceState 制約 (仕様事実 6) を回避する基盤。
+'            単純引数系なので View_Navigate を見本にし、設計原則 45 は不要)
+'     - IID_ICoreWebView2_3 = {A0D6DF20-3B92-416D-AA0C-437A9C727857}
+'       (EnsureView3 のローカル変数で都度作る、9.9a 案 a を踏襲)
+'
+'   第9.10c-1 の追加事項 (可視制御):
+'     - 新規 Public Function:
+'         Ctrl_PutIsVisible(visible As Boolean) As Long
+'         (ICoreWebView2Controller::put_IsVisible、vtable index 4)
+'         Wv2Browser の ActivateTab がタブ可視制御 (アクティブタブだけ可視) に使う。
+'         Win32 BOOL (True=1/False=0) なので dcf 前に 1/0 へ正規化する (仕様事実 11)。
+'         単純引数系なので Ctrl_PutBounds を見本にする。
+'
+'   第9.9c の追加事項 (補完群一括処理):
+'     - 新規 Public 関数: View_ExecuteScriptSafe(userCode) As Long
+'         ユーザーコードを try-catch で包んで構造化 JSON を返す ExecuteScript ラッパ。
+'         resultJson が必ず {ok:true,value:...} or {ok:false,errorName:...,...}
+'         の形式になる (案 F: a + X + ★)。
+'     - OnExecuteScriptCompleted から UserForm1.OnExecuteScriptResult を直接呼ぶ
+'         (案 α 第二実装、案 E1-a-i = Wv2Pane は UserForm1 参照を保持しない。
+'          VBA のグローバル UserForm 参照を活用、循環参照なし)。
+'         Wv2Pane 内の Debug.Print も併存 (案 E2-X、リグレッション切り分け容易)。
+'     - View_OnHistoryChanged のログ改善:
+'         (α) about:blank なら「NavigateToString 環境では正常」と注記。
+'         (β) pArgs=0 が仕様であることをコメント・ログで明示。
+'     - 設計上ロジックの本質変更はなし (拡張のみ)。
+'
+'   第9.9b の追加事項 (継続、SPA 対応):
+'     - 永続ハンドラ配列の上限を HK_NewWindowRequested(7) → HK_DOMContentLoaded(10)
+'       に拡張
+'     - 新規ヘルパー RemoveInterfaceFor(kind) As LongPtr
+'     - HistoryChanged 系 (基底 ICoreWebView2、vtable 13/14):
+'         View_AddHistoryChanged / View_RemoveHistoryChanged / View_OnHistoryChanged
+'     - DOMContentLoaded 系 (ICoreWebView2_2、vtable 64/65):
+'         View2_AddDOMContentLoaded / View2_RemoveDOMContentLoaded /
+'         View2_OnDOMContentLoaded
+'
+'   ★ 第9.9b の設計原則 45 への警戒 ★
+'     永続ハンドラを 2 個追加 = COM オブジェクトを WebView2 に渡す場面が 2 回。
+'     9.8c で h.Slot を直接渡してクラッシュした教訓に基づき、
+'     View_AddHistoryChanged / View2_AddDOMContentLoaded は両方とも
+'     View_AddNavigationStarting を逐語的に見本にして実装し、
+'     pVTableObj = h.Slot + VTABLE_OBJ_OFFSET を必ず通す。
+'     View_PostWebMessageAsString のような単純引数系は見本にしない。
+'
+'   第9.9a の追加事項 (継続):
+'     - 新規モジュール変数:
+'         m_pView2 As LongPtr (ICoreWebView2_2 派生 IF のキャッシュ)
+'     - Class_Initialize に m_pView2 = 0 を追加
+'     - Class_Terminate の Release 順序を拡張:
+'         (Settings → View2 → View → Ctrl、子から親へ厳格、設計原則 43)
+'     - Ctrl_Close にも同じ Release 順序を適用 (m_pView2 を View より先に Release)
+'     - 新規 Private Function:
+'         EnsureView2() As Boolean
+'         (m_pView2 が未取得なら QueryInterface(IID_ICoreWebView2_2) で取得、
+'          EnsureSettings と同形パターン)
+'     - 新規 Public Function:
+'         View2_Ensure() As Boolean
+'         (検証用ラッパ、Immediate ウィンドウから叩いて取得成功確認)
+'
+'   第9.9a の設計判断 (たーぼーさん合意済み):
+'     ・案 1: m_pView2 フィールド + EnsureView2 遅延取得 (Settings 流儀を踏襲)
+'     ・案 a: IID_ICoreWebView2_2 は EnsureView2 のローカル変数で都度作る
+'             (Wv2Thunks に IID テーブル追加せず、9.9a を Wv2Thunks 最小変更に)
+'     ・案 X: EnsureView2 / View2_Ensure とも As Boolean (EnsureSettings と同形)
+'     ・案 i: 検証は Immediate で View2_Ensure 叩く + Test_AllEvents_Real で
+'             リグレッションゼロ確認 (テスト関数は新設しない)
+'     ・案 R1: Release 順序は Settings → View2 → View → Ctrl (子から親へ厳格)
+'
+'   ★ 第9.9a の意義 ★
+'     ICoreWebView2_2 を取り出すこと自体が目的ではなく、第9.9b 以降の
+'     SPA 対応 (DOMContentLoaded など、vtable 64/65 にあるメソッド) を
+'     呼び出すための基盤を整える段階。HistoryChanged は基底 IF (vtable 13/14)
+'     にあるので _2 が無くても 9.9b で実装可能だが、DOMContentLoaded は
+'     _2 IF が必須。第 9.6a で確立した命名規約 (View2_xxx) を初めて
+'     実地で適用する段階でもある。
+'
+'   第9.9a で踏襲する設計原則 (関連する主要なもの):
+'     ・設計原則 31: 出自接頭辞による命名規約 (View2_xxx)
+'     ・設計原則 42: 派生 IF の遅延取得・キャッシュ方式 (EnsureSettings の流儀)
+'     ・設計原則 43: Release 順序は子から親へ
+'     ・設計原則 45: COM オブジェクトとして渡すときは VTABLE_OBJ_OFFSET を足す
+'                    (9.9a では「WebView2 から COM オブジェクトを受け取る」場面
+'                     なので VTABLE_OBJ_OFFSET は登場しないが、9.9b で
+'                     DOMContentLoaded ハンドラを登録するときに再警戒する)
+'     ・設計原則 48: Close 後の安全性は「メンバクリア + フラグ」ハイブリッド
+'
+'   第9.8c の追加事項 (継続):
+'     - 新規モジュール変数:
+'         m_executeScriptCounter As Long (View_ExecuteScript の callback ID 採番)
+'         m_closed As Boolean (Ctrl_Close 済みフラグ)
+'     - Class_Initialize に上記 2 個の初期化追加
+'     - 新規 Public 関数 (View_ 系):
+'         View_ExecuteScript (jsCode As String) As Long  ' callback ID 返却
+'     - 新規 Public Sub (動的バインディング受け取り口):
+'         OnExecuteScriptCompleted (callbackId, errorCode, resultJson)
+'     - Ctrl_Close の拡張 (案 E 1+3 ハイブリッド):
+'         Controller::Close を撃つ + m_pSettings/m_pView/m_pCtrl の Release +
+'         m_persistentTokens / m_persistentHandlers のクリア +
+'         m_closed = True + m_state = Cs_Failed
+'         これにより Close 後の Class_Terminate での二重処理が綺麗にスキップされる
+'
+'   ★ 第9.8c での初回バグ + 修正履歴 ★
+'     View_ExecuteScript の初版では h.Slot を直接 dcf に渡してクラッシュ
+'     (Excel プロセス即落ち)。実際は他の登録系 (View_AddNavigationStarting 等)
+'     と同じく h.Slot + VTABLE_OBJ_OFFSET を渡す必要がある。
+'     → 「サンクスロットを WebView2 に COM オブジェクトとして渡すとき、
+'        必ず VTABLE_OBJ_OFFSET (= 176 byte) を足してから渡す」
+'        という設計原則を改めて確認 (設計原則 45 として新設)。
+'
+'   第9.8c の設計判断 (たーぼーさん合意済み):
+'     ・案 a: 同時並行 OK、スロット自身が完了管理
+'     ・案 α: イベントコールバック方式、第一実装は OnExecuteScriptCompleted で
+'             ログ出力のみ (将来 UserForm 通知に拡張可)
+'     ・案 X: 連番 callback ID 返却
+'     ・案 E 1+3: メンバクリア + m_closed フラグ
+'
+'   第9.8b の事項 (継続):
+'     - m_pSettings + EnsureSettings + Settings_PutXxx 系 (3 個)
+'     - View_Reload / View_Stop / View_GetCanGoBack / View_GetCanGoForward /
+'       View_GetBrowserProcessId
+'
+'   第9.8a の事項 (継続、改名):
+'     - クラス名 Class9 → Wv2Pane に正式固定
+'     - Class7 → ComCallbackHandler / Class8 → Wv2Environment への参照置換
+'     - 詳細は開発メモ.md の各段階セクションを参照
+
+'   役割:
+'     ICoreWebView2Controller と ICoreWebView2 の合体クラス (合体方針 = 案 a)。
+'     SDK の階層構造との 1 対 1 対応は諦めるが、VBA ユーザ視点で
+'     「1 つの WebView2 表示 = 1 クラス」という素直な対応が得られる。
+'     UserForm の Frame コントロール領域に貼り付ける「1 枚の表示パネル」と
+'     して捉えるのが直観に近い (= 「Pane」と命名した理由)。
+'
+'   実装済み永続ハンドラ:
+'     HK_NavigationStarting      (View_AddNavigationStarting   / View_OnNavigationStarting)
+'     HK_NavigationCompleted     (View_AddNavigationCompleted  / View_OnNavigationCompleted)
+'     HK_WebMessageReceived      (View_AddWebMessageReceived   / View_OnWebMessageReceived)
+'     HK_DocumentTitleChanged    (View_AddDocumentTitleChanged / View_OnDocumentTitleChanged)
+'     HK_NewWindowRequested      (View_AddNewWindowRequested   / View_OnNewWindowRequested)
+'     HK_HistoryChanged          (View_AddHistoryChanged       / View_OnHistoryChanged)        ' 第9.9b
+'     HK_DOMContentLoaded        (View2_AddDOMContentLoaded    / View2_OnDOMContentLoaded)     ' 第9.9b
+'
+'   命名規約 (設計原則 31):
+'     ・ICoreWebView2Controller のメソッド: Ctrl_xxx (基底) / Ctrl2_xxx (拡張、将来)
+'     ・ICoreWebView2 のメソッド:           View_xxx (基底) / View2_xxx (拡張、第9.9a で初導入)
+'     ・ICoreWebView2 のイベントレシーバー: View_OnXxx (基底) / View2_OnXxx (拡張、9.9b で初導入予定)
+'     ・ICoreWebView2Environment のメソッド: Env_xxx 等 (将来必要時に追加)
+'     ・1 ショット系コールバック (OnEnvironmentCompleted / OnControllerCompleted):
+'       接頭辞なしで据え置き (派生インターフェース版が直接取れる関数がないため
+'       バージョン識別の必要がない)
+'
+'   双方向通信フロー (第9.4c で確立、参照名のみ新名に更新):
+'     [VBA → JS]
+'       VBA: m_pane.View_PostWebMessageAsString("hello")
+'         → dcf(m_pView, 33, ..., StrPtr("hello"))
+'         → WebView2 ランタイムが JS に届ける
+'         → JS: window.chrome.webview.addEventListener('message', ...) で受信
+'     [JS → VBA]
+'       JS: window.chrome.webview.postMessage("hello")
+'         → WebView2 ランタイムが HK_WebMessageReceived 経由でハンドラ呼び出し
+'         → ComCallbackHandler.Invoke[HK_WebMessageReceived]
+'         → Wv2Pane.View_OnWebMessageReceived(pSender, pArgs)
+'         → args.get_Source / args.TryGetWebMessageAsString でログ
+''''''''''''''''''''''''''''''''''
+Option Explicit
+
+#If Win64 Then
+    ' OK
+#Else
+    #Error "このクラスは 64 ビット VBA (x64) が必要です"
+#End If
+
+
+Public Enum ControllerState
+    Cs_Created = 0
+    Cs_Waiting = 1
+    Cs_Ready = 2
+    Cs_Failed = 3
+End Enum
+
+
+' --- 内部状態 ---
+' m_handler:     HK_ControllerCompleted ハンドラへの強参照 (1 ショット)
+'                (OnControllerCompleted 後に Nothing にする)
+' m_pCtrl:       WebView2 から受け取った ICoreWebView2Controller
+'                (Class_Terminate で Release する責任を持つ)
+' m_pView:       Ctrl_GetCoreWebView2 で取得した ICoreWebView2
+'                (Class_Terminate で Release する責任を持つ)
+Private m_handler As ComCallbackHandler
+Private m_pCtrl   As LongPtr
+Private m_pView   As LongPtr
+'   第9.8b 段階で追加: ICoreWebView2Settings のキャッシュ
+'     Wv2Pane が初めて Settings 系メソッドを叩かれたときに
+'     View vtable 3 (get_Settings) で取得し、ここに保持する。
+'     m_pView の寿命と一致するので Class_Terminate で Release する。
+Private m_pSettings As LongPtr
+'   第9.9a 段階で追加: ICoreWebView2_2 派生 IF のキャッシュ
+'     Wv2Pane が初めて View2_xxx 系メソッドを叩かれたときに
+'     QueryInterface(IID_ICoreWebView2_2) で取得し、ここに保持する。
+'     EnsureView2 経由で遅延取得 (= EnsureSettings と同じ流儀、設計原則 42)。
+'
+'     m_pView と m_pView2 は同一 COM オブジェクトを別 IF で見たもの。
+'     QueryInterface は別途 AddRef を撃つので、m_pView2 は m_pView とは
+'     独立した参照カウントを持つ。Class_Terminate / Ctrl_Close では
+'     m_pView より先に m_pView2 を Release する (子から親へ、設計原則 43)。
+Private m_pView2 As LongPtr
+'   第9.10d-2a 段階で追加: ICoreWebView2_3 派生 IF のキャッシュ
+'     SetVirtualHostNameToFolderMapping (vtable 71) を叩くために必要。
+'     EnsureView3 経由で遅延取得 (EnsureView2 と同形、設計原則 42/50)。
+'     ICoreWebView2_3 : ICoreWebView2_2 : ICoreWebView2 の単一継承なので、
+'     Release 順序では m_pView3 → m_pView2 → m_pView (最派生から先、設計原則 51)。
+Private m_pView3 As LongPtr
+'   第9.10e 段階で追加: 所属する Wv2Browser への後方参照
+'     View_OnNewWindowRequested が新タブを開くために Wv2Browser.AddTabWithUrl を
+'     呼べるようにする。Wv2Browser.AddTab が SetBrowser で自分をセットする。
+'     ★循環参照 (Browser.m_tabs ? Pane.m_browser) になるので、解放は
+'      Wv2Browser.Shutdown → ClearBrowserRef 経由で明示的に断つ (設計原則 58)。
+Private m_browser As Wv2Browser
+Private m_state   As ControllerState
+Private m_lastError As Long
+
+' --- 永続イベントハンドラの保持 (第9.4a 段階で追加、第9.6a/9.9b で上限拡張) ---
+' m_persistentHandlers: HandlerKind の値域を index とした ComCallbackHandler 配列
+' m_persistentTokens:   同 index の EventRegistrationToken (LongLong, 8 bytes)
+'
+' 第9.6a 段階で上限を HK_DocumentTitleChanged → HK_NewWindowRequested に拡張。
+' 第9.9b 段階で上限を HK_NewWindowRequested(7) → HK_DOMContentLoaded(10) に拡張。
+'   これにより HK_HistoryChanged(9) / HK_DOMContentLoaded(10) も永続配列で
+'   管理できる。
+'
+' 注意: 範囲 3?10 の中に HK_ExecuteScriptCompleted(8) が含まれるが、
+'   ExecuteScript は 1 ショット系で同時並行のため永続配列には保持しない
+'   (= index 8 は常に Nothing / 0 のまま未使用)。CleanupAllPersistentHandlers の
+'   「If Not (m_persistentHandlers(k) Is Nothing)」判定で自然にスキップされる
+'   ので実害はない。
+'
+' Class_Terminate ですべての非 Nothing なハンドラについて remove_ を呼ぶ
+' (CleanupAllPersistentHandlers の LBound/UBound ループは変更不要、
+'  これが「HandlerKind 連動配列で横展開を自動化」の本領発揮)。
+Private m_persistentHandlers(HK_NavigationStarting To HK_DOMContentLoaded) As ComCallbackHandler
+Private m_persistentTokens(HK_NavigationStarting To HK_DOMContentLoaded) As LongLong
+
+' --- ページ読み込み完了フラグ (第9.4c 段階で追加、暫定実装) ---
+'
+'   View_OnNavigationCompleted で True にセットされる。
+'   外部 (UserForm 等) が「ページ読み込み完了を待ってから PostMessage を撃つ」
+'   のような同期に使う。
+'
+'   注意 (暫定実装):
+'     これは「初回ナビゲーションの完了」しか意味しない。SPA のように
+'     history.pushState や fetch でページ内容が更新される場合は捕捉できない。
+'     SPA 対応 (DOMContentLoaded、HistoryChanged 等) は包括クラス導入時に
+'     まとめて再設計予定。
+Private m_pageLoaded As Boolean
+
+
+' 第9.8c で追加:
+'   m_executeScriptCounter: View_ExecuteScript の呼び出しごとに採番する
+'     連番カウンタ (案 X 採用)。各 ComCallbackHandler.m_callbackId に格納される。
+'     初期値 0、最初の呼び出しで 1 になる。
+'   m_closed: Ctrl_Close が呼ばれたか、または Class_Terminate が走った後を示す。
+'     True の間は View_xxx / Ctrl_xxx / Settings_xxx の冒頭で早期 return。
+'     これにより Close 後に誤って各種メソッドを叩いても安全に弾く。
+'     (案 E 1+3 ハイブリッド: メンバクリア + m_closed フラグ)
+Private m_executeScriptCounter As Long
+Private m_closed As Boolean
+
+' --- 第9.11c 段階で追加 ---
+'   m_title: このペインが表示しているドキュメントのタイトルキャッシュ
+'     (選択肢3)。View_OnDocumentTitleChanged で更新される。タイトルを Pane
+'     オブジェクトに紐づけることで、タブ index がずれてもタイトルが正しい
+'     ペインに追従する (全体同期の真実源を一元化)。TabBar は
+'     Browser.PaneAt(i).DocumentTitle で読む。
+'   m_webMsgSink: JS から postMessage されたメッセージの転送先 (案P)。
+'     TabBar が自分をシンクに登録する。受け側は OnPaneWebMessage を実装する
+'     こと (遅延バインドなので As Object)。m_browser (NewWindowRequested 用の
+'     後方参照) とは別系統。解放は ClearBrowserRef で断つ (設計原則 58)。
+Private m_title As String
+Private m_webMsgSink As Object
+Private m_isSettings As Boolean   ' 第9.19 (この Pane が設定タブかどうか)
+
+' --- 第9.27: NewWindowRequested の捌き方 (Wv2Browser.NewWindowMode と対応) ---
+'   クラスモジュールでは Public Const が書けないので、Browser 側と同じ値を
+'   Private Const で持つ。値の意味はヘッダーのコメントを参照。
+Private Const NWM_LEGACY  As Long = 0
+Private Const NWM_POPUP   As Long = 1
+Private Const NWM_PREWARM As Long = 2
+
+
+' --- D-1: EvalSync (同期取得プリミティブ) 用のモジュール変数と定数 ---
+'   m_evalPending : callbackId をキーにした保留テーブル (論点2)。
+'                   キーは cb & callbackId、値は Array(状態, errorCode, resultJson)。
+'                   ★Collection の項目は書き換えられないので、更新は Remove → Add★
+'   m_lastEvalOk / m_lastEvalError : 直前の EvalSync の成否と理由 (論点3)。
+'   m_inCallback  : WebView2 のイベントハンドラ内にいる深さ (論点7 のガード)。
+'                   Public ラッパーが +1 / -1 する。0 でなければ EvalSync は撃たない。
+'   m_evalDepth   : EvalSync のネスト深さ。ログに出すだけで抑止はしない (論点6)。
+Private m_evalPending   As Collection
+Private m_lastEvalOk    As Boolean
+Private m_lastEvalError As String
+Private m_inCallback    As Long
+Private m_evalDepth     As Long
+
+' 保留テーブルの状態値
+Private Const EVAL_WAITING   As Long = 0
+Private Const EVAL_DONE      As Long = 1
+Private Const EVAL_DISCARDED As Long = 2
+
+' タイムアウトの既定値 (秒)。READY_TIMEOUT (Controller 生成待ち 10 秒) より短くする。
+' JS 式 1 本の実行は本来ミリ秒オーダーなので、5 秒待つ時点で異常とみなす。
+Private Const EVAL_TIMEOUT_DEFAULT As Single = 5
+
+' --- D-2: 要素レジストリの世代キャッシュ ---
+'   m_domGen : JS から最後に受け取った window.__wv2.gen。高速パス専用。
+'              まだ一度も要素検索をしていなければ空文字。
+'              ★判定の権威ではない★ (権威は常に JS 側。上のヘッダー参照)
+Private m_domGen As String
+
+
+' ============================================================
+' Class_Initialize / Class_Terminate
+' ============================================================
+Private Sub Class_Initialize()
+    m_state = Cs_Created
+    m_pCtrl = 0
+    m_pView = 0
+    m_pView2 = 0    ' 第9.9a で追加 (派生 IF のキャッシュ、未取得状態)
+    m_pView3 = 0    ' 第9.10d-2a で追加 (ICoreWebView2_3 派生 IF、未取得状態)
+    Set m_browser = Nothing   ' 第9.10e (後方参照、AddTab 時に SetBrowser でセット)
+    m_lastError = 0
+    m_pageLoaded = False
+    m_executeScriptCounter = 0
+    m_closed = False
+    m_title = ""                  ' 第9.11c (タイトルキャッシュ)
+    Set m_webMsgSink = Nothing    ' 第9.11c (WebMessage シンク、未登録)
+    m_isSettings = False          ' 第9.19 (既定は通常タブ)
+
+    ' --- D-1: EvalSync 関連の初期化 ---
+    Set m_evalPending = New Collection
+    m_lastEvalOk = False
+    m_lastEvalError = ""
+    m_inCallback = 0
+    m_evalDepth = 0
+
+    ' --- D-2: 要素レジストリの世代キャッシュ ---
+    m_domGen = ""
+End Sub
+
+Private Sub Class_Terminate()
+    ' COM 所有権規約: 受け取ったポインタは ComAddRef で VBA 側の所有権分を
+    ' 確保しているので、ここで Release する。
+    '
+    ' 順序 (第9.8b で m_pSettings を追加、第9.9a で m_pView2 を追加):
+    '   1. 永続イベントハンドラの解除 (m_pView がまだ生きている必要がある)
+    '   2. m_pSettings の Release (Settings は View の子オブジェクト)
+    '   3. m_pView2 の Release  ← 第9.9a で追加
+    '                            (View2 は View から QI で取り出した派生 IF、
+    '                             独立した参照カウントを持つので View より先)
+    '   4. m_pView の Release
+    '   5. m_pCtrl の Release
+    '
+    ' なぜこの順序か:
+    '   - remove_*Event は m_pView (= ICoreWebView2) のメソッドなので
+    '     m_pView が生きている間に撃つ必要がある
+    '   - Settings は View が生成した子オブジェクト。View より先に Release する
+    '   - View2 は View を QueryInterface で取り出した派生 IF。同一 COM
+    '     オブジェクトを別 IF で見ているだけだが、QI は独立した AddRef を
+    '     撃つため、View2 と View はそれぞれ独立した参照カウントを持つ。
+    '     設計原則 43 (子から親へ) に従い View2 を先に Release する
+    '   - View は Ctrl が生成した子オブジェクト。Controller 側を先に
+    '     Release しても WebView2 内部の参照カウント管理は破綻しないが、
+    '     寿命の依存関係 (Ctrl が親、View が子、Settings が孫) を
+    '     VBA レベルでも明示するため、子から先に解放する。
+
+    ' --- 1. 永続イベントハンドラを一括解除 (第9.4a 段階で追加) ---
+    CleanupAllPersistentHandlers
+
+    ' --- 2. m_pSettings の Release (第9.8b 段階で追加) ---
+    If m_pSettings <> 0 Then
+        Debug.Print "Wv2Pane.Terminate: Releasing m_pSettings = " & m_pSettings
+        ComRelease m_pSettings
+        m_pSettings = 0
+    End If
+
+    ' --- 3-pre. m_pView3 の Release (第9.10d-2a 段階で追加) ---
+    '   View3 は View を QI で取り出した最派生 IF (ICoreWebView2_3)。
+    '   派生から順に解放するため、m_pView2 より先に Release (設計原則 51)。
+    If m_pView3 <> 0 Then
+        Debug.Print "Wv2Pane.Terminate: Releasing m_pView3 = " & m_pView3
+        ComRelease m_pView3
+        m_pView3 = 0
+    End If
+
+    ' --- 3. m_pView2 の Release (第9.9a 段階で追加) ---
+    '   View2 は View を QueryInterface で取り出した派生 IF。View より先に Release。
+    If m_pView2 <> 0 Then
+        Debug.Print "Wv2Pane.Terminate: Releasing m_pView2 = " & m_pView2
+        ComRelease m_pView2
+        m_pView2 = 0
+    End If
+
+    ' --- 4. m_pView の Release ---
+    If m_pView <> 0 Then
+        Debug.Print "Wv2Pane.Terminate: Releasing m_pView = " & m_pView
+        ComRelease m_pView
+        m_pView = 0
+    End If
+
+    ' --- 5. m_pCtrl の Release ---
+    If m_pCtrl <> 0 Then
+        Debug.Print "Wv2Pane.Terminate: Releasing m_pCtrl = " & m_pCtrl
+        ComRelease m_pCtrl
+        m_pCtrl = 0
+    End If
+
+    ' m_handler は通常 OnControllerCompleted で Nothing になっているはずだが、
+    ' 万一 Init で例外が起きた等で残っている場合はここで切る。
+    If Not (m_handler Is Nothing) Then
+        Debug.Print "Wv2Pane.Terminate: m_handler が残っているので切る (異常終了パス)"
+        Set m_handler = Nothing
+    End If
+End Sub
+
+
+' ============================================================
+' CleanupAllPersistentHandlers (第9.4a 段階で追加、内部ヘルパー)
+'
+'   m_persistentHandlers に登録されているすべての永続ハンドラについて、
+'   WebView2 側に解除依頼を出す。Class_Terminate から呼ばれる。
+'
+'   各 HandlerKind について、対応する remove_ vtable index を使い分ける。
+'   解除に成功すれば WebView2 が ComCallbackHandler を Release → refcount=0 →
+'   自動解放経路で ComCallbackHandler.ClearOwner → m_persistentHandlers(k) は
+'   ClearOwner が走った時点で Nothing にしておくのが綺麗。
+'
+'   ただし「m_persistentHandlers(k) を先に Nothing にすると、
+'   ClearOwner が触る m_owner が既に Nothing になっている」という
+'   問題はない (ClearOwner は ComCallbackHandler.m_owner を Nothing にするだけで、
+'   Wv2Pane 側の m_persistentHandlers には触らない)。
+'
+'   順序の整理:
+'     1. View_RemoveEvent (remove_*Event) を WebView2 に依頼
+'     2. WebView2 が ComCallbackHandler を Release → 基盤側の自動解放経路 →
+'        ComCallbackHandler.ClearOwner で ComCallbackHandler.m_owner = Nothing
+'     3. ここで Wv2Pane 側の m_persistentHandlers(k) = Nothing にする
+'
+'   第9.6a で配列上限が HK_NewWindowRequested に拡張されたが、
+'   ループ自体は LBound/UBound を使っているのでコード変更不要
+'   (= 設計原則 15 「HandlerKind 連動ループで横展開を自動化」の本領発揮)。
+' ============================================================
+Private Sub CleanupAllPersistentHandlers()
+    If m_pView = 0 Then
+        ' View が既に解放されている場合、remove_ を撃つ手段がない。
+        ' 永続ハンドラはまだ生きているかもしれないが、何もできない (リーク容認)。
+        Dim k1 As Long
+        For k1 = LBound(m_persistentHandlers) To UBound(m_persistentHandlers)
+            Set m_persistentHandlers(k1) = Nothing
+            m_persistentTokens(k1) = 0^
+        Next k1
+        Exit Sub
+    End If
+
+    Dim k As Long
+    For k = LBound(m_persistentHandlers) To UBound(m_persistentHandlers)
+        If Not (m_persistentHandlers(k) Is Nothing) Then
+            Dim removeIndex As Long
+            removeIndex = RemoveVtableIndexFor(CLng(k))
+            If removeIndex > 0 Then
+                ' 第9.9b: remove を撃つべきインターフェースを kind から決める。
+                '   DOMContentLoaded(_2 IF) は m_pView2、それ以外は m_pView。
+                '   設計原則 45 に忠実 (派生 IF のメソッドは派生 IF のポインタで叩く)。
+                Dim pIfRemove As LongPtr
+                pIfRemove = RemoveInterfaceFor(CLng(k))
+                If pIfRemove <> 0 Then
+                    Debug.Print "Wv2Pane.Cleanup: removing persistent handler kind=" & k & _
+                                " vtable=" & removeIndex & " token=" & m_persistentTokens(k) & _
+                                " iface=" & pIfRemove
+                    dcf pIfRemove, removeIndex, "View.remove_Event", m_persistentTokens(k)
+                Else
+                    ' 解除に必要なインターフェース (例: m_pView2) が未取得 / 解放済み。
+                    ' remove を撃つ手段がないので参照だけ切る (リーク容認)。
+                    Debug.Print "Wv2Pane.Cleanup: kind=" & k & " の remove 用 IF が 0、" & _
+                                "remove スキップ (参照のみ解放)"
+                End If
+            End If
+            Set m_persistentHandlers(k) = Nothing
+            m_persistentTokens(k) = 0^
+        End If
+    Next k
+End Sub
+
+
+' ============================================================
+' RemoveInterfaceFor (第9.9b 段階で追加、内部ヘルパー)
+'
+'   HandlerKind に対応する remove_*Event を撃つべきインターフェースの
+'   ポインタを返す。RemoveVtableIndexFor が「vtable index」を返すのに対し、
+'   こちらは「どのインターフェース (m_pView / m_pView2 / ...) で叩くか」を返す。
+'
+'   設計原則 45 (派生 IF のメソッドは派生 IF のポインタで叩く):
+'     DOMContentLoaded は ICoreWebView2_2 のイベント (vtable 65) なので
+'     m_pView2 で remove する。それ以外は基底 ICoreWebView2 のイベントなので
+'     m_pView で remove する。
+'
+'     9.9a の観察で「m_pView2 == m_pView (同じ値)」と判明しているが、
+'     それに依拠して m_pView で vtable 65 を叩くのは「派生 IF のメソッドを
+'     基底ポインタで叩く」危険な近道 (= 9.8c でクラッシュを招いた思考と同根)。
+'     意味的に正しいポインタを使うことで、将来の SDK 変更にも耐える。
+'
+'   戻り値:
+'     対応するインターフェースのポインタ。
+'     0 を返した場合は「remove を撃つ手段がない」(例: DOMContentLoaded だが
+'     m_pView2 が未取得 / 既に解放済み) ので、呼び出し側は remove をスキップする。
+'
+'   将来の拡張:
+'     ICoreWebView2_3 以降のイベントが増えたら、ここに Case を 1 行足すだけで
+'     横展開できる (RemoveVtableIndexFor との対称性を保つ)。
+' ============================================================
+Private Function RemoveInterfaceFor(ByVal kind As Long) As LongPtr
+    Select Case kind
+        Case HK_DOMContentLoaded
+            ' _2 IF のイベント。m_pView2 で叩く (未取得なら 0 を返す)。
+            RemoveInterfaceFor = m_pView2
+        Case Else
+            ' 基底 ICoreWebView2 のイベント。m_pView で叩く。
+            RemoveInterfaceFor = m_pView
+    End Select
+End Function
+
+
+' ============================================================
+' RemoveVtableIndexFor (第9.4a 段階で追加、内部ヘルパー)
+'
+'   HandlerKind に対応する remove_*Event の vtable index を返す。
+'   add_*Event とペアになっており、SDK で対応関係が決められている。
+'
+'   ICoreWebView2 vtable layout (基底):
+'     0  QueryInterface
+'     1  AddRef
+'     2  Release
+'     3  get_Settings
+'     ...
+'     5  Navigate
+'     ...
+'     7  add_NavigationStarting       8  remove_NavigationStarting
+'     ...
+'    13  add_HistoryChanged          14  remove_HistoryChanged       ← 第9.9b で追加
+'    15  add_NavigationCompleted     16  remove_NavigationCompleted
+'     ...
+'    34  add_WebMessageReceived      35  remove_WebMessageReceived
+'     ...
+'    44  add_NewWindowRequested      45  remove_NewWindowRequested  ← 第9.6a で追加
+'    46  add_DocumentTitleChanged    47  remove_DocumentTitleChanged
+'
+'   ICoreWebView2_2 vtable layout (基底の 61 個に続く派生 IF):
+'    64  add_DOMContentLoaded        65  remove_DOMContentLoaded     ← 第9.9b で追加
+'       ※ ただし add/remove の vtable index は m_pView2 (ICoreWebView2_2) 上の
+'         オフセット。RemoveInterfaceFor が DOMContentLoaded には m_pView2 を返す。
+'
+'   第9.6a で HK_NewWindowRequested = 45 を追加。
+'   第9.9b で HK_HistoryChanged = 14、HK_DOMContentLoaded = 65 を追加。
+' ============================================================
+Private Function RemoveVtableIndexFor(ByVal kind As Long) As Long
+    Select Case kind
+        Case HK_NavigationStarting:   RemoveVtableIndexFor = 8
+        Case HK_NavigationCompleted:  RemoveVtableIndexFor = 16
+        Case HK_WebMessageReceived:   RemoveVtableIndexFor = 35
+        Case HK_DocumentTitleChanged: RemoveVtableIndexFor = 47
+        Case HK_NewWindowRequested:   RemoveVtableIndexFor = 45   ' 第9.6a で追加
+        Case HK_HistoryChanged:       RemoveVtableIndexFor = 14   ' 第9.9b で追加 (基底 IF)
+        Case HK_DOMContentLoaded:     RemoveVtableIndexFor = 65   ' 第9.9b で追加 (_2 IF)
+        Case Else:                    RemoveVtableIndexFor = 0   ' 未知 → 解除不可
+    End Select
+End Function
+
+
+' ============================================================
+' Init
+'
+'   ICoreWebView2Controller の作成を開始する。
+'   このメソッドはコールバックを待たずに即座にリターンする (非同期)。
+'   完了通知は OnControllerCompleted で受ける。
+'
+'   呼び出し側は ctrl.IsReady が True になるまで DoEvents で待つ。
+'   ただし WebView2Loader は同期コールバックする可能性があり、その場合は
+'   Init から戻った時点で既に Ready / Failed になっている。
+' ============================================================
+Public Sub Init(ByVal env As Wv2Environment, ByVal hwnd As LongPtr)
+
+    If m_state <> Cs_Created Then
+        MsgBox "Wv2Pane.Init は二重呼び出し不可", vbCritical
+        Exit Sub
+    End If
+
+    If env Is Nothing Then
+        MsgBox "Wv2Pane.Init: env が Nothing", vbCritical
+        m_state = Cs_Failed
+        Exit Sub
+    End If
+
+    If Not env.IsReady Then
+        MsgBox "Wv2Pane.Init: env がまだ Ready でない (state=" & env.state & ")", vbCritical
+        m_state = Cs_Failed
+        Exit Sub
+    End If
+
+    Dim pEnv As LongPtr
+    pEnv = env.EnvironmentPtr
+    If pEnv = 0 Then
+        MsgBox "Wv2Pane.Init: env.EnvironmentPtr が 0", vbCritical
+        m_state = Cs_Failed
+        Exit Sub
+    End If
+
+    ' --- 1. ハンドラ (ComCallbackHandler) を 1 個 Acquire ---
+    Set m_handler = AcquireHandlerFor(HK_ControllerCompleted, Me)
+    If m_handler Is Nothing Then
+        MsgBox "Wv2Pane.Init: ハンドラの Acquire に失敗", vbCritical
+        m_state = Cs_Failed
+        Exit Sub
+    End If
+
+    ' --- 2. WebView2 が握る obj アドレスを計算 ---
+    Dim pVTableObj As LongPtr
+    pVTableObj = m_handler.Slot + VTABLE_OBJ_OFFSET
+
+    ' --- 3. m_state = Cs_Waiting を API 呼び出しの「前」に立てる ---
+    '   (第9.3a で確立されたパターン: 同期コールバック対応)
+    m_state = Cs_Waiting
+
+    ' --- 4. Environment->CreateCoreWebView2Controller(hwnd, handler) を呼ぶ ---
+    '
+    '   ICoreWebView2Environment vtable レイアウト:
+    '     0 : QueryInterface
+    '     1 : AddRef
+    '     2 : Release
+    '     3 : CreateCoreWebView2Controller(parentWindow HWND, handler ICoreWebView2CreateCoreWebView2ControllerCompletedHandler*)
+    '     4 : ... (以降は SDK バージョンによる)
+    '
+    '   引数:
+    '     hwnd       : Frame コントロールの HWND
+    '     pVTableObj : ComCallbackHandler ハンドラの vtableObj アドレス
+    Debug.Print "Wv2Pane.Init: dcf(pEnv=" & pEnv & ", 3, ""Env.CreateController"", hwnd=" & _
+                hwnd & ", handler=" & pVTableObj & ")"
+
+    Dim hr As Long
+    hr = dcf(pEnv, 3, "Env.CreateCoreWebView2Controller", hwnd, pVTableObj)
+
+    If hr <> 0 Then
+        MsgBox "CreateCoreWebView2Controller failed. HRESULT: &H" & Hex(hr), vbCritical
+        m_state = Cs_Failed
+        m_lastError = hr
+        ' 失敗時のリーク対策は第9.3a / 9.3b では未実装 (Wv2Environment と同じ方針)。
+        ' Thunks_Shutdown で全スロット強制クリーンアップに頼る。
+        Exit Sub
+    End If
+End Sub
+
+
+' ============================================================
+' OnControllerCompleted
+'
+'   ComCallbackHandler.Handler_Invoke の HK_ControllerCompleted 分岐から
+'   m_owner.OnControllerCompleted が動的バインディングで呼ばれる。
+'
+'   Wv2Environment.OnEnvironmentCompleted と完全に同形。Public Sub であることが必須
+'   (Friend だと IDispatch に乗らない)。
+'
+'   注 (第9.6a 命名規約): 1 ショット系コールバックは出自接頭辞なしの命名を維持。
+'   派生 IF (ICoreWebView2Environment2 等) を直接受け取る関数が存在しない
+'   ためバージョン識別の必要がない (たーぼーさん確認済み、第9.6a 段階)。
+'
+'   引数:
+'     errorCode   : HRESULT (S_OK = 0 で成功)
+'     pController : ICoreWebView2Controller ポインタ
+'                   (WebView2 が一時的に AddRef した状態で渡される。
+'                    保持する場合は VBA 側で AddRef 必須。)
+' ============================================================
+Public Sub OnControllerCompleted( _
+    ByVal errorCode As Long, _
+    ByVal pController As LongPtr)
+
+    Debug.Print "Wv2Pane.OnControllerCompleted: errorCode=" & errorCode & _
+                ", pController=" & pController
+
+    m_lastError = errorCode
+
+    If errorCode = 0 And pController <> 0 Then
+        ' VBA 側で保持する分の参照を確保
+        m_pCtrl = pController
+        ComAddRef m_pCtrl
+        m_state = Cs_Ready
+    Else
+        m_pCtrl = 0
+        m_state = Cs_Failed
+    End If
+
+    ' 1 ショットハンドラパターン (案 D1-α): ハンドラへの参照を切る
+    Set m_handler = Nothing
+End Sub
+
+
+' ============================================================
+' プロパティ群
+' ============================================================
+Public Property Get state() As ControllerState
+    state = m_state
+End Property
+
+Public Property Get IsReady() As Boolean
+    IsReady = (m_state = Cs_Ready)
+End Property
+
+Public Property Get IsFailed() As Boolean
+    IsFailed = (m_state = Cs_Failed)
+End Property
+
+Public Property Get LastError() As Long
+    LastError = m_lastError
+End Property
+
+' --- 生ポインタの公開 (内部観察 / デバッグ用) ---
+Public Property Get CtrlPtr() As LongPtr
+    CtrlPtr = m_pCtrl
+End Property
+
+Public Property Get ViewPtr() As LongPtr
+    ViewPtr = m_pView
+End Property
+
+' --- IsPageLoaded (第9.4c で追加) ---
+'   View_OnNavigationCompleted で True にセットされる。
+'   外部 (UserForm 等) からのページ読み込み完了待ちの同期に使う。
+'   将来 SPA 対応する際は包括クラス側に移管予定。
+Public Property Get IsPageLoaded() As Boolean
+    IsPageLoaded = m_pageLoaded
+End Property
+
+' --- DocumentTitle (第9.11c で追加、タイトルキャッシュの読み取り口) ---
+'   View_OnDocumentTitleChanged が保存した最新タイトルを返す。
+'   TabBar の PushSyncToJs が Browser.PaneAt(i).DocumentTitle で読む。
+'   まだタイトル未取得のペインは空文字を返す。
+Public Property Get DocumentTitle() As String
+    DocumentTitle = m_title
+End Property
+
+
+' --- IsSettings (第9.19 で追加、設定タブ識別フラグ) ---
+'   この Pane が設定タブとして開かれたものかどうか。Wv2Browser.OpenSettingsTab
+'   が生成時に True を立て、? 再クリック時の重複チェックで参照する。
+Public Property Get IsSettings() As Boolean
+    IsSettings = m_isSettings
+End Property
+
+Public Property Let IsSettings(ByVal value As Boolean)
+    m_isSettings = value
+End Property
+
+
+' ============================================================
+' Ctrl_PutBounds (ICoreWebView2Controller::put_Bounds、vtable index 6)
+'
+'   Frame コントロール等の HWND クライアント領域に対応する RECT を渡して、
+'   WebView2 の表示矩形を設定する。
+'
+'   引数の bounds は GetClientRect で取った RECT。座標系は親 HWND の
+'   クライアント領域内で (0, 0) 始まり。
+'
+'   x64 ABI 上は 16 bytes 構造体は値渡しだが、旧版から継承して
+'   VarPtr(rc) でポインタ渡しすると WebView2 が正しく解釈する
+'   (実機検証済み)。dcf には LongPtr として渡せばよい。
+'
+'   戻り値: HRESULT (S_OK = 0 で成功)
+' ============================================================
+Public Function Ctrl_PutBounds(ByRef bounds As RECT) As Long
+    If m_pCtrl = 0 Then
+        Ctrl_PutBounds = &H80004003   ' E_POINTER
+        Exit Function
+    End If
+    Ctrl_PutBounds = dcf(m_pCtrl, 6, "Ctrl.put_Bounds", VarPtr(bounds))
+End Function
+
+
+' ============================================================
+' Ctrl_PutIsVisible (ICoreWebView2Controller::put_IsVisible、vtable index 4)
+'   第9.10c-1 段階で追加。
+'
+'   Controller の可視/不可視を切り替える。Wv2Browser のタブ切替
+'   (ActivateTab) で「アクティブタブだけ可視、他は不可視」を実現するために使う。
+'
+'   引数: visible (True = 可視 / False = 不可視)
+'   戻り値: HRESULT (S_OK = 0 で成功)
+'
+'   実装メモ:
+'     put_IsVisible は BOOL (整数) を 1 個受ける単純引数メソッド。
+'     COM オブジェクトを渡すハンドラ系ではないので、見本は Ctrl_PutBounds の
+'     ような単純引数系 (dcf で直接呼ぶ) で正しい。
+'     VARIANT_BOOL / Win32 BOOL の区別: ICoreWebView2Controller::put_IsVisible の
+'     引数は Win32 BOOL (= 4 byte int、True=1/False=0)。VBA の True は -1 なので、
+'     dcf に渡す前に 1 / 0 へ正規化する (仕様事実 11)。
+' ============================================================
+Public Function Ctrl_PutIsVisible(ByVal visible As Boolean) As Long
+    If m_pCtrl = 0 Then
+        Ctrl_PutIsVisible = &H80004003   ' E_POINTER
+        Exit Function
+    End If
+    Dim b As Long
+    If visible Then b = 1 Else b = 0
+    Ctrl_PutIsVisible = dcf(m_pCtrl, 4, "Ctrl.put_IsVisible", b)
+End Function
+
+
+' ============================================================
+' Ctrl_GetCoreWebView2 (ICoreWebView2Controller::get_CoreWebView2、vtable index 25)
+'
+'   ICoreWebView2 ポインタを out 引数で取得し、m_pView に格納する。
+'
+'   COM 規約: get_xxx 系メソッドは取得したポインタを既に AddRef した
+'   状態で返す (= 受け取る側で再 AddRef は不要、Release のみ必要)。
+'   m_pView は Class_Terminate で Release される。
+'
+'   戻り値: HRESULT (S_OK = 0 で成功)
+'
+'   注意: このメソッドは Init チェーン内で 1 回だけ呼ばれる前提。
+'         m_pView が既に非ゼロの場合、二重取得を防ぐため
+'         先に既存ポインタを Release する (本来 Init 時にしか呼ばれない
+'         はずだが、安全のため)。
+' ============================================================
+Public Function Ctrl_GetCoreWebView2() As Long
+    If m_pCtrl = 0 Then
+        Ctrl_GetCoreWebView2 = &H80004003   ' E_POINTER
+        Exit Function
+    End If
+
+    ' 既存の m_pView があれば先に Release (二重取得防止)
+    If m_pView <> 0 Then
+        ComRelease m_pView
+        m_pView = 0
+    End If
+
+    Dim pv As LongPtr
+    Dim hr As Long
+    hr = dcf(m_pCtrl, 25, "Ctrl.get_CoreWebView2", VarPtr(pv))
+    If hr = 0 Then
+        m_pView = pv
+    End If
+    Ctrl_GetCoreWebView2 = hr
+End Function
+
+
+' ============================================================
+' View_Navigate (ICoreWebView2::Navigate、vtable index 5)
+'
+'   指定 URL へ遷移する。Navigate 自体は同期的に true を返すだけで、
+'   実際のページ読み込み完了は HK_NavigationCompleted で受ける。
+'
+'   引数の URL は VBA String (= UTF-16 LE) で、StrPtr で LPCWSTR を取り出す。
+'
+'   戻り値: HRESULT (S_OK = 0 で成功)
+' ============================================================
+Public Function View_Navigate(ByVal url As String) As Long
+    If m_pView = 0 Then
+        View_Navigate = &H80004003   ' E_POINTER
+        Exit Function
+    End If
+    ' 新しいナビゲーション開始でフラグをリセット
+    m_pageLoaded = False
+    View_Navigate = dcf(m_pView, 5, "View.Navigate", StrPtr(url))
+End Function
+
+
+' ============================================================
+' View_AddNavigationStarting (第9.4a 段階で新規、第9.6a で View_ 接頭辞付きに改名)
+'
+'   ICoreWebView2::add_NavigationStarting (vtable index 7) を呼んで
+'   永続イベントハンドラを登録する。
+'
+'   流れ:
+'     1. ComCallbackHandler (HK_NavigationStarting) を Acquire (owner = Me)
+'     2. dcf(m_pView, 7, handler, &token) で WebView2 に登録依頼
+'     3. WebView2 が AddRef を撃つ (ComCallbackHandler の refcount が上がる)
+'     4. 取得した token を m_persistentTokens(HK_NavigationStarting) に保存
+'     5. ComCallbackHandler を m_persistentHandlers(HK_NavigationStarting) に保存
+'
+'   呼び出し後は Bing 上のリンククリック等で
+'   ComCallbackHandler.Invoke[HK_NavigationStarting] → Wv2Pane.View_OnNavigationStarting
+'   の経路でイベントを受け取れる。
+'
+'   既に登録済みなら何もしない (二重登録防止)。
+'
+'   戻り値: HRESULT (S_OK = 0 で成功)
+' ============================================================
+Public Function View_AddNavigationStarting() As Long
+    If m_pView = 0 Then
+        View_AddNavigationStarting = &H80004003   ' E_POINTER
+        Exit Function
+    End If
+
+    ' 既に登録済みなら何もしない
+    If Not (m_persistentHandlers(HK_NavigationStarting) Is Nothing) Then
+        Debug.Print "Wv2Pane.View_AddNavigationStarting: 既に登録済みなのでスキップ"
+        View_AddNavigationStarting = 0
+        Exit Function
+    End If
+
+    ' ComCallbackHandler を Acquire (owner = Me で動的バインディング経由でイベント受信)
+    Dim h As ComCallbackHandler
+    Set h = AcquireHandlerFor(HK_NavigationStarting, Me)
+    If h Is Nothing Then
+        Debug.Print "Wv2Pane.View_AddNavigationStarting: ハンドラの Acquire に失敗"
+        View_AddNavigationStarting = &H8000FFFF   ' E_UNEXPECTED
+        Exit Function
+    End If
+
+    ' add_NavigationStarting を撃つ (vtable index 7)
+    Dim pVTableObj As LongPtr
+    pVTableObj = h.Slot + VTABLE_OBJ_OFFSET
+
+    Dim token As LongLong
+    Dim hr As Long
+    hr = dcf(m_pView, 7, "View.add_NavigationStarting", pVTableObj, VarPtr(token))
+
+    If hr <> 0 Then
+        Debug.Print "Wv2Pane.View_AddNavigationStarting: add_NavigationStarting 失敗 hr=&H" & Hex(hr)
+        ' ComCallbackHandler をリリースする (refcount=0 で自動解放経路)
+        ' h はローカル変数として参照しているので Set h = Nothing するだけでは
+        ' 基盤側の m_handlers(idx) からの参照が残る。
+        ' WebView2 が AddRef を撃てていない可能性があるため、ComCallbackHandler のスロットは
+        ' 第9.5 段階のセンチネル機構が対応するためここでは個別対処不要。
+        Set h = Nothing
+        View_AddNavigationStarting = hr
+        Exit Function
+    End If
+
+    ' 成功: token と ComCallbackHandler を保存
+    m_persistentTokens(HK_NavigationStarting) = token
+    Set m_persistentHandlers(HK_NavigationStarting) = h
+    Debug.Print "Wv2Pane.View_AddNavigationStarting OK: token=" & token & ", handler.slot=" & h.Slot
+
+    View_AddNavigationStarting = 0
+End Function
+
+
+' ============================================================
+' View_RemoveNavigationStarting (第9.4a 段階で新規、第9.6a で改名)
+'
+'   登録済みの NavigationStarting ハンドラを解除する。
+'   ユーザが明示的に解除したい場合に呼ぶ。Class_Terminate からは
+'   CleanupAllPersistentHandlers が一括で行うので、これを直接
+'   呼ぶ必要はない。
+'
+'   流れ:
+'     1. View_RemoveEvent (vtable index 8) で WebView2 側から解除
+'     2. WebView2 が ComCallbackHandler を Release → 基盤の自動解放経路
+'     3. Wv2Pane 側の m_persistentHandlers(k) = Nothing, token = 0
+'
+'   戻り値: HRESULT (S_OK = 0 で成功、未登録なら S_OK で何もしない)
+' ============================================================
+Public Function View_RemoveNavigationStarting() As Long
+    If m_pView = 0 Then
+        View_RemoveNavigationStarting = &H80004003   ' E_POINTER
+        Exit Function
+    End If
+
+    If m_persistentHandlers(HK_NavigationStarting) Is Nothing Then
+        View_RemoveNavigationStarting = 0   ' 未登録は no-op
+        Exit Function
+    End If
+
+    Dim hr As Long
+    hr = dcf(m_pView, 8, "View.remove_NavigationStarting", _
+             m_persistentTokens(HK_NavigationStarting))
+
+    If hr <> 0 Then
+        Debug.Print "Wv2Pane.View_RemoveNavigationStarting: 解除失敗 hr=&H" & Hex(hr)
+    Else
+        Debug.Print "Wv2Pane.View_RemoveNavigationStarting OK"
+    End If
+
+    ' 成功でも失敗でも Wv2Pane 側の参照は切る
+    Set m_persistentHandlers(HK_NavigationStarting) = Nothing
+    m_persistentTokens(HK_NavigationStarting) = 0^
+
+    View_RemoveNavigationStarting = hr
+End Function
+
+
+' ============================================================
+' View_OnNavigationStarting (第9.4a 段階で新規、第9.6a で改名)
+'   ComCallbackHandler から動的バインディング経由で呼ばれる。
+'
+'   ComCallbackHandler.Handler_Invoke の HK_NavigationStarting 分岐から
+'   m_owner.View_OnNavigationStarting が動的バインディングで呼ばれる。
+'
+'   Public Sub 必須 (Friend だと IDispatch::Invoke に乗らない)。
+'
+'   引数:
+'     pSender : WebView2 視点の Invoke 第 1 引数 = ICoreWebView2 ポインタ
+'               (= m_pView と同じはずだが、念のため別変数で受ける)
+'     pArgs   : WebView2 視点の Invoke 第 2 引数 =
+'               ICoreWebView2NavigationStartingEventArgs ポインタ
+'
+'   動作:
+'     args.get_Uri (vtable index 3) を呼んで URL をログに出力する。
+'     get_Uri は LPWSTR* を out 引数で返すので、GetStringProperty が
+'     PtrToString + CoTaskMemFree までを一括で処理する。
+'
+'   args の参照カウント:
+'     WebView2 が args を一時的に AddRef した状態で Invoke を呼んでいる。
+'     コールバックから戻った後 WebView2 が Release するため、
+'     View_OnNavigationStarting 内で args を保持する必要がなければ AddRef 不要。
+'     URL を取得してログに出すだけなので、保持しない。
+' ============================================================
+Public Sub View_OnNavigationStarting(ByVal pSender As LongPtr, ByVal pArgs As LongPtr)
+    ' ============================================================
+    ' D-1 論点7: in-callback ガードの薄いラッパー
+    '   本体は View_OnNavigationStarting_Core。ここでは m_inCallback を +1 してから Core を呼び、
+    '   ★どの経路で抜けても★ -1 する。Core には途中 Exit Sub があるため、
+    '   Core 内に +1 / -1 を直書きする形では戻し漏れが出る (事後報告 (a))。
+    '   Core がエラーで抜けた場合はカウンタを戻したうえで同じエラーを投げ直す
+    '   (握り潰さない = 従来の挙動を変えない。事後報告 (b))。
+    ' ============================================================
+    Dim errNum As Long
+    Dim errSrc As String
+    Dim errDsc As String
+
+    m_inCallback = m_inCallback + 1
+    On Error GoTo GuardExit
+    View_OnNavigationStarting_Core pSender, pArgs
+
+GuardExit:
+    errNum = Err.Number
+    errSrc = Err.source
+    errDsc = Err.Description
+    If m_inCallback > 0 Then m_inCallback = m_inCallback - 1
+    If errNum <> 0 Then
+        Debug.Print "Wv2Pane.View_OnNavigationStarting: Core でエラー " & errNum & " " & errDsc & _
+                    " (in-callback ガードは解除済み、エラーは再送出)"
+        Err.Raise errNum, errSrc, errDsc
+    End If
+End Sub
+
+
+Private Sub View_OnNavigationStarting_Core(ByVal pSender As LongPtr, ByVal pArgs As LongPtr)
+    Debug.Print "Wv2Pane.View_OnNavigationStarting: pSender=" & pSender & ", pArgs=" & pArgs
+    If pSender <> m_pView Then
+        Debug.Print "  [警告] pSender が m_pView と一致しない (pSender=" & pSender & _
+                    ", m_pView=" & m_pView & ")"
+    End If
+
+    If pArgs = 0 Then
+        Debug.Print "  pArgs が 0 なので URL 取得をスキップ"
+        Exit Sub
+    End If
+
+    ' args.get_Uri を呼んで URL を取得
+    Dim url As String
+    url = GetStringProperty(pArgs, 3, "NavStartingArgs.get_Uri")
+    Debug.Print "  → 遷移先 URL: " & url
+End Sub
+
+
+' ============================================================
+' View_AddNavigationCompleted (第9.4b 段階で新規、第9.6a で改名)
+'
+'   ICoreWebView2::add_NavigationCompleted (vtable index 15) を呼んで
+'   永続イベントハンドラを登録する。
+'
+'   View_AddNavigationStarting と同形パターン。違いは:
+'     - 種別: HK_NavigationCompleted
+'     - vtable index: 15 (add) / 16 (remove)
+'     - args 型: ICoreWebView2NavigationCompletedEventArgs
+'                (get_IsSuccess, get_WebErrorStatus, get_NavigationId を持つ)
+' ============================================================
+Public Function View_AddNavigationCompleted() As Long
+    If m_pView = 0 Then
+        View_AddNavigationCompleted = &H80004003   ' E_POINTER
+        Exit Function
+    End If
+
+    If Not (m_persistentHandlers(HK_NavigationCompleted) Is Nothing) Then
+        Debug.Print "Wv2Pane.View_AddNavigationCompleted: 既に登録済みなのでスキップ"
+        View_AddNavigationCompleted = 0
+        Exit Function
+    End If
+
+    Dim h As ComCallbackHandler
+    Set h = AcquireHandlerFor(HK_NavigationCompleted, Me)
+    If h Is Nothing Then
+        Debug.Print "Wv2Pane.View_AddNavigationCompleted: ハンドラの Acquire に失敗"
+        View_AddNavigationCompleted = &H8000FFFF   ' E_UNEXPECTED
+        Exit Function
+    End If
+
+    Dim pVTableObj As LongPtr
+    pVTableObj = h.Slot + VTABLE_OBJ_OFFSET
+
+    Dim token As LongLong
+    Dim hr As Long
+    hr = dcf(m_pView, 15, "View.add_NavigationCompleted", pVTableObj, VarPtr(token))
+
+    If hr <> 0 Then
+        Debug.Print "Wv2Pane.View_AddNavigationCompleted: add_NavigationCompleted 失敗 hr=&H" & Hex(hr)
+        Set h = Nothing
+        View_AddNavigationCompleted = hr
+        Exit Function
+    End If
+
+    m_persistentTokens(HK_NavigationCompleted) = token
+    Set m_persistentHandlers(HK_NavigationCompleted) = h
+    Debug.Print "Wv2Pane.View_AddNavigationCompleted OK: token=" & token & ", handler.slot=" & h.Slot
+
+    View_AddNavigationCompleted = 0
+End Function
+
+
+' ============================================================
+' View_RemoveNavigationCompleted (第9.4b 段階で新規、第9.6a で改名)
+'   View_RemoveEvent (vtable index 16) で解除。
+'   未登録なら no-op (S_OK で返す)。
+' ============================================================
+Public Function View_RemoveNavigationCompleted() As Long
+    If m_pView = 0 Then
+        View_RemoveNavigationCompleted = &H80004003
+        Exit Function
+    End If
+
+    If m_persistentHandlers(HK_NavigationCompleted) Is Nothing Then
+        View_RemoveNavigationCompleted = 0
+        Exit Function
+    End If
+
+    Dim hr As Long
+    hr = dcf(m_pView, 16, "View.remove_NavigationCompleted", _
+             m_persistentTokens(HK_NavigationCompleted))
+
+    If hr <> 0 Then
+        Debug.Print "Wv2Pane.View_RemoveNavigationCompleted: 解除失敗 hr=&H" & Hex(hr)
+    Else
+        Debug.Print "Wv2Pane.View_RemoveNavigationCompleted OK"
+    End If
+
+    Set m_persistentHandlers(HK_NavigationCompleted) = Nothing
+    m_persistentTokens(HK_NavigationCompleted) = 0^
+
+    View_RemoveNavigationCompleted = hr
+End Function
+
+
+' ============================================================
+' View_OnNavigationCompleted (第9.4b 段階で新規、第9.6a で改名)
+'   ComCallbackHandler から動的バインディング経由で呼ばれる。
+'
+'   args = ICoreWebView2NavigationCompletedEventArgs の get_IsSuccess
+'   (vtable index 3) を呼んで成功/失敗をログ出力。
+'
+'   Public Sub 必須 (Friend だと IDispatch::Invoke に乗らない)。
+' ============================================================
+Public Sub View_OnNavigationCompleted(ByVal pSender As LongPtr, ByVal pArgs As LongPtr)
+    ' ============================================================
+    ' D-1 論点7: in-callback ガードの薄いラッパー
+    '   本体は View_OnNavigationCompleted_Core。ここでは m_inCallback を +1 してから Core を呼び、
+    '   ★どの経路で抜けても★ -1 する。Core には途中 Exit Sub があるため、
+    '   Core 内に +1 / -1 を直書きする形では戻し漏れが出る (事後報告 (a))。
+    '   Core がエラーで抜けた場合はカウンタを戻したうえで同じエラーを投げ直す
+    '   (握り潰さない = 従来の挙動を変えない。事後報告 (b))。
+    ' ============================================================
+    Dim errNum As Long
+    Dim errSrc As String
+    Dim errDsc As String
+
+    m_inCallback = m_inCallback + 1
+    On Error GoTo GuardExit
+    View_OnNavigationCompleted_Core pSender, pArgs
+
+GuardExit:
+    errNum = Err.Number
+    errSrc = Err.source
+    errDsc = Err.Description
+    If m_inCallback > 0 Then m_inCallback = m_inCallback - 1
+    If errNum <> 0 Then
+        Debug.Print "Wv2Pane.View_OnNavigationCompleted: Core でエラー " & errNum & " " & errDsc & _
+                    " (in-callback ガードは解除済み、エラーは再送出)"
+        Err.Raise errNum, errSrc, errDsc
+    End If
+End Sub
+
+
+Private Sub View_OnNavigationCompleted_Core(ByVal pSender As LongPtr, ByVal pArgs As LongPtr)
+    Debug.Print "Wv2Pane.View_OnNavigationCompleted: pSender=" & pSender & ", pArgs=" & pArgs
+    If pSender <> m_pView Then
+        Debug.Print "  [警告] pSender が m_pView と一致しない (pSender=" & pSender & _
+                    ", m_pView=" & m_pView & ")"
+    End If
+
+    If pArgs = 0 Then
+        Debug.Print "  pArgs が 0 なので IsSuccess 取得をスキップ"
+        ' pArgs が無くてもページロード完了の通知としては有効
+        m_pageLoaded = True
+        ' --- 第9.12a: この経路でも URL 状態を通知する (早期 return に埋もれさせない) ---
+        NotifyUrlState pSender
+        Exit Sub
+    End If
+
+    ' args.get_IsSuccess を呼んで成否を取得
+    Dim isOk As Boolean
+    isOk = GetBoolProperty(pArgs, 3, "NavCompletedArgs.get_IsSuccess")
+    Debug.Print "  → isSuccess: " & isOk
+
+    ' ページ読み込み完了フラグを立てる (第9.4c で追加)
+    ' 暫定実装: 成功/失敗にかかわらず NavigationCompleted が来たら True にする。
+    ' これは初回ロード待ちの同期用。SPA 等での追加遷移を区別したい場合は
+    ' 包括クラス側で別途設計する。
+    m_pageLoaded = True
+
+    ' --- 第9.12a: 所属 Browser に URL 状態を通知 (アドレスバー更新用) ---
+    NotifyUrlState pSender
+End Sub
+
+
+' ============================================================
+' NotifyUrlState (第9.12a、URL 状態を Browser へ通知)
+'
+'   sender (ICoreWebView2) から現在の URL / 戻れるか / 進めるか を読み取り、
+'   所属 Browser の NotifyUrlChanged に渡す。Browser がオブジェクト参照の一致で
+'   index を逆引きして RaiseEvent TabUrlChanged する (9.11a の NotifyTitleChanged
+'   と全く同じ構造)。
+'
+'   ★Pane はナビバーの存在を知らない★ ただ「自分の状態が変わった」と
+'   Browser に言うだけ。聞き手 (ナビバー) がいるかどうかは関知しない (疎結合)。
+'
+'   呼び出し元:
+'     - View_OnNavigationCompleted : 通常のページ遷移の完了
+'     - View_OnHistoryChanged      : SPA の pushState / 戻る / 進む
+'   両方から撃つが、全体同期方式 (設計原則 60) なので多重発火は無害。
+' ============================================================
+Private Sub NotifyUrlState(ByVal pSender As LongPtr)
+    If m_browser Is Nothing Then Exit Sub
+    If pSender = 0 Then Exit Sub
+
+    Dim url As String
+    url = GetStringProperty(pSender, 4, "View.get_Source")
+    Dim canBack As Boolean
+    canBack = GetBoolProperty(pSender, 38, "View.get_CanGoBack")
+    Dim canFwd As Boolean
+    canFwd = GetBoolProperty(pSender, 39, "View.get_CanGoForward")
+
+    m_browser.NotifyUrlChanged Me, url, canBack, canFwd
+End Sub
+
+
+' ============================================================
+' View_AddDocumentTitleChanged (第9.4b 段階で新規、第9.6a で改名)
+'
+'   ICoreWebView2::add_DocumentTitleChanged (vtable index 46) を呼んで
+'   永続イベントハンドラを登録する。
+'
+'   args は IUnknown* (情報なし)。タイトルは sender.get_DocumentTitle
+'   (vtable 48) を撃って取得する。
+' ============================================================
+Public Function View_AddDocumentTitleChanged() As Long
+    If m_pView = 0 Then
+        View_AddDocumentTitleChanged = &H80004003
+        Exit Function
+    End If
+
+    If Not (m_persistentHandlers(HK_DocumentTitleChanged) Is Nothing) Then
+        Debug.Print "Wv2Pane.View_AddDocumentTitleChanged: 既に登録済みなのでスキップ"
+        View_AddDocumentTitleChanged = 0
+        Exit Function
+    End If
+
+    Dim h As ComCallbackHandler
+    Set h = AcquireHandlerFor(HK_DocumentTitleChanged, Me)
+    If h Is Nothing Then
+        Debug.Print "Wv2Pane.View_AddDocumentTitleChanged: ハンドラの Acquire に失敗"
+        View_AddDocumentTitleChanged = &H8000FFFF
+        Exit Function
+    End If
+
+    Dim pVTableObj As LongPtr
+    pVTableObj = h.Slot + VTABLE_OBJ_OFFSET
+
+    Dim token As LongLong
+    Dim hr As Long
+    hr = dcf(m_pView, 46, "View.add_DocumentTitleChanged", pVTableObj, VarPtr(token))
+
+    If hr <> 0 Then
+        Debug.Print "Wv2Pane.View_AddDocumentTitleChanged: add_DocumentTitleChanged 失敗 hr=&H" & Hex(hr)
+        Set h = Nothing
+        View_AddDocumentTitleChanged = hr
+        Exit Function
+    End If
+
+    m_persistentTokens(HK_DocumentTitleChanged) = token
+    Set m_persistentHandlers(HK_DocumentTitleChanged) = h
+    Debug.Print "Wv2Pane.View_AddDocumentTitleChanged OK: token=" & token & ", handler.slot=" & h.Slot
+
+    View_AddDocumentTitleChanged = 0
+End Function
+
+
+' ============================================================
+' View_RemoveDocumentTitleChanged (第9.4b 段階で新規、第9.6a で改名)
+'   View_RemoveEvent (vtable index 47) で解除。
+' ============================================================
+Public Function View_RemoveDocumentTitleChanged() As Long
+    If m_pView = 0 Then
+        View_RemoveDocumentTitleChanged = &H80004003
+        Exit Function
+    End If
+
+    If m_persistentHandlers(HK_DocumentTitleChanged) Is Nothing Then
+        View_RemoveDocumentTitleChanged = 0
+        Exit Function
+    End If
+
+    Dim hr As Long
+    hr = dcf(m_pView, 47, "View.remove_DocumentTitleChanged", _
+             m_persistentTokens(HK_DocumentTitleChanged))
+
+    If hr <> 0 Then
+        Debug.Print "Wv2Pane.View_RemoveDocumentTitleChanged: 解除失敗 hr=&H" & Hex(hr)
+    Else
+        Debug.Print "Wv2Pane.View_RemoveDocumentTitleChanged OK"
+    End If
+
+    Set m_persistentHandlers(HK_DocumentTitleChanged) = Nothing
+    m_persistentTokens(HK_DocumentTitleChanged) = 0^
+
+    View_RemoveDocumentTitleChanged = hr
+End Function
+
+
+' ============================================================
+' View_OnDocumentTitleChanged (第9.4b 段階で新規、第9.6a で改名)
+'   ComCallbackHandler から動的バインディング経由で呼ばれる。
+'
+'   sender = ICoreWebView2 の get_DocumentTitle (vtable index 48) を呼んで
+'   現在のタイトルをログ出力する。
+'
+'   args は IUnknown* で情報がないので、sender 経由で取りに行く必要がある。
+'
+'   Public Sub 必須 (Friend だと IDispatch::Invoke に乗らない)。
+' ============================================================
+Public Sub View_OnDocumentTitleChanged(ByVal pSender As LongPtr, ByVal pArgs As LongPtr)
+    ' ============================================================
+    ' D-1 論点7: in-callback ガードの薄いラッパー
+    '   本体は View_OnDocumentTitleChanged_Core。ここでは m_inCallback を +1 してから Core を呼び、
+    '   ★どの経路で抜けても★ -1 する。Core には途中 Exit Sub があるため、
+    '   Core 内に +1 / -1 を直書きする形では戻し漏れが出る (事後報告 (a))。
+    '   Core がエラーで抜けた場合はカウンタを戻したうえで同じエラーを投げ直す
+    '   (握り潰さない = 従来の挙動を変えない。事後報告 (b))。
+    ' ============================================================
+    Dim errNum As Long
+    Dim errSrc As String
+    Dim errDsc As String
+
+    m_inCallback = m_inCallback + 1
+    On Error GoTo GuardExit
+    View_OnDocumentTitleChanged_Core pSender, pArgs
+
+GuardExit:
+    errNum = Err.Number
+    errSrc = Err.source
+    errDsc = Err.Description
+    If m_inCallback > 0 Then m_inCallback = m_inCallback - 1
+    If errNum <> 0 Then
+        Debug.Print "Wv2Pane.View_OnDocumentTitleChanged: Core でエラー " & errNum & " " & errDsc & _
+                    " (in-callback ガードは解除済み、エラーは再送出)"
+        Err.Raise errNum, errSrc, errDsc
+    End If
+End Sub
+
+
+Private Sub View_OnDocumentTitleChanged_Core(ByVal pSender As LongPtr, ByVal pArgs As LongPtr)
+    Debug.Print "Wv2Pane.View_OnDocumentTitleChanged: pSender=" & pSender & ", pArgs=" & pArgs
+    If pSender <> m_pView Then
+        Debug.Print "  [警告] pSender が m_pView と一致しない (pSender=" & pSender & _
+                    ", m_pView=" & m_pView & ")"
+    End If
+
+    ' sender (ICoreWebView2).get_DocumentTitle (vtable index 48) を呼んでタイトル取得
+    Dim title As String
+    title = GetStringProperty(pSender, 48, "View.get_DocumentTitle")
+    Debug.Print "  → タイトル: " & title
+
+    ' --- 第9.11c: タイトルをこのペインにキャッシュ (選択肢3、真実源の一元化) ---
+    m_title = title
+
+    ' --- 第9.11a: 所属 Browser にタイトル変更を通知 (後方参照 m_browser 経由) ---
+    '   NewWindowRequested で実績のある後方参照をそのまま流用する。
+    '   m_browser 未設定時 (後方参照なしの使い方) は Debug.Print のみで
+    '   フォールバックし、疎結合を壊さない。
+    If Not m_browser Is Nothing Then
+        m_browser.NotifyTitleChanged Me, title
+    End If
+End Sub
+
+
+' ============================================================
+' View_AddWebMessageReceived (第9.4c 段階で新規、第9.6a で改名)
+'
+'   ICoreWebView2::add_WebMessageReceived (vtable index 34) を呼んで
+'   永続イベントハンドラを登録する。
+'
+'   JS 側から window.chrome.webview.postMessage(text) で送信されたメッセージを
+'   受信する。受信時に Wv2Pane.View_OnWebMessageReceived が呼ばれる。
+' ============================================================
+Public Function View_AddWebMessageReceived() As Long
+    If m_pView = 0 Then
+        View_AddWebMessageReceived = &H80004003
+        Exit Function
+    End If
+
+    If Not (m_persistentHandlers(HK_WebMessageReceived) Is Nothing) Then
+        Debug.Print "Wv2Pane.View_AddWebMessageReceived: 既に登録済みなのでスキップ"
+        View_AddWebMessageReceived = 0
+        Exit Function
+    End If
+
+    Dim h As ComCallbackHandler
+    Set h = AcquireHandlerFor(HK_WebMessageReceived, Me)
+    If h Is Nothing Then
+        Debug.Print "Wv2Pane.View_AddWebMessageReceived: ハンドラの Acquire に失敗"
+        View_AddWebMessageReceived = &H8000FFFF
+        Exit Function
+    End If
+
+    Dim pVTableObj As LongPtr
+    pVTableObj = h.Slot + VTABLE_OBJ_OFFSET
+
+    Dim token As LongLong
+    Dim hr As Long
+    hr = dcf(m_pView, 34, "View.add_WebMessageReceived", pVTableObj, VarPtr(token))
+
+    If hr <> 0 Then
+        Debug.Print "Wv2Pane.View_AddWebMessageReceived: add_WebMessageReceived 失敗 hr=&H" & Hex(hr)
+        Set h = Nothing
+        View_AddWebMessageReceived = hr
+        Exit Function
+    End If
+
+    m_persistentTokens(HK_WebMessageReceived) = token
+    Set m_persistentHandlers(HK_WebMessageReceived) = h
+    Debug.Print "Wv2Pane.View_AddWebMessageReceived OK: token=" & token & ", handler.slot=" & h.Slot
+
+    View_AddWebMessageReceived = 0
+End Function
+
+
+' ============================================================
+' View_RemoveWebMessageReceived (第9.4c 段階で新規、第9.6a で改名)
+'   View_RemoveEvent (vtable index 35) で解除。
+' ============================================================
+Public Function View_RemoveWebMessageReceived() As Long
+    If m_pView = 0 Then
+        View_RemoveWebMessageReceived = &H80004003
+        Exit Function
+    End If
+
+    If m_persistentHandlers(HK_WebMessageReceived) Is Nothing Then
+        View_RemoveWebMessageReceived = 0
+        Exit Function
+    End If
+
+    Dim hr As Long
+    hr = dcf(m_pView, 35, "View.remove_WebMessageReceived", _
+             m_persistentTokens(HK_WebMessageReceived))
+
+    If hr <> 0 Then
+        Debug.Print "Wv2Pane.View_RemoveWebMessageReceived: 解除失敗 hr=&H" & Hex(hr)
+    Else
+        Debug.Print "Wv2Pane.View_RemoveWebMessageReceived OK"
+    End If
+
+    Set m_persistentHandlers(HK_WebMessageReceived) = Nothing
+    m_persistentTokens(HK_WebMessageReceived) = 0^
+
+    View_RemoveWebMessageReceived = hr
+End Function
+
+
+' ============================================================
+' View_OnWebMessageReceived (第9.4c 段階で新規、第9.6a で改名)
+'   ComCallbackHandler から動的バインディング経由で呼ばれる。
+'
+'   JS が window.chrome.webview.postMessage(text) で送信したメッセージを
+'   受信する。Public Sub 必須 (Friend だと IDispatch::Invoke に乗らない)。
+'
+'   args = ICoreWebView2WebMessageReceivedEventArgs の vtable index:
+'     3 : get_Source                 (送信元 URL、本実装で使用)
+'     4 : get_WebMessageAsJson       (未使用、必要なら追加)
+'     5 : TryGetWebMessageAsString   (JS が string で送ったときに成功、本実装で使用)
+'
+'   TryGetWebMessageAsString は HRESULT を返すが、GetStringProperty は
+'   HRESULT に関係なく成功時のみ文字列を返す (失敗時は空文字)。
+'   JS が postMessage(jsonObj) でオブジェクト送信した場合はここが空文字に
+'   なる (その場合は get_WebMessageAsJson で取る)。
+' ============================================================
+Public Sub View_OnWebMessageReceived(ByVal pSender As LongPtr, ByVal pArgs As LongPtr)
+    ' ============================================================
+    ' D-1 論点7: in-callback ガードの薄いラッパー
+    '   本体は View_OnWebMessageReceived_Core。ここでは m_inCallback を +1 してから Core を呼び、
+    '   ★どの経路で抜けても★ -1 する。Core には途中 Exit Sub があるため、
+    '   Core 内に +1 / -1 を直書きする形では戻し漏れが出る (事後報告 (a))。
+    '   Core がエラーで抜けた場合はカウンタを戻したうえで同じエラーを投げ直す
+    '   (握り潰さない = 従来の挙動を変えない。事後報告 (b))。
+    ' ============================================================
+    Dim errNum As Long
+    Dim errSrc As String
+    Dim errDsc As String
+
+    m_inCallback = m_inCallback + 1
+    On Error GoTo GuardExit
+    View_OnWebMessageReceived_Core pSender, pArgs
+
+GuardExit:
+    errNum = Err.Number
+    errSrc = Err.source
+    errDsc = Err.Description
+    If m_inCallback > 0 Then m_inCallback = m_inCallback - 1
+    If errNum <> 0 Then
+        Debug.Print "Wv2Pane.View_OnWebMessageReceived: Core でエラー " & errNum & " " & errDsc & _
+                    " (in-callback ガードは解除済み、エラーは再送出)"
+        Err.Raise errNum, errSrc, errDsc
+    End If
+End Sub
+
+
+Private Sub View_OnWebMessageReceived_Core(ByVal pSender As LongPtr, ByVal pArgs As LongPtr)
+    Debug.Print "Wv2Pane.View_OnWebMessageReceived: pSender=" & pSender & ", pArgs=" & pArgs
+    If pSender <> m_pView Then
+        Debug.Print "  [警告] pSender が m_pView と一致しない (pSender=" & pSender & _
+                    ", m_pView=" & m_pView & ")"
+    End If
+
+    If pArgs = 0 Then
+        Debug.Print "  pArgs が 0 なのでメッセージ取得をスキップ"
+        Exit Sub
+    End If
+
+    ' args.get_Source を呼んで送信元 URL を取得
+    Dim source As String
+    source = GetStringProperty(pArgs, 3, "WebMsgArgs.get_Source")
+    Debug.Print "  → source: " & source
+
+    ' args.TryGetWebMessageAsString を呼んでメッセージ本文を取得
+    ' JS が文字列で送ったとき成功、オブジェクトで送ったとき空文字
+    Dim msg As String
+    msg = GetStringProperty(pArgs, 5, "WebMsgArgs.TryGetWebMessageAsString")
+    Debug.Print "  → message: " & msg
+
+    ' --- 第9.11c: 登録されたシンク (TabBar 等) へメッセージを転送 (案P) ---
+    '   シンクは OnPaneWebMessage(pane, source, msg) を実装していること。
+    '   遅延バインド呼び出しなので、実装がなければ実行時エラーになるが、
+    '   シンク登録側 (TabBar) の責務として正しいメソッドを備える。
+    If Not m_webMsgSink Is Nothing Then
+        m_webMsgSink.OnPaneWebMessage Me, source, msg
+    End If
+End Sub
+
+
+' ============================================================
+' View_AddNewWindowRequested (第9.6a 段階で新規)
+'
+'   ICoreWebView2::add_NewWindowRequested (vtable index 44) を呼んで
+'   永続イベントハンドラを登録する。
+'
+'   ページ内の「新しいウィンドウを開く」要求 (target="_blank" リンク、
+'   window.open、Ctrl+クリック等) で発火する。
+'
+'   第9.6a 段階の動作:
+'     URL をログに出すだけ。put_Handled を立てないため、ブラウザは
+'     デフォルト挙動 (= OS の別ウィンドウ、または OS のデフォルトブラウザで
+'     開く) で振る舞う。Bing のリンクは現状この経路で「VBA からは開けない」
+'     状態が続く (たーぼーさん検証済みの従来挙動)。
+'
+'   第9.6b 段階で put_Handled = TRUE + 同一 View で View_Navigate(uri) する
+'   挙動を追加し、Bing のリンクが「同じ画面で」開けるようになる予定。
+' ============================================================
+Public Function View_AddNewWindowRequested() As Long
+    If m_pView = 0 Then
+        View_AddNewWindowRequested = &H80004003   ' E_POINTER
+        Exit Function
+    End If
+
+    If Not (m_persistentHandlers(HK_NewWindowRequested) Is Nothing) Then
+        Debug.Print "Wv2Pane.View_AddNewWindowRequested: 既に登録済みなのでスキップ"
+        View_AddNewWindowRequested = 0
+        Exit Function
+    End If
+
+    Dim h As ComCallbackHandler
+    Set h = AcquireHandlerFor(HK_NewWindowRequested, Me)
+    If h Is Nothing Then
+        Debug.Print "Wv2Pane.View_AddNewWindowRequested: ハンドラの Acquire に失敗"
+        View_AddNewWindowRequested = &H8000FFFF   ' E_UNEXPECTED
+        Exit Function
+    End If
+
+    Dim pVTableObj As LongPtr
+    pVTableObj = h.Slot + VTABLE_OBJ_OFFSET
+
+    Dim token As LongLong
+    Dim hr As Long
+    hr = dcf(m_pView, 44, "View.add_NewWindowRequested", pVTableObj, VarPtr(token))
+
+    If hr <> 0 Then
+        Debug.Print "Wv2Pane.View_AddNewWindowRequested: add_NewWindowRequested 失敗 hr=&H" & Hex(hr)
+        Set h = Nothing
+        View_AddNewWindowRequested = hr
+        Exit Function
+    End If
+
+    m_persistentTokens(HK_NewWindowRequested) = token
+    Set m_persistentHandlers(HK_NewWindowRequested) = h
+    Debug.Print "Wv2Pane.View_AddNewWindowRequested OK: token=" & token & ", handler.slot=" & h.Slot
+
+    View_AddNewWindowRequested = 0
+End Function
+
+
+' ============================================================
+' View_RemoveNewWindowRequested (第9.6a 段階で新規)
+'   View_RemoveEvent (vtable index 45) で解除。
+'   未登録なら no-op (S_OK で返す)。
+' ============================================================
+Public Function View_RemoveNewWindowRequested() As Long
+    If m_pView = 0 Then
+        View_RemoveNewWindowRequested = &H80004003
+        Exit Function
+    End If
+
+    If m_persistentHandlers(HK_NewWindowRequested) Is Nothing Then
+        View_RemoveNewWindowRequested = 0
+        Exit Function
+    End If
+
+    Dim hr As Long
+    hr = dcf(m_pView, 45, "View.remove_NewWindowRequested", _
+             m_persistentTokens(HK_NewWindowRequested))
+
+    If hr <> 0 Then
+        Debug.Print "Wv2Pane.View_RemoveNewWindowRequested: 解除失敗 hr=&H" & Hex(hr)
+    Else
+        Debug.Print "Wv2Pane.View_RemoveNewWindowRequested OK"
+    End If
+
+    Set m_persistentHandlers(HK_NewWindowRequested) = Nothing
+    m_persistentTokens(HK_NewWindowRequested) = 0^
+
+    View_RemoveNewWindowRequested = hr
+End Function
+
+
+' ============================================================
+' View_OnNewWindowRequested (第9.6a で新規、第9.6b で捌きを追加)
+'
+'   args = ICoreWebView2NewWindowRequestedEventArgs の vtable レイアウト
+'   (旧版 WebView2.cls の IDL コメントより):
+'      3 : get_Uri(LPWSTR* uri)            ← 9.6a で取得
+'      4 : put_NewWindow(ICoreWebView2*)
+'      5 : get_NewWindow(ICoreWebView2**)
+'      6 : put_Handled(BOOL)               ← 9.6b で利用
+'      7 : get_Handled(BOOL*)
+'      8 : get_IsUserInitiated(BOOL*)
+'      9 : GetDeferral(ICoreWebView2Deferral**)
+'     10 : get_WindowFeatures(ICoreWebView2WindowFeatures**)
+'
+'   第9.6b 段階の動作:
+'     1. URL を get_Uri で取得してログ出力 (9.6a から継承)
+'     2. args.put_Handled(1) で「VBA 側が捌く」と宣言
+'     3. 同じ View で View_Navigate(url) を撃って「同じ画面で」遷移
+'
+'   put_Handled を立てない場合の挙動 (9.6a で確認済み):
+'     WebView2 ランタイムが Excel プロセス内に新規 WebView2 ウィンドウを生成する。
+'     UIA Inspect で確認した結果:
+'       - クラス名: Chrome_WidgetWin_1
+'       - Name: "Bing 画像" (= タイトルのみ、ブラウザ名なし)
+'       - タスクマネージャー上では「ユーティリティ」グループ内の WebView2 プロセス
+'     つまり Edge にバトンタッチするわけではなく、WebView2 が自分で別ウィンドウを
+'     開いている。put_Handled = TRUE でこれを抑制できる。
+'
+'   失敗時の挙動 (案 a + 案 c、たーぼーさん合意):
+'     put_Handled 失敗時: WebView2 が勝手に新規ウィンドウを開く (9.6a の挙動に戻る)
+'     View_Navigate 失敗時: 現在のページのまま、リンクは開かない (ハングはしない)
+'     どちらも致命的でないため Debug.Print だけして処理続行する。
+'
+'   将来 (タブブラウザ化、第9.6c 相当):
+'     View_Navigate の代わりに args.put_NewWindow で別の Wv2Pane インスタンスを
+'     渡す方針。put_Handled は据え置き。TabWebView2 包括クラスで対応予定。
+'
+'   Public Sub 必須 (Friend だと IDispatch::Invoke に乗らない)。
+' ============================================================
+Public Sub View_OnNewWindowRequested(ByVal pSender As LongPtr, ByVal pArgs As LongPtr)
+    ' ============================================================
+    ' D-1 論点7: in-callback ガードの薄いラッパー
+    '   本体は View_OnNewWindowRequested_Core。ここでは m_inCallback を +1 してから Core を呼び、
+    '   ★どの経路で抜けても★ -1 する。Core には途中 Exit Sub があるため、
+    '   Core 内に +1 / -1 を直書きする形では戻し漏れが出る (事後報告 (a))。
+    '   Core がエラーで抜けた場合はカウンタを戻したうえで同じエラーを投げ直す
+    '   (握り潰さない = 従来の挙動を変えない。事後報告 (b))。
+    ' ============================================================
+    Dim errNum As Long
+    Dim errSrc As String
+    Dim errDsc As String
+
+    m_inCallback = m_inCallback + 1
+    On Error GoTo GuardExit
+    View_OnNewWindowRequested_Core pSender, pArgs
+
+GuardExit:
+    errNum = Err.Number
+    errSrc = Err.source
+    errDsc = Err.Description
+    If m_inCallback > 0 Then m_inCallback = m_inCallback - 1
+    If errNum <> 0 Then
+        Debug.Print "Wv2Pane.View_OnNewWindowRequested: Core でエラー " & errNum & " " & errDsc & _
+                    " (in-callback ガードは解除済み、エラーは再送出)"
+        Err.Raise errNum, errSrc, errDsc
+    End If
+End Sub
+
+
+Private Sub View_OnNewWindowRequested_Core(ByVal pSender As LongPtr, ByVal pArgs As LongPtr)
+    Debug.Print "Wv2Pane.View_OnNewWindowRequested: pSender=" & pSender & ", pArgs=" & pArgs
+    If pSender <> m_pView Then
+        Debug.Print "  [警告] pSender が m_pView と一致しない (pSender=" & pSender & _
+                    ", m_pView=" & m_pView & ")"
+    End If
+
+    If pArgs = 0 Then
+        Debug.Print "  pArgs が 0 なので URL 取得をスキップ"
+        Exit Sub
+    End If
+
+    ' --- 1. args.get_Uri (vtable index 3) で遷移先 URL を取得 (9.6a から継承) ---
+    Dim url As String
+    url = GetStringProperty(pArgs, 3, "NewWindowReqArgs.get_Uri")
+    Debug.Print "  → 新規ウィンドウ要求 URL: " & url
+
+    ' --- 第9.26/9.27: NewWindowRequested の捌き方をモードで切り替える ---
+    '   m_browser が Nothing (単体 Pane 運用 = SetBrowser 未実行) のときはモードの
+    '   置き場そのものが無いので、常に LEGACY 相当 (下の現行動作) になる。
+    Dim nwMode As Long
+    nwMode = NWM_LEGACY
+    If Not (m_browser Is Nothing) Then nwMode = m_browser.NewWindowMode
+
+    If nwMode = NWM_POPUP Then
+        ' ★モード 1 (9.26 のプローブ)★ put_Handled を立てず、新タブ要求も出さずに
+        '   Exit する。以降の捌きはランタイム任せで、自前のポップアップウィンドウに
+        '   元のリクエスト (POST ならボディごと) が継続される = 仕様事実 23。
+        '   ★検証用★ 開いたウィンドウはこちらの管理外 (手動で閉じる)。
+        Debug.Print "  [9.26 委譲モード] put_Handled を立てずにランタイムへ委譲する"
+        Debug.Print "    (ポップアップが開けば元のリクエストが継続されている = POST 生存)"
+        Debug.Print "    ※自前の新タブは作らない。ポップアップは手動で閉じること。"
+        Exit Sub
+
+    ElseIf nwMode = NWM_PREWARM Then
+        ' ★モード 2 (9.27 の本命)★ 温めてある予備タブの CoreWebView2 を
+        '   args.put_NewWindow に渡す。ランタイムはその WebView に元のリクエストを
+        '   載せるので、POST のメソッド/ボディ/Referer が保たれたまま自前のタブで開く。
+        Dim pNew As LongPtr
+        pNew = m_browser.ClaimPrewarmViewPtr()
+
+        If pNew = 0 Then
+            ' 予備が無い / 未 Ready / 既に Claim 済み。壊さずに現行動作へ落ちる。
+            Debug.Print "  ★[9.27 プリウォーム] 予備タブが使えないので現行動作にフォールバックする★"
+            Debug.Print "    → この遷移は GET に化ける (POST リンクなら 405 になる)。補充を予約する。"
+            m_browser.RequestPrewarmAsync
+            ' ↓ 下の現行動作 (put_Handled + RequestNewTabAsync) へ落ちる
+        Else
+            Dim hrNw As Long
+            hrNw = dcf(pArgs, 4, "NewWindowReqArgs.put_NewWindow", pNew)
+
+            If hrNw <> 0 Then
+                ' put_NewWindow が失敗。予約を戻してから現行動作へ落ちる。
+                Debug.Print "  ★[9.27 プリウォーム] put_NewWindow 失敗 hr=&H" & Hex(hrNw) & _
+                            " → 現行動作にフォールバックする★"
+                m_browser.ReleasePrewarmClaim
+                ' ↓ 下の現行動作へ落ちる
+            Else
+                Debug.Print "  [9.27 プリウォーム] put_NewWindow OK (予備タブの View=" & pNew & ")"
+
+                ' put_Handled の併用は Browser 側のスイッチで切り替える (論点5 の保険)。
+                If m_browser.SetHandledWithNewWindow Then
+                    hrNw = dcf(pArgs, 6, "NewWindowReqArgs.put_Handled", 1&)
+                    If hrNw <> 0 Then
+                        Debug.Print "    put_Handled 失敗 hr=&H" & Hex(hrNw)
+                    Else
+                        Debug.Print "    put_Handled OK (put_NewWindow と併用)"
+                    End If
+                Else
+                    Debug.Print "    put_Handled は立てない (SetHandledWithNewWindow = False)"
+                End If
+
+                ' 採用 (m_tabs へ登録 → TabAdded → ActivateTab) と補充は Timer に任せる。
+                ' ★ここで待たない★ のがプリウォーム方式の要点 (仕様事実 14 を回避)。
+                m_browser.RequestAdoptPrewarmedAsync url
+                Exit Sub
+            End If
+        End If
+    End If
+
+    ' --- 第9.6b で追加: 同一 View で開く捌き ---
+    If url = "" Then
+        Debug.Print "  url が空なので put_Handled / View_Navigate をスキップ"
+        Exit Sub
+    End If
+
+    ' --- 2. put_Handled = TRUE ---
+    '   WebView2 ランタイムに「VBA 側で捌く」と宣言する。
+    '   引数 1& は BOOL の TRUE (Win32 では BOOL = Long、& サフィックスで
+    '   明示的に Long であることを保証、設計原則 29 に準ずる)。
+    Dim hr As Long
+    hr = dcf(pArgs, 6, "NewWindowReqArgs.put_Handled", 1&)
+    If hr <> 0 Then
+        Debug.Print "  put_Handled 失敗 hr=&H" & Hex(hr) & _
+                    " (WebView2 が新規ウィンドウを開く挙動になる)"
+    Else
+        Debug.Print "  put_Handled OK (新規ウィンドウは抑制される)"
+    End If
+
+    ' --- 3. 新タブで開く (第9.10e、案A + 案Y) ---
+    '   9.6b の「同一 View で View_Navigate」から「Wv2Browser の新タブで開く」に
+    '   変更。m_browser 後方参照経由で AddTabWithUrl を呼ぶ (案Y)。
+    '   ★window.open の戻り値は null になる★ put_NewWindow で新 View を渡さない
+    '     簡易方式 (案A) のため。正攻法 (put_NewWindow + Deferral) は将来の別段階。
+    '   m_browser 未設定 (SetBrowser 未実行) の場合は、壊さないよう同一 View の
+    '     View_Navigate にフォールバックする (単体 Pane 運用でも動くように)。
+    If m_browser Is Nothing Then
+        Debug.Print "  [警告] m_browser 未設定 (SetBrowser 未実行)。同一 View Navigate に" & _
+                    "フォールバック。"
+        hr = View_Navigate(url)
+        If hr <> 0 Then Debug.Print "  View_Navigate 失敗 hr=&H" & Hex(hr)
+        Exit Sub
+    End If
+
+    ' ★デッドロック回避 (案β Timer)★ ここで m_browser.AddTabWithUrl を直接呼ぶと、
+    '   AddTab の WaitPaneReady が新 Controller の ControllerCompleted を待つが、
+    '   本ハンドラ (NewWindowRequested) が return するまで WebView2 はそれを配送
+    '   しないためデッドロック (タイムアウト) する (仕様事実 14)。そこで
+    '   RequestNewTabAsync に依頼し、ワンショット Timer 経由でハンドラ完了後に
+    '   AddTabWithUrl を実行させる。
+    m_browser.RequestNewTabAsync url
+    Debug.Print "  新タブ生成を Timer に依頼 (RequestNewTabAsync): " & url
+End Sub
+
+
+' ============================================================
+' SetBrowser / ClearBrowserRef (第9.10e、Wv2Browser 後方参照の設定・切断)
+'
+'   SetBrowser: Wv2Browser.AddTab がタブ生成時に自分自身 (Me) を渡す。これにより
+'     Wv2Pane は View_OnNewWindowRequested から m_browser.AddTabWithUrl を呼べる。
+'   ClearBrowserRef: Wv2Browser.Shutdown が循環参照 (Browser.m_tabs ? Pane.m_browser)
+'     を断つために呼ぶ。これを呼ばずに UserForm が m_browser=Nothing すると、
+'     循環参照で Browser も Pane も解放されずリークする (設計原則 58)。
+'
+'   ★設計原則 58★ VBA の参照カウント GC では相互参照が自動解放されない。
+'     後方参照を持つ場合は「明示的に断ち切る Shutdown」を上位に用意する。
+' ============================================================
+Public Sub SetBrowser(ByVal browser As Wv2Browser)
+    Set m_browser = browser
+End Sub
+
+Public Sub ClearBrowserRef()
+    Set m_browser = Nothing
+    Set m_webMsgSink = Nothing   ' 第9.11c: シンク後方参照も一緒に断つ (設計原則 58)
+End Sub
+
+
+' ============================================================
+' SetWebMsgSink / ClearWebMsgSink (第9.11c、WebMessage シンクの設定・切断、案P)
+'
+'   SetWebMsgSink: JS からの postMessage をこのペインが受けたとき、指定した
+'     シンクオブジェクトの OnPaneWebMessage(pane, source, msg) へ転送する。
+'     TabBar が Init 時に自分自身をシンクに登録する。受信を実際に有効化する
+'     には別途 View_AddWebMessageReceived を呼ぶこと (登録は 9.4c から既存)。
+'   ClearWebMsgSink: シンクを切る。ClearBrowserRef からも呼ばれる (解放時)。
+'
+'   ★m_browser (NewWindowRequested 用の後方参照) とは別系統★ こちらは
+'     WebMessage 転送専用。両者を混ぜないことで責務を分離する。
+' ============================================================
+Public Sub SetWebMsgSink(ByVal sink As Object)
+    Set m_webMsgSink = sink
+End Sub
+
+Public Sub ClearWebMsgSink()
+    Set m_webMsgSink = Nothing
+End Sub
+
+
+' ============================================================
+' View_AddHistoryChanged (第9.9b 段階で新規、SPA 対応)
+'
+'   ICoreWebView2::add_HistoryChanged (vtable index 13) を呼んで
+'   永続イベントハンドラを登録する。基底 ICoreWebView2 のイベントなので
+'   m_pView を使う (m_pView2 は不要)。
+'
+'   発火タイミング:
+'     SPA で history.pushState / replaceState / back / forward が
+'     呼ばれて履歴状態が変化したとき。通常のページ遷移 (Navigate) でも
+'     履歴に積まれれば発火する。SPA のルート変更を検知する主要な手段。
+'
+'   ★ 実装は View_AddNavigationStarting を逐語的な見本にしている ★
+'     (設計原則 45: COM オブジェクトを WebView2 に渡すときは
+'      pVTableObj = h.Slot + VTABLE_OBJ_OFFSET を必ず通す。
+'      View_PostWebMessageAsString のような単純引数系は見本にしない)
+'
+'   違い:
+'     - 種別: HK_HistoryChanged
+'     - vtable index: 13 (add) / 14 (remove)
+'     - args 型: IUnknown* (情報なし。sender 経由で get_Source 等を取る)
+'
+'   戻り値: HRESULT (S_OK = 0 で成功)
+' ============================================================
+Public Function View_AddHistoryChanged() As Long
+    If m_pView = 0 Then
+        View_AddHistoryChanged = &H80004003   ' E_POINTER
+        Exit Function
+    End If
+
+    ' 既に登録済みなら何もしない
+    If Not (m_persistentHandlers(HK_HistoryChanged) Is Nothing) Then
+        Debug.Print "Wv2Pane.View_AddHistoryChanged: 既に登録済みなのでスキップ"
+        View_AddHistoryChanged = 0
+        Exit Function
+    End If
+
+    ' ComCallbackHandler を Acquire (owner = Me で動的バインディング経由でイベント受信)
+    Dim h As ComCallbackHandler
+    Set h = AcquireHandlerFor(HK_HistoryChanged, Me)
+    If h Is Nothing Then
+        Debug.Print "Wv2Pane.View_AddHistoryChanged: ハンドラの Acquire に失敗"
+        View_AddHistoryChanged = &H8000FFFF   ' E_UNEXPECTED
+        Exit Function
+    End If
+
+    ' add_HistoryChanged を撃つ (vtable index 13)
+    '   重要: WebView2 に渡すハンドラ COM オブジェクトのアドレスは
+    '   h.Slot そのものではなく h.Slot + VTABLE_OBJ_OFFSET (設計原則 45)。
+    Dim pVTableObj As LongPtr
+    pVTableObj = h.Slot + VTABLE_OBJ_OFFSET
+
+    Dim token As LongLong
+    Dim hr As Long
+    hr = dcf(m_pView, 13, "View.add_HistoryChanged", pVTableObj, VarPtr(token))
+
+    If hr <> 0 Then
+        Debug.Print "Wv2Pane.View_AddHistoryChanged: add_HistoryChanged 失敗 hr=&H" & Hex(hr)
+        Set h = Nothing
+        View_AddHistoryChanged = hr
+        Exit Function
+    End If
+
+    ' 成功: token と ComCallbackHandler を保存
+    m_persistentTokens(HK_HistoryChanged) = token
+    Set m_persistentHandlers(HK_HistoryChanged) = h
+    Debug.Print "Wv2Pane.View_AddHistoryChanged OK: token=" & token & ", handler.slot=" & h.Slot
+
+    View_AddHistoryChanged = 0
+End Function
+
+
+' ============================================================
+' View_RemoveHistoryChanged (第9.9b 段階で新規)
+'   View_RemoveEvent (vtable index 14) で解除。基底 IF なので m_pView。
+'   未登録なら no-op (S_OK で返す)。
+' ============================================================
+Public Function View_RemoveHistoryChanged() As Long
+    If m_pView = 0 Then
+        View_RemoveHistoryChanged = &H80004003
+        Exit Function
+    End If
+
+    If m_persistentHandlers(HK_HistoryChanged) Is Nothing Then
+        View_RemoveHistoryChanged = 0   ' 未登録は no-op
+        Exit Function
+    End If
+
+    Dim hr As Long
+    hr = dcf(m_pView, 14, "View.remove_HistoryChanged", _
+             m_persistentTokens(HK_HistoryChanged))
+
+    If hr <> 0 Then
+        Debug.Print "Wv2Pane.View_RemoveHistoryChanged: 解除失敗 hr=&H" & Hex(hr)
+    Else
+        Debug.Print "Wv2Pane.View_RemoveHistoryChanged OK"
+    End If
+
+    Set m_persistentHandlers(HK_HistoryChanged) = Nothing
+    m_persistentTokens(HK_HistoryChanged) = 0^
+
+    View_RemoveHistoryChanged = hr
+End Function
+
+
+' ============================================================
+' View_OnHistoryChanged (第9.9b 段階で新規)
+'   ComCallbackHandler から動的バインディング経由で呼ばれる。
+'
+'   args は IUnknown* で情報がないので、sender (= ICoreWebView2) 経由で
+'   現在の状態を取りに行く (DocumentTitleChanged と同じパターン)。
+'
+'   取得する情報 (案 N2-a):
+'     - get_Source        (vtable 4)  : 現在の URL
+'     - get_CanGoBack     (vtable 38) : 「戻る」が可能か
+'     - get_CanGoForward  (vtable 39) : 「進む」が可能か
+'   SPA で pushState すると URL が変わり CanGoBack が True になる、という
+'   SPA の本質的な挙動を 1 イベントで可視化できる。
+'
+'   Public Sub 必須 (Friend だと IDispatch::Invoke に乗らない)。
+' ============================================================
+Public Sub View_OnHistoryChanged(ByVal pSender As LongPtr, ByVal pArgs As LongPtr)
+    ' ============================================================
+    ' D-1 論点7: in-callback ガードの薄いラッパー
+    '   本体は View_OnHistoryChanged_Core。ここでは m_inCallback を +1 してから Core を呼び、
+    '   ★どの経路で抜けても★ -1 する。Core には途中 Exit Sub があるため、
+    '   Core 内に +1 / -1 を直書きする形では戻し漏れが出る (事後報告 (a))。
+    '   Core がエラーで抜けた場合はカウンタを戻したうえで同じエラーを投げ直す
+    '   (握り潰さない = 従来の挙動を変えない。事後報告 (b))。
+    ' ============================================================
+    Dim errNum As Long
+    Dim errSrc As String
+    Dim errDsc As String
+
+    m_inCallback = m_inCallback + 1
+    On Error GoTo GuardExit
+    View_OnHistoryChanged_Core pSender, pArgs
+
+GuardExit:
+    errNum = Err.Number
+    errSrc = Err.source
+    errDsc = Err.Description
+    If m_inCallback > 0 Then m_inCallback = m_inCallback - 1
+    If errNum <> 0 Then
+        Debug.Print "Wv2Pane.View_OnHistoryChanged: Core でエラー " & errNum & " " & errDsc & _
+                    " (in-callback ガードは解除済み、エラーは再送出)"
+        Err.Raise errNum, errSrc, errDsc
+    End If
+End Sub
+
+
+Private Sub View_OnHistoryChanged_Core(ByVal pSender As LongPtr, ByVal pArgs As LongPtr)
+    ' 第9.9c (β): pArgs=0 は HistoryChanged の仕様 (args は IUnknown* で情報なし)。
+    ' sender 経由で get_Source / get_CanGoBack / get_CanGoForward を取りに行く。
+    Debug.Print "Wv2Pane.View_OnHistoryChanged: pSender=" & pSender & _
+                ", pArgs=" & pArgs & " (args=0 は仕様)"
+    If pSender <> m_pView Then
+        Debug.Print "  [警告] pSender が m_pView と一致しない (pSender=" & pSender & _
+                    ", m_pView=" & m_pView & ")"
+    End If
+
+    ' sender (ICoreWebView2) 経由で現在の状態を取得
+    Dim url As String
+    url = GetStringProperty(pSender, 4, "View.get_Source")
+    Dim canBack As Boolean
+    canBack = GetBoolProperty(pSender, 38, "View.get_CanGoBack")
+    Dim canFwd As Boolean
+    canFwd = GetBoolProperty(pSender, 39, "View.get_CanGoForward")
+
+    ' 第9.9c (α): NavigateToString 環境では about:blank になるのが正常。
+    ' 利用者が「URL が空っぽに見える」と困惑しないよう注記を入れる。
+    If url = "about:blank" Then
+        Debug.Print "  → URL: about:blank (NavigateToString 環境では正常、第9.9b 仕様事実 6)"
+    Else
+        Debug.Print "  → URL: " & url
+    End If
+    Debug.Print "  → CanGoBack: " & canBack & ", CanGoForward: " & canFwd
+
+    ' --- 第9.12a: 所属 Browser に URL 状態を通知 (SPA の pushState / 戻る / 進む) ---
+    '   ここでは既に url / canBack / canFwd を取得済みなので、NotifyUrlState を
+    '   経由せず直接渡す (get_* の二度読みを避ける)。
+    If Not m_browser Is Nothing Then
+        m_browser.NotifyUrlChanged Me, url, canBack, canFwd
+    End If
+End Sub
+
+
+' ============================================================
+' View2_AddDOMContentLoaded (第9.9b 段階で新規、SPA 対応、ICoreWebView2_2)
+'
+'   ICoreWebView2_2::add_DOMContentLoaded (vtable index 64) を呼んで
+'   永続イベントハンドラを登録する。これは派生 IF (ICoreWebView2_2) の
+'   イベントなので、m_pView ではなく m_pView2 を使う。
+'   (= 第9.9a で実装した EnsureView2 / m_pView2 の初の実戦投入)
+'
+'   発火タイミング:
+'     ページの DOM が構築完了したとき (DOMContentLoaded、初回ロード時に 1 回)。
+'     NavigationCompleted より前、DOM が触れるようになった時点で発火する。
+'     SPA でも初回ロード時に発火する (pushState では発火しない = それは
+'     HistoryChanged の役目)。
+'
+'   ★ 実装は View_AddHistoryChanged / View_AddNavigationStarting を
+'      逐語的な見本にしている (設計原則 45) ★
+'     違いは「m_pView の代わりに EnsureView2() + m_pView2 を使う」点のみ。
+'     pVTableObj = h.Slot + VTABLE_OBJ_OFFSET は同じく必ず通す。
+'
+'   命名: 派生 IF 由来なので View2_ 接頭辞 (第9.6a/9.9b 命名規約)。
+'
+'   違い (基底版との比較):
+'     - 種別: HK_DOMContentLoaded
+'     - インターフェース: m_pView2 (EnsureView2 で遅延取得)
+'     - vtable index: 64 (add) / 65 (remove)  ※ m_pView2 上のオフセット
+'     - args 型: ICoreWebView2DOMContentLoadedEventArgs
+'                (get_NavigationId = UINT64、vtable 3)
+'
+'   戻り値: HRESULT (S_OK = 0 で成功)
+' ============================================================
+Public Function View2_AddDOMContentLoaded() As Long
+    ' _2 IF が必要。EnsureView2 で m_pView2 を取得 (未取得なら遅延取得)。
+    If Not EnsureView2() Then
+        Debug.Print "Wv2Pane.View2_AddDOMContentLoaded: EnsureView2 失敗 (m_pView2 取得不可)"
+        View2_AddDOMContentLoaded = &H80004003   ' E_POINTER
+        Exit Function
+    End If
+
+    ' 既に登録済みなら何もしない
+    If Not (m_persistentHandlers(HK_DOMContentLoaded) Is Nothing) Then
+        Debug.Print "Wv2Pane.View2_AddDOMContentLoaded: 既に登録済みなのでスキップ"
+        View2_AddDOMContentLoaded = 0
+        Exit Function
+    End If
+
+    ' ComCallbackHandler を Acquire (owner = Me で動的バインディング経由でイベント受信)
+    Dim h As ComCallbackHandler
+    Set h = AcquireHandlerFor(HK_DOMContentLoaded, Me)
+    If h Is Nothing Then
+        Debug.Print "Wv2Pane.View2_AddDOMContentLoaded: ハンドラの Acquire に失敗"
+        View2_AddDOMContentLoaded = &H8000FFFF   ' E_UNEXPECTED
+        Exit Function
+    End If
+
+    ' add_DOMContentLoaded を撃つ (vtable index 64、m_pView2 上)
+    '   重要: WebView2 に渡すハンドラ COM オブジェクトのアドレスは
+    '   h.Slot そのものではなく h.Slot + VTABLE_OBJ_OFFSET (設計原則 45)。
+    Dim pVTableObj As LongPtr
+    pVTableObj = h.Slot + VTABLE_OBJ_OFFSET
+
+    Dim token As LongLong
+    Dim hr As Long
+    hr = dcf(m_pView2, 64, "View2.add_DOMContentLoaded", pVTableObj, VarPtr(token))
+
+    If hr <> 0 Then
+        Debug.Print "Wv2Pane.View2_AddDOMContentLoaded: add_DOMContentLoaded 失敗 hr=&H" & Hex(hr)
+        Set h = Nothing
+        View2_AddDOMContentLoaded = hr
+        Exit Function
+    End If
+
+    ' 成功: token と ComCallbackHandler を保存
+    m_persistentTokens(HK_DOMContentLoaded) = token
+    Set m_persistentHandlers(HK_DOMContentLoaded) = h
+    Debug.Print "Wv2Pane.View2_AddDOMContentLoaded OK: token=" & token & ", handler.slot=" & h.Slot
+
+    View2_AddDOMContentLoaded = 0
+End Function
+
+
+' ============================================================
+' View2_RemoveDOMContentLoaded (第9.9b 段階で新規、ICoreWebView2_2)
+'   remove_DOMContentLoaded (vtable index 65) で解除。_2 IF なので m_pView2。
+'   未登録なら no-op (S_OK で返す)。
+' ============================================================
+Public Function View2_RemoveDOMContentLoaded() As Long
+    ' _2 IF が必要。ただし解除なので、既に m_pView2 を持っているはず。
+    ' 念のため EnsureView2 を通す (未取得なら 0 を返して弾く)。
+    If Not EnsureView2() Then
+        Debug.Print "Wv2Pane.View2_RemoveDOMContentLoaded: m_pView2 が未取得"
+        View2_RemoveDOMContentLoaded = &H80004003
+        Exit Function
+    End If
+
+    If m_persistentHandlers(HK_DOMContentLoaded) Is Nothing Then
+        View2_RemoveDOMContentLoaded = 0   ' 未登録は no-op
+        Exit Function
+    End If
+
+    Dim hr As Long
+    hr = dcf(m_pView2, 65, "View2.remove_DOMContentLoaded", _
+             m_persistentTokens(HK_DOMContentLoaded))
+
+    If hr <> 0 Then
+        Debug.Print "Wv2Pane.View2_RemoveDOMContentLoaded: 解除失敗 hr=&H" & Hex(hr)
+    Else
+        Debug.Print "Wv2Pane.View2_RemoveDOMContentLoaded OK"
+    End If
+
+    Set m_persistentHandlers(HK_DOMContentLoaded) = Nothing
+    m_persistentTokens(HK_DOMContentLoaded) = 0^
+
+    View2_RemoveDOMContentLoaded = hr
+End Function
+
+
+' ============================================================
+' View2_OnDOMContentLoaded (第9.9b 段階で新規、ICoreWebView2_2)
+'   ComCallbackHandler から動的バインディング経由で呼ばれる。
+'
+'   args = ICoreWebView2DOMContentLoadedEventArgs の get_NavigationId
+'   (vtable index 3) を呼んで NavigationId をログ出力する。
+'   NavigationId は UINT64 なので GetLongLongProperty で取得 (64bit 専用)。
+'
+'   命名: 派生 IF 由来なので View2_On 接頭辞。
+'
+'   Public Sub 必須 (Friend だと IDispatch::Invoke に乗らない)。
+'
+'   ★ 32bit 化ポイント ★
+'     GetLongLongProperty は #If Win64 で囲まれた 64bit 専用ヘルパー。
+'     32bit 対応段階では NavigationId の取得方法を別途設計する。
+' ============================================================
+Public Sub View2_OnDOMContentLoaded(ByVal pSender As LongPtr, ByVal pArgs As LongPtr)
+    ' ============================================================
+    ' D-1 論点7: in-callback ガードの薄いラッパー
+    '   本体は View2_OnDOMContentLoaded_Core。ここでは m_inCallback を +1 してから Core を呼び、
+    '   ★どの経路で抜けても★ -1 する。Core には途中 Exit Sub があるため、
+    '   Core 内に +1 / -1 を直書きする形では戻し漏れが出る (事後報告 (a))。
+    '   Core がエラーで抜けた場合はカウンタを戻したうえで同じエラーを投げ直す
+    '   (握り潰さない = 従来の挙動を変えない。事後報告 (b))。
+    ' ============================================================
+    Dim errNum As Long
+    Dim errSrc As String
+    Dim errDsc As String
+
+    m_inCallback = m_inCallback + 1
+    On Error GoTo GuardExit
+    View2_OnDOMContentLoaded_Core pSender, pArgs
+
+GuardExit:
+    errNum = Err.Number
+    errSrc = Err.source
+    errDsc = Err.Description
+    If m_inCallback > 0 Then m_inCallback = m_inCallback - 1
+    If errNum <> 0 Then
+        Debug.Print "Wv2Pane.View2_OnDOMContentLoaded: Core でエラー " & errNum & " " & errDsc & _
+                    " (in-callback ガードは解除済み、エラーは再送出)"
+        Err.Raise errNum, errSrc, errDsc
+    End If
+End Sub
+
+
+Private Sub View2_OnDOMContentLoaded_Core(ByVal pSender As LongPtr, ByVal pArgs As LongPtr)
+    Debug.Print "Wv2Pane.View2_OnDOMContentLoaded: pSender=" & pSender & ", pArgs=" & pArgs
+    If pSender <> m_pView Then
+        Debug.Print "  [警告] pSender が m_pView と一致しない (pSender=" & pSender & _
+                    ", m_pView=" & m_pView & ")"
+    End If
+
+    If pArgs = 0 Then
+        Debug.Print "  pArgs が 0 なので NavigationId 取得をスキップ"
+        Exit Sub
+    End If
+
+    ' args.get_NavigationId (vtable index 3、UINT64) を取得
+    Dim navId As LongLong
+    navId = GetLongLongProperty(pArgs, 3, "DOMContentLoadedArgs.get_NavigationId")
+    Debug.Print "  → navigationId: " & navId
+End Sub
+
+
+' ============================================================
+' View_PostWebMessageAsString (第9.4c 段階で新規)
+'
+'   ICoreWebView2::PostWebMessageAsString (vtable index 33) を呼んで
+'   JS にメッセージを送信する。
+'
+'   JS 側で受け取るには、以下のリスナーを HTML 内に登録しておく:
+'     window.chrome.webview.addEventListener('message', event => {
+'         console.log(event.data);   // 受信内容
+'     });
+'
+'   注意: WebView2 はメッセージを「ページ単位」で隔離する。
+'         ページが NavigationCompleted する前 (= まだリスナーが登録されていない)
+'         に PostMessage を撃つと、メッセージはどこにも届かない。
+'         必ず NavigationCompleted を待ってから撃つこと。
+' ============================================================
+Public Function View_PostWebMessageAsString(ByVal webMessage As String) As Long
+    If m_pView = 0 Then
+        View_PostWebMessageAsString = &H80004003
+        Exit Function
+    End If
+    View_PostWebMessageAsString = dcf(m_pView, 33, _
+                                     "View.PostWebMessageAsString", _
+                                     StrPtr(webMessage))
+End Function
+
+
+' ============================================================
+' ナビゲーション制御メソッド (第9.4b 段階で新規)
+'
+'   ICoreWebView2 のナビゲーション関連メソッドを Public で公開する。
+'   ユーザは UserForm 等から m_pane.View_xxx() で呼べる。
+'
+'   各メソッドの vtable index は旧版で実機検証済み:
+'     4  : get_Source
+'     6  : NavigateToString
+'     40 : GoBack
+'     41 : GoForward
+'     48 : get_DocumentTitle
+' ============================================================
+
+' --- HTML 文字列を直接 WebView2 に表示させる ---
+Public Function View_NavigateToString(ByVal htmlContent As String) As Long
+    If m_pView = 0 Then
+        View_NavigateToString = &H80004003
+        Exit Function
+    End If
+    ' 新しいナビゲーション開始でフラグをリセット
+    m_pageLoaded = False
+    View_NavigateToString = dcf(m_pView, 6, "View.NavigateToString", StrPtr(htmlContent))
+End Function
+
+' --- VBA オブジェクトを JS に公開する (第9.18、AddHostObjectToScript, vtable 49) ---
+'   objName  : JS 側で window.chrome.webview.hostObjects.<objName> となる名前
+'   instance : 公開する VBA クラスインスタンス (Instancing 1-Private でよい)
+'
+'   ★旧 WebView2.cls の実機検証済み実装を現行作法へ移植★
+'     Variant にオブジェクトを詰め、その VarPtr を第2引数 (VARIANT*) に渡す。
+'     第1引数はホストオブジェクト名の LPCWSTR。既存の View_Navigate (StrPtr) と
+'     get_Settings (VarPtr) を組み合わせた形。
+'
+'   ★呼ぶタイミング (順序A)★ 設定タブでは NavigateToString の「前」に呼ぶ。
+'     登録が Navigate より先なら、読み込まれた JS が最初から hostObjects を
+'     使える、という仮説。実機で undefined になるようなら ready ハンドシェイク
+'     方式 (順序B) にフォールバックする。
+Public Function View_AddHostObjectToScript(ByVal objName As String, ByVal instance As Object) As Long
+    If m_pView = 0 Then
+        View_AddHostObjectToScript = &H80004003   ' E_POINTER
+        Exit Function
+    End If
+    Dim vObj As Variant
+    Set vObj = instance
+    View_AddHostObjectToScript = dcf(m_pView, 49, "View.AddHostObjectToScript", _
+                                     StrPtr(objName), VarPtr(vObj))
+End Function
+
+' --- 履歴を 1 つ戻る ---
+Public Function View_GoBack() As Long
+    If m_pView = 0 Then
+        View_GoBack = &H80004003
+        Exit Function
+    End If
+    View_GoBack = dcf(m_pView, 40, "View.GoBack")
+End Function
+
+' --- 履歴を 1 つ進む ---
+Public Function View_GoForward() As Long
+    If m_pView = 0 Then
+        View_GoForward = &H80004003
+        Exit Function
+    End If
+    View_GoForward = dcf(m_pView, 41, "View.GoForward")
+End Function
+
+' --- 現在表示中のページの URL を取得 ---
+Public Function View_GetSource() As String
+    If m_pView = 0 Then Exit Function
+    View_GetSource = GetStringProperty(m_pView, 4, "View.get_Source")
+End Function
+
+' --- 現在表示中のページの DocumentTitle を取得 ---
+Public Function View_GetDocumentTitle() As String
+    If m_pView = 0 Then Exit Function
+    View_GetDocumentTitle = GetStringProperty(m_pView, 48, "View.get_DocumentTitle")
+End Function
+
+
+' ============================================================
+' 第9.8b 段階で追加: ICoreWebView2 基底 IF のメソッド網羅 (View_ 系)
+'                  + ICoreWebView2Controller の Ctrl_Close
+'                  + ICoreWebView2Settings のヘルパー方式実装 (Settings_ 系)
+'
+'   設計原則:
+'     ・View_ 系は既存パターン (m_pView 経由 + GetXxxProperty / dcf) を踏襲
+'     ・Settings 系は EnsureSettings で m_pSettings をキャッシュし、
+'       Wv2Pane 内で完結 (Wv2Settings クラスを増やさない方針、9.8b-A 採用)
+'     ・BOOL 取得系 (View_GetCanGoBack 等) は As Boolean を返すスタイル
+'       (HRESULT は内部で確認、IsPageLoaded と整合、9.8b-C 採用)
+'     ・void 系 (View_Reload, View_Stop, Ctrl_Close) は As Long で HRESULT 返却
+'       (View_Navigate と整合)
+' ============================================================
+
+' --- ページを再読み込み (F5 相当、View vtable 31) ---
+Public Function View_Reload() As Long
+    If m_pView = 0 Then
+        View_Reload = &H80004003
+        Exit Function
+    End If
+    ' 再読み込みなのでページ読み込み完了フラグもリセット
+    m_pageLoaded = False
+    View_Reload = dcf(m_pView, 31, "View.Reload")
+End Function
+
+' --- ナビゲーション・読み込みを停止 (Esc 相当、View vtable 43) ---
+Public Function View_Stop() As Long
+    If m_pView = 0 Then
+        View_Stop = &H80004003
+        Exit Function
+    End If
+    View_Stop = dcf(m_pView, 43, "View.Stop")
+End Function
+
+' --- 「戻る」が可能か (View vtable 38、UI の Back ボタン活性制御用) ---
+'   戻り値: True なら View_GoBack を呼べる状態
+'   HRESULT は内部処理、失敗時は False を返す
+Public Function View_GetCanGoBack() As Boolean
+    If m_pView = 0 Then Exit Function
+    View_GetCanGoBack = GetBoolProperty(m_pView, 38, "View.get_CanGoBack")
+End Function
+
+' --- 「進む」が可能か (View vtable 39、UI の Forward ボタン活性制御用) ---
+'   戻り値: True なら View_GoForward を呼べる状態
+'   HRESULT は内部処理、失敗時は False を返す
+Public Function View_GetCanGoForward() As Boolean
+    If m_pView = 0 Then Exit Function
+    View_GetCanGoForward = GetBoolProperty(m_pView, 39, "View.get_CanGoForward")
+End Function
+
+' --- WebView2 ブラウザプロセスの PID を取得 (View vtable 37、診断用) ---
+'   戻り値: ブラウザプロセスの Process ID (Long)
+'   タスクマネージャと突き合わせて WebView2 プロセスを特定するときに有用
+'   HRESULT は内部処理、失敗時は 0 を返す
+Public Function View_GetBrowserProcessId() As Long
+    If m_pView = 0 Then Exit Function
+    View_GetBrowserProcessId = GetLongProperty(m_pView, 37, "View.get_BrowserProcessId")
+End Function
+
+
+' ============================================================
+' EnsureSettings (Private、内部ヘルパー)
+'
+'   m_pSettings が未取得 (= 0) なら View vtable 3 (get_Settings) を叩いて
+'   ICoreWebView2Settings* を取得し、m_pSettings にキャッシュする。
+'   既に取得済みならそのまま使う。
+'
+'   COM 所有権:
+'     get_Settings は [out, retval] でポインタを返す。返ってきた時点で
+'     refcount は既に立っているので、VBA 側で別途 AddRef は不要。
+'     m_pSettings の解放責任は Class_Terminate にある。
+'
+'   戻り値: True なら m_pSettings が有効、False なら取得失敗
+' ============================================================
+Private Function EnsureSettings() As Boolean
+    If m_pSettings <> 0 Then
+        EnsureSettings = True
+        Exit Function
+    End If
+    If m_pView = 0 Then
+        Debug.Print "Wv2Pane.EnsureSettings: m_pView が未取得"
+        Exit Function
+    End If
+
+    Dim pSettings As LongPtr
+    Dim hr As Long
+    hr = dcf(m_pView, 3, "View.get_Settings", VarPtr(pSettings))
+    If hr <> 0 Then
+        Debug.Print "Wv2Pane.EnsureSettings: get_Settings 失敗 hr=&H" & Hex(hr)
+        Exit Function
+    End If
+    If pSettings = 0 Then
+        Debug.Print "Wv2Pane.EnsureSettings: pSettings が 0"
+        Exit Function
+    End If
+
+    m_pSettings = pSettings
+    Debug.Print "Wv2Pane.EnsureSettings: m_pSettings 取得 = " & m_pSettings
+    EnsureSettings = True
+End Function
+
+' --- JS の実行可否を設定 (Settings vtable 4 = put_IsScriptEnabled) ---
+'   既定値 True。False にすると JS が一切動かなくなる。
+'   IsScriptEnabled は WebView2 起動後・ナビゲーション前に設定するのが本来
+'   だが、ナビゲーション後でも反映される (次回ロードから有効)。
+Public Function Settings_PutIsScriptEnabled(ByVal v As Boolean) As Long
+    If Not EnsureSettings() Then
+        Settings_PutIsScriptEnabled = &H80004003
+        Exit Function
+    End If
+    Dim bv As Long
+    If v Then bv = 1 Else bv = 0
+    Settings_PutIsScriptEnabled = dcf(m_pSettings, 4, "Settings.put_IsScriptEnabled", bv)
+End Function
+
+' --- 右クリックメニューの表示可否を設定 (Settings vtable 14 = put_AreDefaultContextMenusEnabled) ---
+'   既定値 True。False にすると Ctrl+クリック等を含む右クリック系メニューが
+'   一切出なくなる。業務アプリで右クリックを抑制したいとき有効。
+Public Function Settings_PutAreDefaultContextMenusEnabled(ByVal v As Boolean) As Long
+    If Not EnsureSettings() Then
+        Settings_PutAreDefaultContextMenusEnabled = &H80004003
+        Exit Function
+    End If
+    Dim bv As Long
+    If v Then bv = 1 Else bv = 0
+    Settings_PutAreDefaultContextMenusEnabled = dcf(m_pSettings, 14, _
+                                              "Settings.put_AreDefaultContextMenusEnabled", bv)
+End Function
+
+' --- DevTools (F12) の利用可否を設定 (Settings vtable 12 = put_AreDevToolsEnabled) ---
+'   既定値 True。False にすると F12 を押しても DevTools が開かない。
+'   配布アプリで DevTools を封じたいときに利用。
+Public Function Settings_PutAreDevToolsEnabled(ByVal v As Boolean) As Long
+    If Not EnsureSettings() Then
+        Settings_PutAreDevToolsEnabled = &H80004003
+        Exit Function
+    End If
+    Dim bv As Long
+    If v Then bv = 1 Else bv = 0
+    Settings_PutAreDevToolsEnabled = dcf(m_pSettings, 12, "Settings.put_AreDevToolsEnabled", bv)
+End Function
+
+
+' ============================================================
+' 第9.9a 段階で追加: ICoreWebView2_2 派生 IF の遅延取得 (View2_ 系の基盤)
+'
+'   設計判断 (たーぼーさん合意済み):
+'     ・案 1: m_pView2 フィールド + EnsureView2 遅延取得 (Settings 流儀を踏襲)
+'     ・案 a: IID_ICoreWebView2_2 は EnsureView2 のローカル変数で都度作る
+'             (Wv2Thunks に IID テーブル追加せず、9.9a を Wv2Thunks 最小変更に)
+'     ・案 X: 戻り値は As Boolean (EnsureSettings と同形)
+'
+'   IID_ICoreWebView2_2 の出典:
+'     WebView2.h L5078:
+'       EXTERN_C __declspec(selectany) const IID IID_ICoreWebView2_2 =
+'           {0x9E8F0CF8,0xE670,0x4B5E,{0xB2,0xBC,0x73,0xE0,0x61,0xE3,0x18,0x4C}};
+'     MIDL_INTERFACE 文字列: "9E8F0CF8-E670-4B5E-B2BC-73E061E3184C"
+'
+'   ICoreWebView2_2 で追加されるメソッド (基底 ICoreWebView2 の 61?67):
+'     61 : add_WebResourceResponseReceived
+'     62 : remove_WebResourceResponseReceived
+'     63 : NavigateWithWebResourceRequest
+'     64 : add_DOMContentLoaded         ← 第9.9b で利用予定
+'     65 : remove_DOMContentLoaded      ← 第9.9b で利用予定
+'     66 : get_CookieManager
+'     67 : get_Environment
+' ============================================================
+
+
+' ============================================================
+' EnsureView2 (Private、内部ヘルパー)
+'
+'   m_pView2 が未取得 (= 0) なら QueryInterface(IID_ICoreWebView2_2) を
+'   叩いて ICoreWebView2_2* を取得し、m_pView2 にキャッシュする。
+'   既に取得済みならそのまま使う。
+'
+'   COM 所有権:
+'     QueryInterface は成功時にポインタを AddRef した状態で返す。
+'     m_pView2 は m_pView とは独立した参照カウントを持つ
+'     (= 同一 COM オブジェクトを別 IF で見ているだけだが、参照カウントは別)。
+'     m_pView2 の解放責任は Class_Terminate / Ctrl_Close にある (子から先)。
+'
+'   QueryInterface 呼び出し方:
+'     IUnknown::QueryInterface (vtable 0):
+'       HRESULT QueryInterface(REFIID riid, void** ppvObject);
+'     第 1 引数 riid は GUID 構造体のポインタ。
+'     第 2 引数 ppvObject は LongPtr の out 引数。
+'     dcf 経由なら VarPtr(localIID) と VarPtr(pv) で渡す。
+'
+'   IID は EnsureView2 のローカル変数で都度作る (案 a 採用):
+'     Wv2Thunks の m_iidTable に追加せず、必要なときに必要なところで生成。
+'     初回 1 回しか呼ばれない (キャッシュ済みなら即 True で抜ける) ため
+'     オーバーヘッドは極小。Wv2Thunks の FillGUID を Public で呼ぶ。
+'
+'   戻り値: True なら m_pView2 が有効、False なら取得失敗 (案 X、EnsureSettings と同形)
+' ============================================================
+Private Function EnsureView2() As Boolean
+    If m_pView2 <> 0 Then
+        EnsureView2 = True
+        Exit Function
+    End If
+    If m_pView = 0 Then
+        Debug.Print "Wv2Pane.EnsureView2: m_pView が未取得"
+        Exit Function
+    End If
+
+    ' --- IID_ICoreWebView2_2 をローカル GUID 構造体に組み立てる ---
+    '   {9E8F0CF8-E670-4B5E-B2BC-73E061E3184C}
+    '   FillGUID は Wv2Thunks の Public Sub (第9.9a で Private → Public 昇格)
+    Dim iidView2 As GUID
+    FillGUID iidView2, "9E8F0CF8-E670-4B5E-B2BC-73E061E3184C"
+
+    ' --- QueryInterface(riid, &ppv) を叩く ---
+    '   vtable index 0 が QueryInterface (IUnknown 基底)。
+    '   引数:
+    '     #1: REFIID riid     → VarPtr(iidView2)  (GUID 構造体への参照)
+    '     #2: void** ppvObject → VarPtr(pv)        (出力先 LongPtr の参照)
+    '   戻り値: HRESULT (S_OK = 0 で成功)
+    Dim pv As LongPtr
+    Dim hr As Long
+    hr = dcf(m_pView, 0, "View.QueryInterface(ICoreWebView2_2)", _
+             VarPtr(iidView2), VarPtr(pv))
+    If hr <> 0 Then
+        Debug.Print "Wv2Pane.EnsureView2: QueryInterface 失敗 hr=&H" & Hex(hr)
+        Exit Function
+    End If
+    If pv = 0 Then
+        Debug.Print "Wv2Pane.EnsureView2: QueryInterface 成功だが pv が 0"
+        Exit Function
+    End If
+
+    m_pView2 = pv
+    Debug.Print "Wv2Pane.EnsureView2: m_pView2 取得 = " & m_pView2
+    EnsureView2 = True
+End Function
+
+
+' ============================================================
+' View2_Ensure (第9.9a で新規、Public 検証用ラッパ)
+'
+'   Immediate ウィンドウから ?UserForm1.GetActivePane.View2_Ensure で
+'   叩いて m_pView2 取得を確認するための薄いラッパ。
+'
+'   9.9b 以降は View2_AddDOMContentLoaded 等の各メソッドが内部で
+'   EnsureView2 を呼ぶ形になるので、この関数の直接利用は基本的に検証時のみ。
+'
+'   案 i 採用: 検証は本関数 + Test_AllEvents_Real のリグレッションゼロ確認で実施。
+'             テスト関数 (Test_View2_Ensure_Real) は新設しない。
+'
+'   戻り値: True なら m_pView2 が有効 (取得成功 or 既に保持済み)
+' ============================================================
+Public Function View2_Ensure() As Boolean
+    View2_Ensure = EnsureView2()
+End Function
+
+
+' ============================================================
+' EnsureView3 (第9.10d-2a で新規、ICoreWebView2_3 派生 IF の遅延取得)
+'
+'   ICoreWebView2_3 を QueryInterface で取り出して m_pView3 にキャッシュする。
+'   EnsureView2 (第9.9a) と完全に同形。基底 m_pView から QI する
+'   (ICoreWebView2_3 : ICoreWebView2_2 : ICoreWebView2 の単一継承なので
+'    基底から一段で取り出せる)。
+'
+'   SetVirtualHostNameToFolderMapping (vtable 71) を叩く前提の基盤。
+'
+'   IID_ICoreWebView2_3 = {A0D6DF20-3B92-416D-AA0C-437A9C727857}
+'     (WebView2.h: 0xA0D6DF20,0x3B92,0x416D,{0xAA,0x0C,0x43,0x7A,0x9C,0x72,0x78,0x57})
+'
+'   戻り値: True なら m_pView3 が有効 (取得成功 or 既に保持済み)
+' ============================================================
+Private Function EnsureView3() As Boolean
+    If m_pView3 <> 0 Then
+        EnsureView3 = True
+        Exit Function
+    End If
+    If m_pView = 0 Then
+        Debug.Print "Wv2Pane.EnsureView3: m_pView が未取得"
+        Exit Function
+    End If
+
+    ' --- IID_ICoreWebView2_3 をローカル GUID 構造体に組み立てる ---
+    '   FillGUID は Wv2Thunks の Public Sub (第9.9a で Public 昇格)
+    Dim iidView3 As GUID
+    FillGUID iidView3, "A0D6DF20-3B92-416D-AA0C-437A9C727857"
+
+    ' --- QueryInterface(riid, &ppv) を叩く (vtable index 0) ---
+    Dim pv As LongPtr
+    Dim hr As Long
+    hr = dcf(m_pView, 0, "View.QueryInterface(ICoreWebView2_3)", _
+             VarPtr(iidView3), VarPtr(pv))
+    If hr <> 0 Then
+        Debug.Print "Wv2Pane.EnsureView3: QueryInterface 失敗 hr=&H" & Hex(hr)
+        Exit Function
+    End If
+    If pv = 0 Then
+        Debug.Print "Wv2Pane.EnsureView3: QueryInterface 成功だが pv が 0"
+        Exit Function
+    End If
+
+    m_pView3 = pv
+    Debug.Print "Wv2Pane.EnsureView3: m_pView3 取得 = " & m_pView3
+    EnsureView3 = True
+End Function
+
+
+' ============================================================
+' View3_Ensure (第9.10d-2a で新規、Public 検証用ラッパ)
+'   Immediate から ?UserForm1.GetActivePane.View3_Ensure で m_pView3 取得を確認。
+'   View2_Ensure (第9.9a) と同形。
+' ============================================================
+Public Function View3_Ensure() As Boolean
+    View3_Ensure = EnsureView3()
+End Function
+
+
+' ============================================================
+' View3_SetVirtualHostNameToFolderMapping (第9.10d-2a で新規、ICoreWebView2_3)
+'
+'   ICoreWebView2_3::SetVirtualHostNameToFolderMapping (vtable index 71) を呼び、
+'   ローカルフォルダを仮想ホスト名にマッピングする。これにより
+'   https://<hostName>/ という secure origin でローカルファイルを配信でき、
+'   about:blank origin (仕様事実 6) の pushState/replaceState 制約を回避できる。
+'
+'   ★これは単純引数系メソッド★ COM オブジェクト (ハンドラ) を WebView2 に
+'   渡さないので、設計原則 45 (VTABLE_OBJ_OFFSET) は不要。View_Navigate の
+'   ような文字列引数系を見本にする (View_AddNavigationStarting 等のハンドラ系は
+'   見本にしない)。
+'
+'   シグネチャ (WebView2.h):
+'     HRESULT SetVirtualHostNameToFolderMapping(
+'       LPCWSTR hostName,     ' 仮想ホスト名 (例 "appassets.example")
+'       LPCWSTR folderPath,   ' マッピング先ローカルフォルダの絶対パス
+'       COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND accessKind)  ' DENY=0/ALLOW=1/DENY_CORS=2
+'
+'   ★呼び出しタイミング★ Navigate の前に設定する必要がある。かつ View3 が
+'   必要なので、先に EnsureView3 を通す。
+'
+'   accessKind は Win32 の enum (4 byte int)。利用者が選べるよう引数で受ける
+'   (通常は 1 = ALLOW を渡す)。dcf には Long としてそのまま渡す
+'   (put_Handled 1& と同じ、単純な整数引数)。
+'
+'   戻り値: HRESULT (S_OK = 0 で成功)
+' ============================================================
+Public Function View3_SetVirtualHostNameToFolderMapping( _
+    ByVal hostName As String, _
+    ByVal folderPath As String, _
+    ByVal accessKind As Long) As Long
+
+    If Not EnsureView3() Then
+        Debug.Print "Wv2Pane.View3_SetVirtualHostNameToFolderMapping: EnsureView3 失敗"
+        View3_SetVirtualHostNameToFolderMapping = &H80004003   ' E_POINTER
+        Exit Function
+    End If
+
+    Dim hr As Long
+    hr = dcf(m_pView3, 71, "View3.SetVirtualHostNameToFolderMapping", _
+             StrPtr(hostName), StrPtr(folderPath), accessKind)
+
+    If hr <> 0 Then
+        Debug.Print "Wv2Pane.View3_SetVirtualHostNameToFolderMapping: 失敗 hr=&H" & _
+                    Hex(hr) & " (host=" & hostName & ", folder=" & folderPath & ")"
+    Else
+        Debug.Print "Wv2Pane.View3_SetVirtualHostNameToFolderMapping OK: https://" & _
+                    hostName & "/ -> " & folderPath & " (accessKind=" & accessKind & ")"
+    End If
+
+    View3_SetVirtualHostNameToFolderMapping = hr
+End Function
+
+
+' ============================================================
+' Ctrl_Close (Controller vtable 24)
+'
+'   WebView2 controller を明示的に閉じる。Controller の寿命を VBA 側から
+'   即座に終わらせたい場合に使う。
+'
+'   第9.8c での拡張 (案 E 1+3 ハイブリッド):
+'     Close 後の安全性を高めるため、以下を実施:
+'       (1) 通常通り Controller::Close を撃つ (vtable 24)
+'       (2) m_pSettings / m_pView2 / m_pView / m_pCtrl をローカルにキャッシュして
+'           VBA 側でも Release を撃ち、メンバを 0 にクリア
+'           (第9.9a で m_pView2 を追加、Release 順序は子から親へ厳格 = 設計原則 43)
+'       (3) m_persistentTokens を 0 にクリア (Cleanup の二重 remove 防止)
+'           ※ 永続ハンドラは WebView2 側が Close で勝手に Release してくれるので、
+'              VBA 側で remove_xxx を撃ってはならない (= 既に refCount=0 の
+'              スロットに remove_xxx を撃つと AV のリスク)
+'       (4) m_closed = True を立てる (View_xxx / Settings_xxx の早期 return)
+'       (5) m_state = Cs_Failed (Init 直後とは異なる状態として示す)
+'
+'   これにより:
+'     - Close 後に Class_Terminate が走っても、CleanupAllPersistentHandlers は
+'       m_persistentTokens がすべて 0 なのでスキップ (= 安全)
+'     - Release も m_pSettings/m_pView2/m_pView/m_pCtrl がすべて 0 なのでスキップ
+'     - Close 後に利用者が誤って View_xxx を叩いても m_closed で早期 return
+'
+'   注意:
+'     - Ctrl_Close の戻り値は Controller::Close 自体の HRESULT
+'       (= 後続の VBA 側クリア処理で失敗しても、戻り値には影響しない)
+'     - 同じ Wv2Pane インスタンスで再度 Init を呼ぶ用途は想定していない
+'       (= 再利用するなら新規 New Wv2Pane で別インスタンスを作る)
+' ============================================================
+Public Function Ctrl_Close() As Long
+    If m_closed Then
+        Debug.Print "Wv2Pane.Ctrl_Close: 既に Close 済み、無視"
+        Ctrl_Close = 0  ' 二重 Close は無害なので S_OK 返却
+        Exit Function
+    End If
+    If m_pCtrl = 0 Then
+        Ctrl_Close = &H80004003
+        Exit Function
+    End If
+
+    Debug.Print "Wv2Pane.Ctrl_Close: m_pCtrl = " & m_pCtrl
+    Dim hr As Long
+    hr = dcf(m_pCtrl, 24, "Ctrl.Close")
+
+    ' --- (2) (3) (4) (5): Close 後の状態に遷移 ---
+    '
+    ' Close を撃った時点で WebView2 ランタイム側は登録済みハンドラを Release 済み
+    ' のはず (実機検証で観察、第9.8b の知見「Ctrl_Close の副作用」)。
+    ' その状態で VBA 側も m_pSettings/m_pView2/m_pView/m_pCtrl の Release を撃って、
+    ' VBA 側の AddRef 分を清算する。
+    '
+    ' 順序は Class_Terminate と同じ Settings → View2 → View → Ctrl (子から親へ厳格、
+    ' 第9.9a で m_pView2 を追加、設計原則 43)。
+    If m_pSettings <> 0 Then
+        Debug.Print "Wv2Pane.Ctrl_Close: Releasing m_pSettings = " & m_pSettings
+        ComRelease m_pSettings
+        m_pSettings = 0
+    End If
+    If m_pView3 <> 0 Then
+        ' 第9.10d-2a で追加: View3 は最派生 IF、m_pView2 より先に Release (設計原則 51)。
+        Debug.Print "Wv2Pane.Ctrl_Close: Releasing m_pView3 = " & m_pView3
+        ComRelease m_pView3
+        m_pView3 = 0
+    End If
+    If m_pView2 <> 0 Then
+        ' 第9.9a で追加: View2 は View から QI で取り出した派生 IF、View より先に Release。
+        Debug.Print "Wv2Pane.Ctrl_Close: Releasing m_pView2 = " & m_pView2
+        ComRelease m_pView2
+        m_pView2 = 0
+    End If
+    If m_pView <> 0 Then
+        Debug.Print "Wv2Pane.Ctrl_Close: Releasing m_pView = " & m_pView
+        ComRelease m_pView
+        m_pView = 0
+    End If
+    If m_pCtrl <> 0 Then
+        Debug.Print "Wv2Pane.Ctrl_Close: Releasing m_pCtrl = " & m_pCtrl
+        ComRelease m_pCtrl
+        m_pCtrl = 0
+    End If
+
+    ' (3) 永続ハンドラの token を 0 にクリア:
+    '   WebView2 が Close で勝手に Release を撃っているので、
+    '   ここで remove_xxx を撃つと「既に解放済みのハンドラに remove を撃つ」
+    '   ことになり危険。token を 0 にすることで CleanupAllPersistentHandlers が
+    '   スキップする (token=0 の要素は処理しない実装になっている、第9.4a)。
+    '
+    '   第9.9b: ループ範囲を固定値から LBound/UBound に変更。
+    '   配列上限が HK_DOMContentLoaded に拡張されても自動追従する
+    '   (= CleanupAllPersistentHandlers と同じ「横展開自動化」の流儀)。
+    Dim k As Long
+    For k = LBound(m_persistentHandlers) To UBound(m_persistentHandlers)
+        m_persistentTokens(k) = 0^
+        Set m_persistentHandlers(k) = Nothing
+    Next k
+
+    ' (4) m_closed フラグを立てる
+    m_closed = True
+    m_state = Cs_Failed   ' Close 後は無効状態とみなす
+
+    Ctrl_Close = hr
+End Function
+
+
+' ============================================================
+' 第9.8c 段階で追加: View_ExecuteScript + OnExecuteScriptCompleted
+'                  (案 a = 同時並行 OK、案 α = イベントコールバック方式、
+'                   案 X = 連番 callback ID 返却)
+' ============================================================
+
+
+' --- 任意の JavaScript を WebView2 内で実行 (View vtable 29) ---
+'
+'   引数:
+'     jsCode  : 実行する JS コード (String)
+'
+'   戻り値 (As Long):
+'     >= 1    : 採番された callback ID (正常な呼び出し開始)
+'     <= 0    : エラー (m_pView = 0、Close 済み、dcf 失敗等)
+'                 -1 → m_closed (Close 済み)
+'                 -2 → m_pView = 0 (View 未取得)
+'                 -3 → Acquire 失敗
+'                 -4 → dcf 失敗 (戻り値の絶対値は HRESULT の下位、
+'                       詳細は Debug.Print に出力)
+'
+'   流れ:
+'     1. callback ID を採番 (m_executeScriptCounter を 1 増やす)
+'     2. AcquireHandlerFor(HK_ExecuteScriptCompleted, Me) で新規ハンドラ取得
+'     3. ハンドラに callbackId を設定 (CallbackId プロパティ Let)
+'     4. View::ExecuteScript(jsCode, handler.Slot) を撃つ
+'     5. ローカルの h を Nothing に倒す (= Wv2Pane は ComCallbackHandler を保持しない、
+'        WebView2 ランタイム側だけが AddRef 経由で握る状態にする)
+'     6. callback ID を返却
+'
+'   後続:
+'     WebView2 ランタイムが JS 実行 → 完了時に handler.Invoke を撃つ
+'     → ComCallbackHandler.Invoke[HK_ExecuteScriptCompleted] が走る
+'     → 動的バインディングで Wv2Pane.OnExecuteScriptCompleted が呼ばれる
+'     → WebView2 が handler を Release → refCount=0 → auto-released
+'
+'   同時並行性:
+'     利用者が View_ExecuteScript を 10 回連続で叩いても、それぞれが独立した
+'     スロット + 独立した callback ID を持つので干渉しない (案 a の核心)。
+Public Function View_ExecuteScript(ByVal jsCode As String) As Long
+    If m_closed Then
+        Debug.Print "Wv2Pane.View_ExecuteScript: Close 済みのため拒否"
+        View_ExecuteScript = -1
+        Exit Function
+    End If
+    If m_pView = 0 Then
+        Debug.Print "Wv2Pane.View_ExecuteScript: m_pView が未取得"
+        View_ExecuteScript = -2
+        Exit Function
+    End If
+
+    ' --- 1. callback ID を採番 ---
+    m_executeScriptCounter = m_executeScriptCounter + 1
+    Dim cbid As Long
+    cbid = m_executeScriptCounter
+
+    ' --- 2. ハンドラを Acquire ---
+    Dim h As ComCallbackHandler
+    Set h = AcquireHandlerFor(HK_ExecuteScriptCompleted, Me)
+    If h Is Nothing Then
+        Debug.Print "Wv2Pane.View_ExecuteScript: ハンドラの Acquire 失敗"
+        View_ExecuteScript = -3
+        Exit Function
+    End If
+
+    ' --- 3. callback ID を設定 ---
+    h.callbackId = cbid
+
+    ' --- 4. ExecuteScript を撃つ (vtable 29) ---
+    '   シグネチャ: HRESULT ExecuteScript(LPCWSTR javaScript, IExecuteScriptCompletedHandler*)
+    '
+    '   重要: WebView2 に渡す「ハンドラ COM オブジェクト」のポインタは
+    '   h.Slot そのものではなく、h.Slot + VTABLE_OBJ_OFFSET。
+    '   サンクヘッダの先頭ではなく、サンク内の VTable オブジェクト部分を
+    '   指すアドレスを渡す必要がある (= 既存の add_NavigationStarting 等と
+    '   同じパターン、設計原則 8 系)。
+    '
+    '   これを忘れると WebView2 がデタラメなアドレスを vtable として辿って
+    '   即クラッシュする。
+    Dim pVTableObj As LongPtr
+    pVTableObj = h.Slot + VTABLE_OBJ_OFFSET
+
+    Dim hr As Long
+    hr = dcf(m_pView, 29, "View.ExecuteScript", StrPtr(jsCode), pVTableObj)
+
+    ' --- 5. ローカル参照を破棄 (Wv2Pane は保持しない) ---
+    '   WebView2 が AddRef を撃って自分で保持しているので、こちらは捨てて OK。
+    '   完了通知で m_owner (= Me Wv2Pane) を経由して呼ばれる。
+    Set h = Nothing
+
+    If hr <> 0 Then
+        Debug.Print "Wv2Pane.View_ExecuteScript: dcf 失敗 hr=&H" & Hex(hr) & _
+                    " (callbackId=" & cbid & " は破棄、ハンドラは即解放見込み)"
+        View_ExecuteScript = -4
+        Exit Function
+    End If
+
+    Debug.Print "Wv2Pane.View_ExecuteScript OK: callbackId=" & cbid & _
+                ", jsLen=" & Len(jsCode)
+    View_ExecuteScript = cbid
+End Function
+
+
+' ============================================================
+' View_ExecuteScriptSafe (第9.9c 段階で新規、JS 例外の構造化結果ヘルパー)
+'
+'   ユーザーが指定した JS 式を try-catch で包んでから ExecuteScript に渡す。
+'   完了通知の resultJson が必ず以下のいずれかの構造化 JSON になる:
+'     成功時: {"ok":true, "value":<JS の戻り値>}
+'     失敗時: {"ok":false, "errorName":"<例外名>", "errorMessage":"<メッセージ>",
+'              "stack":"<スタックトレース>"}
+'
+'   これにより、9.8c で判明した「JS 例外時に HRESULT=S_OK + result=null」で
+'   区別不能だった問題を VBA 側で構造的に判別できるようになる。
+'
+'   設計判断 (たーぼーさん合意済み):
+'     ・F1: 名前は View_ExecuteScriptSafe (簡潔、Safe = try-catch で包む)
+'     ・F2: VBA 側では JSON 文字列のまま OnExecuteScriptCompleted に流す
+'           (VBA で JSON パースは 64bit で標準機能なし。利用者が InStr 等で簡易解析)
+'     ・F3: シンプル結合 (ユーザーコードの " エスケープは利用者の責任)
+'
+'   ★ 制約 (利用者への注意) ★
+'     ユーザーコードは「文」ではなく「式」でなければならない。
+'     (= var __r = (USER_CODE) で代入できる単一の式が前提)
+'
+'     具体的に NG / OK の例:
+'       NG: "throw new Error('x')"   ← throw は文 (statement)。式の括弧内に
+'                                       置けないため、wrappedJs がパース段階で
+'                                       構文エラーになり、ExecuteScript は
+'                                       resultJson = "null" を返す
+'                                       (= try-catch には届かない)
+'       OK: "(()=>{ throw new Error('x') })()"
+'                                     ← 即時関数で包めば「式」として扱える
+'                                       (戻り値は throw が走るので決まらないが、
+'                                        catch 節が確実に発火する)
+'       OK: "(function(){ var x=1; return x+2; })()"
+'                                     ← 複数文 + return を即時関数で包む
+'       OK: "nonexistentFunction()"   ← 式 (関数呼び出し)。実行時の
+'                                       ReferenceError は catch で受けられる
+'
+'     ★ 実機検証 (第9.9c) で判明した事実 ★
+'       VBA 標準のドキュメントには書きにくいが、JS の構文エラーは
+'       ExecuteScript の HRESULT=S_OK + result="null" で返ってくる。
+'       実行時例外 (ReferenceError 等) と区別できない。本ヘルパーは
+'       実行時例外には対応するが、構文エラーには対応できない。
+'       (構文エラーを catch する正攻法は eval() を使うことだが過剰)
+'
+'     文字列リテラルに " を含めたいときは利用者側で \" にする
+'       (VBA の "" エスケープではなく JS の \" エスケープ)。
+'
+'   使用例:
+'     cbid = m_pane.View_ExecuteScriptSafe("1 + 2")
+'       → resultJson = "{\"ok\":true,\"value\":3}"
+'     cbid = m_pane.View_ExecuteScriptSafe("(()=>{throw new Error('boom')})()")
+'       → resultJson = "{\"ok\":false,\"errorName\":\"Error\",
+'                         \"errorMessage\":\"boom\",\"stack\":\"...\"}"
+'       ※ "throw new Error('boom')" を直接渡すと resultJson="null" になる
+'         (上の制約参照)
+'     cbid = m_pane.View_ExecuteScriptSafe("nonexistentFunction()")
+'       → resultJson = "{\"ok\":false,\"errorName\":\"ReferenceError\",...}"
+'
+'   戻り値: View_ExecuteScript と同じ (callback ID か負のエラーコード)
+' ============================================================
+Public Function View_ExecuteScriptSafe(ByVal userCode As String) As Long
+    ' ユーザーコードを try-catch で包んで構造化 JSON を返す JS 式に組み立てる。
+    ' 改行は入れず 1 行で組む (ExecuteScript はソースマップが意味を持たないので可読性 < 単純性)。
+    Dim wrappedJs As String
+    wrappedJs = "(function(){try{var __r=(" & userCode & ");" & _
+                "return {ok:true,value:__r};}" & _
+                "catch(e){return {ok:false,errorName:e.name," & _
+                "errorMessage:e.message,stack:e.stack};}})()"
+
+    Debug.Print "Wv2Pane.View_ExecuteScriptSafe: wrappedJsLen=" & Len(wrappedJs)
+    View_ExecuteScriptSafe = View_ExecuteScript(wrappedJs)
+End Function
+
+
+' --- ExecuteScript の完了通知を受け取る (動的バインディング受け取り口) ---
+'
+'   ComCallbackHandler.Handler_Invoke[HK_ExecuteScriptCompleted] から
+'   m_owner.OnExecuteScriptCompleted で呼ばれる。Public でなければ動的バインディングで
+'   呼べないため Public 必須 (= 設計原則 14 系)。
+'
+'   引数:
+'     callbackId  : View_ExecuteScript が返した連番 ID
+'     errorCode   : HRESULT (0 = S_OK)
+'     resultJson  : JS の戻り値を JSON エンコードした文字列
+'                   例:
+'                     ExecuteScript("1 + 2")     → "3"
+'                     ExecuteScript("'foo'")     → "\"foo\""
+'                     ExecuteScript("document.title")
+'                                                → "\"検索 - Microsoft Bing\""
+'                     ExecuteScript("undefined") → "null" (※ undefined は JSON 化で null)
+'                     ExecuteScript("throw 1")   → "" (errorCode が非 0)
+'
+'   案 α 第二実装 (第9.9c で拡張):
+'     1. Wv2Pane 内のログ出力 (= 9.8c 第一実装、リグレッション切り分け用に残す)
+'     2. UserForm1.OnExecuteScriptResult への通知 (= 9.9c で追加)
+'
+'   ★ UserForm1 への通知の設計判断 (案 E1-a-i) ★
+'     Wv2Pane は UserForm1 への参照を **保持しない**。VBA の UserForm は
+'     モジュールレベルでグローバルにアクセスできる (= UserForm1 と書けば
+'     自動生成される) ので、ここで直接 UserForm1.OnExecuteScriptResult を
+'     呼べば循環参照なしで通知できる。
+'
+'     これは「Wv2Pane が UserForm1 の存在を知っている」という意味で
+'     階層的にはやや乱暴 (= 通常は下位が上位を知らない方が綺麗) だが、
+'     9.10 で TabWebView2 が入る際に「結果通知を上位に流す経路」自体が
+'     再設計されるので、9.9c では暫定として直接呼びの形にする。
+'
+'     UserForm1 側に On Error Resume Next 等の防御は入れないので、
+'     UserForm1.OnExecuteScriptResult はエラーを投げない実装にする。
+Public Sub OnExecuteScriptCompleted( _
+    ByVal callbackId As Long, _
+    ByVal errorCode As Long, _
+    ByVal resultJson As String)
+
+    ' --- (1) Wv2Pane 内のログ (9.8c で実装、案 E2-X = 残す) ---
+    Debug.Print "Wv2Pane.OnExecuteScriptCompleted: callbackId=" & callbackId & _
+                ", errorCode=" & errorCode & _
+                ", resultJson=" & resultJson
+
+    ' --- (1b) D-1: 保留テーブルの更新 (論点2・論点5) ---
+    '   EvalSync が待っている callbackId なら結果を書き込む。
+    '   既に破棄済み (タイムアウト後の遅延到着) ならログを残して捨てる。
+    '   EvalSync を経由しない View_ExecuteScript 直呼びの結果はテーブルに
+    '   居ないので、何もせず素通りする。
+    Dim k As String
+    Dim ent As Variant
+    Dim found As Boolean
+
+    k = "cb" & callbackId
+    If Not m_evalPending Is Nothing Then
+        found = False
+        On Error Resume Next
+        ent = m_evalPending(k)
+        found = (Err.Number = 0)
+        Err.Clear
+        On Error GoTo 0
+
+        If found Then
+            If ent(0) = EVAL_DISCARDED Then
+                Debug.Print "Wv2Pane.OnExecuteScriptCompleted: ★破棄済み★ の " & k & _
+                            " に遅延到着したので捨てる (タイムアウト後の完了)"
+                m_evalPending.Remove k
+            Else
+                m_evalPending.Remove k
+                m_evalPending.Add Array(EVAL_DONE, errorCode, resultJson), k
+            End If
+        End If
+    End If
+
+    ' --- (2) UserForm1 への通知 (第9.9c で追加、案 α 第二実装) ---
+    '   VBA のグローバル UserForm 参照を活用 (循環参照なし、案 E1-a-i)。
+    '   UserForm1 が存在しないケース (起動していない、または既に Terminate 済み)
+    '   への配慮: VBA は UserForm1 を参照しただけで自動生成するので、
+    '   起動していなくても呼び出し自体は通る。Terminate 済みの場合は
+    '   再び自動生成 + Initialize される。
+    '   ただし、本来 ExecuteScript の完了通知は Wv2Pane が生きている
+    '   = UserForm1 が表示中であるべき状況でしか飛んでこないので、
+    '   この自動生成パスは現実的には踏まれない。
+    UserForm1.OnExecuteScriptResult callbackId, errorCode, resultJson
+End Sub
+
+
+' ============================================================
+' ★D-1 の本体: EvalSync とその周辺★
+' ============================================================
+
+
+' ============================================================
+' EvalSync (D-1) - JS 式を撃って戻り値を同期的に受け取る
+'
+'   引数:
+'     jsExpr     : 評価する JS ★式★ (文は不可。複数文は即時関数で包む)
+'     timeoutSec : 待ち時間の上限 (既定 5 秒)。0 以下なら既定値に丸める。
+'
+'   戻り値 (As String):
+'     成功 : JS の戻り値を JSON.stringify した文字列。LastEvalOk = True
+'     失敗 : 空文字。理由は LastEvalError に入る。LastEvalOk = False
+'
+'   流れ:
+'     1. 拒否条件を確認 (Close 済み / View 未取得 / ★in-callback★)
+'     2. View_ExecuteScriptSafe で JSON.stringify(式) を撃って callbackId を得る
+'     3. 保留テーブルに待機中エントリを登録
+'     4. DoEvents を回して完了を待つ (WaitPaneReady と同じ形)
+'     5. 完了 → JSON をほどいて返す / 超過 → 破棄済みにして空文字を返す
+'
+'   ★なぜ JSON.stringify で包むのか (事後報告 (e))★
+'     Safe ラッパーは ok と value を返すが、value が数値・オブジェクト・文字列と
+'     型が揺れると VBA 側の取り出しが型ごとに分岐してしまう。JSON.stringify を
+'     通しておけば value は★常に文字列★になり、限定パーサ 1 本で足りる。
+'
+'   ★DoEvents ループ中はブレーク/ステップ実行しないこと (仕様事実 20)★
+' ============================================================
+Public Function EvalSync(ByVal jsExpr As String, _
+                         Optional ByVal timeoutSec As Single = 5) As String
+    Dim res As String
+    Dim cbid As Long
+    Dim k As String
+    Dim t As Single
+    Dim ent As Variant
+    Dim timedOut As Boolean
+    Dim errCode As Long
+    Dim resultJson As String
+    Dim v As String
+    Dim eName As String
+    Dim eMsg As String
+
+    res = ""
+    m_lastEvalOk = False
+    m_lastEvalError = ""
+
+    ' --- 1. 拒否条件 ---
+    If m_closed Then
+        m_lastEvalError = "closed"
+        Debug.Print "Wv2Pane.EvalSync: Close 済みのため拒否"
+        EvalSync = ""
+        Exit Function
+    End If
+
+    If m_pView = 0 Then
+        m_lastEvalError = "no-view"
+        Debug.Print "Wv2Pane.EvalSync: m_pView が未取得"
+        EvalSync = ""
+        Exit Function
+    End If
+
+    If m_inCallback > 0 Then
+        ' ★論点7 のガード★ ここで撃つと仕様事実 14 でタイムアウトまで固まる。
+        m_lastEvalError = "in-callback"
+        Debug.Print "Wv2Pane.EvalSync: ★イベントハンドラ内から呼ばれたので拒否★ " & _
+                    "(深さ=" & m_inCallback & ")。ハンドラ内で JS の結果が要るときは " & _
+                    "SafeTimer で一拍置いてから呼ぶこと (仕様事実 14)。" & _
+                    "ハンドラ外なのにこれが出るならカウンタ残留を疑い " & _
+                    "ResetCallbackGuard を実行すること。"
+        EvalSync = ""
+        Exit Function
+    End If
+
+    If timeoutSec <= 0 Then timeoutSec = EVAL_TIMEOUT_DEFAULT
+    If m_evalPending Is Nothing Then Set m_evalPending = New Collection
+
+    ' --- 2. Safe ラッパー経由で撃つ (論点4) ---
+    cbid = View_ExecuteScriptSafe("JSON.stringify(" & jsExpr & ")")
+    If cbid <= 0 Then
+        m_lastEvalError = "execute-failed(" & cbid & ")"
+        Debug.Print "Wv2Pane.EvalSync: ExecuteScript の発行に失敗 rc=" & cbid
+        EvalSync = ""
+        Exit Function
+    End If
+
+    ' --- 3. 保留テーブルに登録 ---
+    k = "cb" & cbid
+    m_evalPending.Add Array(EVAL_WAITING, 0&, ""), k
+
+    m_evalDepth = m_evalDepth + 1
+    If m_evalDepth > 1 Then
+        Debug.Print "Wv2Pane.EvalSync: ネスト実行 深さ=" & m_evalDepth & " (" & k & ")"
+    End If
+
+    ' --- 4. 完了待ち (WaitPaneReady と同じ形) ---
+    timedOut = False
+    t = Timer
+    Do
+        DoEvents
+        ent = m_evalPending(k)
+        If ent(0) = EVAL_DONE Then Exit Do
+        If (Timer - t) > timeoutSec Then
+            timedOut = True
+            ' ★論点5★ 消さずに破棄済みで残す。遅延到着を捨てるため。
+            m_evalPending.Remove k
+            m_evalPending.Add Array(EVAL_DISCARDED, 0&, ""), k
+            Exit Do
+        End If
+    Loop
+
+    m_evalDepth = m_evalDepth - 1
+
+    If timedOut Then
+        m_lastEvalError = "timeout(" & timeoutSec & "s)"
+        Debug.Print "Wv2Pane.EvalSync: ★タイムアウト★ " & k & " を破棄済みにした " & _
+                    "(遅れて完了通知が来ても捨てる)"
+        EvalSync = ""
+        Exit Function
+    End If
+
+    ' --- 5. 結果をほどく ---
+    errCode = ent(1)
+    resultJson = ent(2)
+    m_evalPending.Remove k
+
+    If errCode <> 0 Then
+        m_lastEvalError = "hresult(&H" & Hex$(errCode) & ")"
+        Debug.Print "Wv2Pane.EvalSync: ExecuteScript が失敗 " & m_lastEvalError
+        EvalSync = ""
+        Exit Function
+    End If
+
+    If InStr(1, resultJson, """ok"":true") > 0 Then
+        If Wv2Json.JsonPickStr(resultJson, "value", v) Then
+            m_lastEvalOk = True
+            res = v
+        Else
+            ' JSON.stringify(undefined) は undefined を返し、外側の stringify で
+            ' value キーごと消える。これは戻り値が undefined だった合図。
+            m_lastEvalOk = True
+            res = "undefined"
+        End If
+
+    ElseIf InStr(1, resultJson, """ok"":false") > 0 Then
+        Wv2Json.JsonPickStr resultJson, "errorName", eName
+        Wv2Json.JsonPickStr resultJson, "errorMessage", eMsg
+        m_lastEvalError = eName & ": " & eMsg
+        Debug.Print "Wv2Pane.EvalSync: JS 例外 " & m_lastEvalError
+
+    Else
+        ' Safe ラッパーは必ず ok を返すので、ここに来るのは JS の構文エラー
+        ' (ExecuteScript が S_OK + null を返すケース。第9.9c の実測)。
+        m_lastEvalError = "syntax-error-or-null (resultJson=" & Left$(resultJson, 60) & ")"
+        Debug.Print "Wv2Pane.EvalSync: " & m_lastEvalError
+    End If
+
+    EvalSync = res
+End Function
+
+
+' ============================================================
+' LastEvalOk / LastEvalError (D-1) - 直前の EvalSync の結果
+'   EvalSync が空文字を返したとき、それが「JS が空文字を返した」のか
+'   「失敗した」のかを区別するために使う。
+' ============================================================
+Public Property Get LastEvalOk() As Boolean
+    LastEvalOk = m_lastEvalOk
+End Property
+
+Public Property Get LastEvalError() As String
+    LastEvalError = m_lastEvalError
+End Property
+
+
+' ============================================================
+' InCallbackDepth / ResetCallbackGuard / Debug_SetInCallback (D-1 論点7)
+'
+'   ResetCallbackGuard:
+'     イベントハンドラが想定外の抜け方をしてカウンタが残った場合の緊急脱出口。
+'     ラッパーが必ず戻すので通常は不要だが、EvalSync が in-callback で
+'     拒否され続けるときはこれを叩く。
+'
+'   Debug_SetInCallback:
+'     ★検証専用★ ガードの発火を Test_D1_Guard から再現するための注入口。
+'     本番コードからは呼ばない (Debug_ 接頭辞は Wv2Browser の Debug_* と同じ規約)。
+' ============================================================
+Public Property Get InCallbackDepth() As Long
+    InCallbackDepth = m_inCallback
+End Property
+
+Public Sub ResetCallbackGuard()
+    Debug.Print "Wv2Pane.ResetCallbackGuard: m_inCallback = " & m_inCallback & " → 0"
+    m_inCallback = 0
+End Sub
+
+Public Sub Debug_SetInCallback(ByVal n As Long)
+    Debug.Print "Wv2Pane.Debug_SetInCallback: " & m_inCallback & " → " & n & " (検証専用)"
+    m_inCallback = n
+End Sub
+
+
+' ============================================================
+' JsQuote (D-2、Friend) - VBA 文字列を JS の文字列リテラルにする
+'
+'   ★VBA のソース上にバックスラッシュ + 二重引用符を書かないための唯一の口★
+'     Wv2Json.JsonEscape が引用符・バックスラッシュ・制御文字を JSON 仕様で
+'     エスケープし、それを Chr$(34) で括る。エスケープ列は★実行時に組み立てられる★
+'     ので、VBA のソースには現れない (プロジェクトの JS-in-VBA 規則に適合)。
+'
+'   例:
+'     JsQuote("input[name='q']")   → "input[name='q']"          (そのまま)
+'     JsQuote("a[title=""x""]")    → 引用符が JSON 仕様でエスケープされた形になる
+'                                    (エスケープ列は★実行時に組み立てられる★)
+'     JsQuote("C:\temp")           → "C:\\temp"
+'
+'   Friend にしているのは Wv2Element.GetAttribute が属性名を包むのに使うため。
+' ============================================================
+Friend Function JsQuote(ByVal s As String) As String
+    JsQuote = Chr$(34) & Wv2Json.JsonEscape(s) & Chr$(34)
+End Function
+
+
+' ============================================================
+' JsRegistryPrologue (D-2、Private) - レジストリの自己生成コード
+'
+'   D-2 の全 JS 式の先頭に置く共通部分 (論点1 案c)。
+'   無ければ作り、変数 R にレジストリを束縛する。
+'   ★ここで作られた場合、世代は新しい値になる★ = 既存ハンドルは全て stale。
+'
+'   ★JS の文字列リテラルはシングルクォート★ (プロジェクト規則)。
+' ============================================================
+Private Function JsRegistryPrologue() As String
+    JsRegistryPrologue = _
+        "if(typeof window.__wv2==='undefined'||!window.__wv2){" & _
+        "window.__wv2={gen:'g'+Date.now()+'-'+Math.random(),els:[]};}" & _
+        "var R=window.__wv2;"
+End Function
+
+
+' ============================================================
+' GetElementById / QuerySelector (D-2) - 要素を 1 個探す
+'
+'   見つかれば Wv2Element を、見つからなければ Nothing を返す (論点4 案a)。
+'
+'   ★Nothing の意味は 2 通り★
+'     Nothing + LastEvalOk = True  … 本当に存在しない (正常)
+'     Nothing + LastEvalOk = False … 失敗。LastEvalError に理由
+'
+'   使用例:
+'     Dim p As Wv2Pane, el As Wv2Element
+'     Set p = UserForm1.GetActivePane
+'     Set el = p.QuerySelector("input[name='q']")
+'     If el Is Nothing Then
+'         Debug.Print "無い (ok=" & p.LastEvalOk & " err=" & p.LastEvalError & ")"
+'     Else
+'         Debug.Print el.TagName & " / " & el.Value
+'     End If
+' ============================================================
+Public Function GetElementById(ByVal elementId As String) As Wv2Element
+    Set GetElementById = FindOne("document.getElementById(" & JsQuote(elementId) & ")", _
+                                 "GetElementById", elementId)
+End Function
+
+Public Function QuerySelector(ByVal selector As String) As Wv2Element
+    Set QuerySelector = FindOne("document.querySelector(" & JsQuote(selector) & ")", _
+                                "QuerySelector", selector)
+End Function
+
+
+' ============================================================
+' FindOne (D-2、Private) - 検索の共通実装
+'
+'   finderExpr : 要素を 1 個返す JS 式 (見つからなければ null を返すこと)
+'   apiName / arg : ログ用
+'
+'   JS 側は次を返す:
+'     {g:'<世代>', found:true,  h:<添字>}   見つかった
+'     {g:'<世代>', found:false, h:0}        見つからなかった
+'
+'   ★h に負値を使わない理由★ Wv2Json.JsonGetNum は負数を扱わない (設計原則64)。
+'     found フラグで分けるので h は常に 0 以上でよい。
+' ============================================================
+Private Function FindOne(ByVal finderExpr As String, _
+                         ByVal apiName As String, _
+                         ByVal arg As String) As Wv2Element
+    Dim js As String
+    Dim res As String
+    Dim gen As String
+    Dim h As Long
+    Dim el As Wv2Element
+
+    Set FindOne = Nothing
+
+    js = "(function(){" & JsRegistryPrologue() & _
+         "var e=" & finderExpr & ";" & _
+         "if(!e){return {g:R.gen,found:false,h:0};}" & _
+         "R.els.push(e);" & _
+         "return {g:R.gen,found:true,h:R.els.length-1};})()"
+
+    res = EvalSync(js)
+
+    If Not m_lastEvalOk Then
+        Debug.Print "Wv2Pane." & apiName & ": 失敗 (" & arg & ") err=" & m_lastEvalError
+        Exit Function
+    End If
+
+    ' 世代キャッシュを更新する (成功したときだけ)
+    If Wv2Json.JsonPickStr(res, "g", gen) Then
+        m_domGen = gen
+    End If
+
+    If InStr(1, res, """found"":true") = 0 Then
+        ' 見つからなかった。★これは正常★ なので m_lastEvalOk は True のまま。
+        Debug.Print "Wv2Pane." & apiName & ": 見つからない (" & arg & ")"
+        Exit Function
+    End If
+
+    h = Wv2Json.JsonGetNum(res, "h")
+
+    Set el = New Wv2Element
+    el.InitElement Me, h, gen
+    Set FindOne = el
+
+    Debug.Print "Wv2Pane." & apiName & ": 取得 (" & arg & ") handle=" & h & " gen=" & gen
+End Function
+
+
+' ============================================================
+' CurrentDomGen (D-2) - 世代キャッシュの読み取り口
+'
+'   ★これは権威ではない★ 「JS から最後に聞いた値」でしかない。
+'   stale 判定の高速パスと、検証・デバッグ表示に使う。
+' ============================================================
+Public Property Get CurrentDomGen() As String
+    CurrentDomGen = m_domGen
+End Property
+
+
+' ============================================================
+' ClearElementRegistry (D-2、論点3) - レジストリを手動で作り直す
+'
+'   JS 側のレジストリを新しい世代で作り直す。
+'   ★既存の Wv2Element はすべて stale になる。★
+'
+'   同一ページ内で大量に検索して els が伸びたときの掃除用。通常は不要
+'   (ページ遷移でまるごと消えるため)。
+'
+'   戻り値: True = 成功。False = 失敗 (理由は LastEvalError)
+' ============================================================
+Public Function ClearElementRegistry() As Boolean
+    Dim js As String
+    Dim res As String
+    Dim gen As String
+
+    js = "(function(){" & _
+         "window.__wv2={gen:'g'+Date.now()+'-'+Math.random(),els:[]};" & _
+         "return window.__wv2.gen;})()"
+
+    res = EvalSync(js)
+
+    If Not m_lastEvalOk Then
+        Debug.Print "Wv2Pane.ClearElementRegistry: 失敗 err=" & m_lastEvalError
+        ClearElementRegistry = False
+        Exit Function
+    End If
+
+    gen = Wv2Json.JsonUnescape(res)
+    m_domGen = gen
+    Debug.Print "Wv2Pane.ClearElementRegistry: レジストリを作り直した (新しい世代=" & gen & ")"
+    ClearElementRegistry = True
+End Function
+
+
+' ============================================================
+' Elem_Read (D-2、Friend) - Wv2Element のプロパティ 1 個を読む
+'
+'   引数:
+'     elemHandle : JS 側 R.els[] の添字
+'     elemGen    : 要素を取得したときの世代
+'     valueExpr  : 変数 e (対象要素) を使う JS 式。例 "e.innerText"
+'     outVal     : 読み取れた値 (エスケープ復号済み)
+'     outStatus  : 失敗理由。成功時は空文字
+'   戻り値:
+'     True  = 読み取り成功 (値が null / undefined だった場合も True。outVal は空文字)
+'     False = stale または失敗。理由は outStatus
+'
+'   JS 側は次を返す:
+'     {s:'gen', g:'<世代>'}                 世代が違う = stale
+'     {s:'nil', g:'<世代>'}                 添字に要素が無い = stale 扱い
+'     {s:'ok',  g:'<世代>', has:false, v:''} 値が null / undefined
+'     {s:'ok',  g:'<世代>', has:true,  v:'<値>'}
+'
+'   ★値は必ず String(x) で文字列に正規化してから返す★
+'     JSON の型のまま返すと VBA 側で型ごとの取り出しが要る。読み取り API の
+'     戻り値は全て String なので、JS 側で寄せた方が単純 (仕様事実31 の undefined
+'     消失問題も踏まない)。
+' ============================================================
+Friend Function Elem_Read(ByVal elemHandle As Long, _
+                          ByVal elemGen As String, _
+                          ByVal valueExpr As String, _
+                          ByRef outVal As String, _
+                          ByRef outStatus As String) As Boolean
+    Dim js As String
+    Dim res As String
+    Dim gen As String
+
+    outVal = ""
+    outStatus = ""
+    Elem_Read = False
+
+    ' --- 高速パス: 手元の世代がキャッシュと違えば、往復せずに stale と確定できる ---
+    '     (キャッシュが古い場合は一致側に倒れて必ず問い合わせるので、誤判定はしない)
+    If Len(m_domGen) > 0 Then
+        If elemGen <> m_domGen Then
+            outStatus = "stale"
+            Exit Function
+        End If
+    End If
+
+    js = "(function(){" & JsRegistryPrologue() & _
+         "if(R.gen!==" & JsQuote(elemGen) & "){return {s:'gen',g:R.gen};}" & _
+         "var e=R.els[" & CStr(elemHandle) & "];" & _
+         "if(!e){return {s:'nil',g:R.gen};}" & _
+         "var x=" & valueExpr & ";" & _
+         "if(x===null||x===undefined){return {s:'ok',g:R.gen,has:false,v:''};}" & _
+         "return {s:'ok',g:R.gen,has:true,v:String(x)};})()"
+
+    res = EvalSync(js)
+
+    If Not m_lastEvalOk Then
+        outStatus = m_lastEvalError
+        Exit Function
+    End If
+
+    If Wv2Json.JsonPickStr(res, "g", gen) Then
+        m_domGen = gen
+    End If
+
+    If InStr(1, res, """s"":""ok""") = 0 Then
+        outStatus = "stale"
+        Exit Function
+    End If
+
+    If InStr(1, res, """has"":true") = 0 Then
+        ' 値が null / undefined。★エラーではない★ (属性が無い / value を持たない要素)
+        outVal = ""
+        Elem_Read = True
+        Exit Function
+    End If
+
+    Wv2Json.JsonPickStr res, "v", outVal
+    Elem_Read = True
+End Function
+
+
+' ============================================================
+' Elem_CheckStale (D-2、Friend) - ハンドルが無効になっていないか
+'
+'   戻り値: True = stale (もう使えない)
+'   outStatus: 判定に失敗した場合の理由。成功時は空文字
+'
+'   ★判定できなかった場合も True (安全側) を返す。★
+'     区別が必要な呼び出し側は outStatus を見ること。
+' ============================================================
+Friend Function Elem_CheckStale(ByVal elemHandle As Long, _
+                                ByVal elemGen As String, _
+                                ByRef outStatus As String) As Boolean
+    Dim js As String
+    Dim res As String
+    Dim gen As String
+
+    outStatus = ""
+    Elem_CheckStale = True
+
+    ' 高速パス (Elem_Read と同じ理屈)
+    If Len(m_domGen) > 0 Then
+        If elemGen <> m_domGen Then Exit Function
+    End If
+
+    js = "(function(){" & JsRegistryPrologue() & _
+         "var ok=(R.gen===" & JsQuote(elemGen) & ")&&(!!R.els[" & CStr(elemHandle) & "]);" & _
+         "return {s:ok?'ok':'stale',g:R.gen};})()"
+
+    res = EvalSync(js)
+
+    If Not m_lastEvalOk Then
+        outStatus = m_lastEvalError
+        Exit Function
+    End If
+
+    If Wv2Json.JsonPickStr(res, "g", gen) Then
+        m_domGen = gen
+    End If
+
+    Elem_CheckStale = (InStr(1, res, """s"":""ok""") = 0)
+End Function
+
+
