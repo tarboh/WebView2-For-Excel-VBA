@@ -8,6 +8,19 @@ Attribute VB_Creatable = False
 Attribute VB_PredeclaredId = False
 Attribute VB_Exposed = False
 ''''''''''''''''''''''''''''''''''
+' --- Wv2Pane.cls  K-1 段階 (デバッグログのファイル出力への移行) ---
+'
+'   K-1 の変更は ★ログの出し先だけ★ で、ロジックは 1 行も変えていない。
+'     EvalSync (9 本) と ClearElementRegistry (2 本) の Debug.Print を
+'     Wv2Log.LogE / LogW / LogD に置き換えた。
+'
+'   Wv2Log は内部で Debug.Print も撃つので、イミディエイトの見え方は変わらない
+'   (Wv2Log.LogEcho = False で切れる)。ログは %APPDATA%\Wv2Browser\logs\ に
+'   起動ごとの 1 ファイルとして残る。パスは ?Wv2Log.LogPath で分かる。
+'
+'   ★他のプロシージャの Debug.Print はまだ手つかず★ 段階的に移行する
+'   (既存の全 Debug.Print を一度に書き換えない、が K-1 の合意)。
+''''''''''''''''''''''''''''''''''
 ' --- Wv2Pane.cls  D-2 段階 (要素レジストリ + Wv2Element の読み取り) ---
 '
 '   D-2 のスコープ (JS 側の要素レジストリと、要素ハンドルの読み取り):
@@ -3541,14 +3554,14 @@ Public Function EvalSync(ByVal jsExpr As String, _
     ' --- 1. 拒否条件 ---
     If m_closed Then
         m_lastEvalError = "closed"
-        Debug.Print "Wv2Pane.EvalSync: Close 済みのため拒否"
+        Wv2Log.LogW "Wv2Pane.EvalSync: Close 済みのため拒否"
         EvalSync = ""
         Exit Function
     End If
 
     If m_pView = 0 Then
         m_lastEvalError = "no-view"
-        Debug.Print "Wv2Pane.EvalSync: m_pView が未取得"
+        Wv2Log.LogW "Wv2Pane.EvalSync: m_pView が未取得"
         EvalSync = ""
         Exit Function
     End If
@@ -3556,7 +3569,7 @@ Public Function EvalSync(ByVal jsExpr As String, _
     If m_inCallback > 0 Then
         ' ★論点7 のガード★ ここで撃つと仕様事実 14 でタイムアウトまで固まる。
         m_lastEvalError = "in-callback"
-        Debug.Print "Wv2Pane.EvalSync: ★イベントハンドラ内から呼ばれたので拒否★ " & _
+        Wv2Log.LogW "Wv2Pane.EvalSync: ★イベントハンドラ内から呼ばれたので拒否★ " & _
                     "(深さ=" & m_inCallback & ")。ハンドラ内で JS の結果が要るときは " & _
                     "SafeTimer で一拍置いてから呼ぶこと (仕様事実 14)。" & _
                     "ハンドラ外なのにこれが出るならカウンタ残留を疑い " & _
@@ -3572,7 +3585,7 @@ Public Function EvalSync(ByVal jsExpr As String, _
     cbid = View_ExecuteScriptSafe("JSON.stringify(" & jsExpr & ")")
     If cbid <= 0 Then
         m_lastEvalError = "execute-failed(" & cbid & ")"
-        Debug.Print "Wv2Pane.EvalSync: ExecuteScript の発行に失敗 rc=" & cbid
+        Wv2Log.LogE "Wv2Pane.EvalSync: ExecuteScript の発行に失敗 rc=" & cbid
         EvalSync = ""
         Exit Function
     End If
@@ -3583,7 +3596,7 @@ Public Function EvalSync(ByVal jsExpr As String, _
 
     m_evalDepth = m_evalDepth + 1
     If m_evalDepth > 1 Then
-        Debug.Print "Wv2Pane.EvalSync: ネスト実行 深さ=" & m_evalDepth & " (" & k & ")"
+        Wv2Log.LogD "Wv2Pane.EvalSync: ネスト実行 深さ=" & m_evalDepth & " (" & k & ")"
     End If
 
     ' --- 4. 完了待ち (WaitPaneReady と同じ形) ---
@@ -3606,7 +3619,7 @@ Public Function EvalSync(ByVal jsExpr As String, _
 
     If timedOut Then
         m_lastEvalError = "timeout(" & timeoutSec & "s)"
-        Debug.Print "Wv2Pane.EvalSync: ★タイムアウト★ " & k & " を破棄済みにした " & _
+        Wv2Log.LogE "Wv2Pane.EvalSync: ★タイムアウト★ " & k & " を破棄済みにした " & _
                     "(遅れて完了通知が来ても捨てる)"
         EvalSync = ""
         Exit Function
@@ -3619,7 +3632,7 @@ Public Function EvalSync(ByVal jsExpr As String, _
 
     If errCode <> 0 Then
         m_lastEvalError = "hresult(&H" & Hex$(errCode) & ")"
-        Debug.Print "Wv2Pane.EvalSync: ExecuteScript が失敗 " & m_lastEvalError
+        Wv2Log.LogE "Wv2Pane.EvalSync: ExecuteScript が失敗 " & m_lastEvalError
         EvalSync = ""
         Exit Function
     End If
@@ -3639,13 +3652,13 @@ Public Function EvalSync(ByVal jsExpr As String, _
         Wv2Json.JsonPickStr resultJson, "errorName", eName
         Wv2Json.JsonPickStr resultJson, "errorMessage", eMsg
         m_lastEvalError = eName & ": " & eMsg
-        Debug.Print "Wv2Pane.EvalSync: JS 例外 " & m_lastEvalError
+        Wv2Log.LogW "Wv2Pane.EvalSync: JS 例外 " & m_lastEvalError
 
     Else
         ' Safe ラッパーは必ず ok を返すので、ここに来るのは JS の構文エラー
         ' (ExecuteScript が S_OK + null を返すケース。第9.9c の実測)。
         m_lastEvalError = "syntax-error-or-null (resultJson=" & Left$(resultJson, 60) & ")"
-        Debug.Print "Wv2Pane.EvalSync: " & m_lastEvalError
+        Wv2Log.LogE "Wv2Pane.EvalSync: " & m_lastEvalError
     End If
 
     EvalSync = res
@@ -3853,14 +3866,14 @@ Public Function ClearElementRegistry() As Boolean
     res = EvalSync(js)
 
     If Not m_lastEvalOk Then
-        Debug.Print "Wv2Pane.ClearElementRegistry: 失敗 err=" & m_lastEvalError
+        Wv2Log.LogE "Wv2Pane.ClearElementRegistry: 失敗 err=" & m_lastEvalError
         ClearElementRegistry = False
         Exit Function
     End If
 
     gen = Wv2Json.JsonUnescape(res)
     m_domGen = gen
-    Debug.Print "Wv2Pane.ClearElementRegistry: レジストリを作り直した (新しい世代=" & gen & ")"
+    Wv2Log.LogD "Wv2Pane.ClearElementRegistry: レジストリを作り直した (新しい世代=" & gen & ")"
     ClearElementRegistry = True
 End Function
 
@@ -3988,5 +4001,4 @@ Friend Function Elem_CheckStale(ByVal elemHandle As Long, _
 
     Elem_CheckStale = (InStr(1, res, """s"":""ok""") = 0)
 End Function
-
 

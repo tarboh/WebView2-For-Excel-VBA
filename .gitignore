@@ -10,3 +10,7 @@ tools/tmp/
 
 # OneDrive の競合コピー
 *競合コピー*
+
+# Python
+__pycache__/
+*.pyc

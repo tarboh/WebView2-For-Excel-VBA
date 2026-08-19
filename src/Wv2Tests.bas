@@ -2847,3 +2847,172 @@ Public Sub Test_D2_Help()
 End Sub
 
 
+' ============================================================
+' Test_K1_Log  (K-1 段階)
+'
+'   Wv2Log をイミディエイトから 1 発で検証する。
+'   ブラウザを起動していなくても動く (WebView2 に依存しない)。
+' ============================================================
+Public Sub Test_K1_Log()
+    Dim k1Total As Long
+    Dim k1Pass As Long
+
+    Debug.Print String$(64, "=")
+    Debug.Print "K-1 検証: Wv2Log (デバッグログのファイル出力)"
+    Debug.Print String$(64, "=")
+
+    ' --- 準備: 新しいログを開く ---
+    Wv2Log.LogLevel = LOG_DEBUG
+    Wv2Log.LogEcho = True
+    Wv2Log.LogStart
+
+    Dim k1Path As String
+    k1Path = Wv2Log.LogPath
+    Debug.Print "  ログ: " & k1Path
+    Debug.Print ""
+
+    K1Bool "(1) LogPath が取れる", (Len(k1Path) > 0), k1Total, k1Pass
+    K1Bool "(2) ファイルが実在する", (Len(Dir(k1Path)) > 0), k1Total, k1Pass
+
+    ' --- 4 レベルを書く ---
+    Wv2Log.LogE "K-1: ERROR の行"
+    Wv2Log.LogW "K-1: WARN の行"
+    Wv2Log.LogI "K-1: INFO の行"
+    Wv2Log.LogD "K-1: DEBUG の行"
+
+    ' --- しきい値で切れるか ---
+    Wv2Log.LogLevel = LOG_WARN
+    Wv2Log.LogI "K-1: この INFO は出ないはず"
+    Wv2Log.LogD "K-1: この DEBUG は出ないはず"
+    Wv2Log.LogLevel = LOG_DEBUG
+    Wv2Log.LogD "K-1: しきい値を戻した"
+
+    ' --- 実行時に組み立てた Unicode (ソースは CP932 のまま) ---
+    Dim k1Emoji As String
+    k1Emoji = ChrW$(&HD83D&) & ChrW$(&HDE00&)
+    Wv2Log.LogD "K-1: サロゲートペア [" & k1Emoji & "]"
+    Wv2Log.LogD "K-1: 日本語と記号 ★ ← → ① ～ ―"
+
+    ' --- 再入ガード: 積んで、あとでまとめて流れるか ---
+    Wv2Log.Debug_SetLogDepth 1
+    Wv2Log.LogD "K-1: 再入中の 1 行目"
+    Wv2Log.LogD "K-1: 再入中の 2 行目"
+    Wv2Log.Debug_SetLogDepth 0
+    Wv2Log.LogD "K-1: 再入から抜けた"
+
+    Wv2Log.LogFlush
+
+    ' --- 読み戻して照合 ---
+    Dim k1Text As String
+    k1Text = K1ReadUtf8(k1Path)
+    Debug.Print ""
+    K1Bool "(3) 読み戻せた", (Len(k1Text) > 0), k1Total, k1Pass
+    K1Bool "(4) ERROR の行がある", (InStr(k1Text, "K-1: ERROR の行") > 0), k1Total, k1Pass
+    K1Bool "(5) WARN の行がある", (InStr(k1Text, "K-1: WARN の行") > 0), k1Total, k1Pass
+    K1Bool "(6) INFO の行がある", (InStr(k1Text, "K-1: INFO の行") > 0), k1Total, k1Pass
+    K1Bool "(7) DEBUG の行がある", (InStr(k1Text, "K-1: DEBUG の行") > 0), k1Total, k1Pass
+    K1Bool "(8) しきい値で切った INFO が無い", (InStr(k1Text, "この INFO は出ないはず") = 0), k1Total, k1Pass
+    K1Bool "(9) しきい値で切った DEBUG が無い", (InStr(k1Text, "この DEBUG は出ないはず") = 0), k1Total, k1Pass
+    K1Bool "(10) サロゲートペアが無傷", (InStr(k1Text, k1Emoji) > 0), k1Total, k1Pass
+    K1Bool "(11) 日本語が無傷", (InStr(k1Text, "日本語と記号 ★ ← → ① ～ ―") > 0), k1Total, k1Pass
+    K1Bool "(12) 再入中の 2 行が後から流れている", _
+           (InStr(k1Text, "K-1: 再入中の 1 行目") > InStr(k1Text, "K-1: 再入から抜けた")), _
+           k1Total, k1Pass
+
+    ' --- 連番が飛んでいないか (K-1 の動機そのもの) ---
+    Dim k1Lines As Variant
+    Dim k1Idx As Long
+    Dim k1Num As Long
+    Dim k1Prev As Long
+    Dim k1Ok As Boolean
+    ' ★順序ではなく欠番の有無を見る★
+    '   再入ガードの検証で保留キューを後から流すため、ファイル上の順序は
+    '   わざと入れ替わる。K-1 の動機は「流れたことに気づけない」ことなので、
+    '   見るべきは連番の抜けであって並び順ではない。
+    Dim k1Seq As Long
+    k1Lines = Split(k1Text, vbCrLf)
+    k1Prev = 0
+    k1Seq = 0
+    For k1Idx = LBound(k1Lines) To UBound(k1Lines)
+        If Len(k1Lines(k1Idx)) >= 6 Then
+            If IsNumeric(Left$(k1Lines(k1Idx), 6)) Then
+                k1Num = CLng(Left$(k1Lines(k1Idx), 6))
+                k1Seq = k1Seq + 1
+                If k1Num > k1Prev Then k1Prev = k1Num
+            End If
+        End If
+    Next k1Idx
+    k1Ok = (k1Seq = k1Prev) And (k1Seq > 0)
+    K1Bool "(13) 連番に欠番が無い (" & k1Seq & " 行 / 最大 " & k1Prev & ")", _
+           k1Ok, k1Total, k1Pass
+
+    Debug.Print ""
+    Debug.Print "  結果: " & k1Pass & " / " & k1Total & " 合格"
+    If k1Pass = k1Total Then
+        Debug.Print "  ★K-1 合格★"
+    Else
+        Debug.Print "  ★不合格あり。上の [FAIL] を見ること★"
+    End If
+    Debug.Print "  ログの実物: " & k1Path
+    Debug.Print String$(64, "=")
+End Sub
+
+
+Private Sub K1Bool(ByVal label As String, ByVal cond As Boolean, _
+                   ByRef k1Total As Long, ByRef k1Pass As Long)
+    k1Total = k1Total + 1
+    If cond Then
+        k1Pass = k1Pass + 1
+        Debug.Print "  [OK  ] " & label
+    Else
+        Debug.Print "  [FAIL] " & label
+    End If
+End Sub
+
+
+' UTF-8 / BOM なしのファイルを読む (検証専用。ADODB でよい)
+Private Function K1ReadUtf8(ByVal k1Path As String) As String
+    On Error GoTo eh
+    Dim k1Stream As Object
+    Set k1Stream = CreateObject("ADODB.Stream")
+    k1Stream.Type = 2
+    k1Stream.Charset = "UTF-8"
+    k1Stream.Open
+    k1Stream.LoadFromFile k1Path
+    K1ReadUtf8 = k1Stream.ReadText
+    k1Stream.Close
+    Exit Function
+eh:
+    Debug.Print "K1ReadUtf8: 失敗 (" & Err.Number & ") " & Err.Description
+End Function
+
+
+' ============================================================
+' Test_K1_Help  (K-1 段階)
+' ============================================================
+Public Sub Test_K1_Help()
+    Debug.Print String$(64, "=")
+    Debug.Print "K-1 (デバッグログのファイル出力) の使い方"
+    Debug.Print String$(64, "=")
+    Debug.Print ""
+    Debug.Print "  1) Test_K1_Log      … 自動検証を 1 発で回す"
+    Debug.Print "  2) ?Wv2Log.LogPath  … 今のログファイルの場所"
+    Debug.Print "  3) Wv2Log.LogStart  … 新しいログに切り替える (検証の仕切り直し)"
+    Debug.Print ""
+    Debug.Print "  ★D 軸の検証手順★"
+    Debug.Print "    Wv2Log.LogStart を打ってから Test_D2_Find を回すと、"
+    Debug.Print "    そのテスト 1 回分だけが 1 ファイルに閉じる。"
+    Debug.Print "    イミディエイトが流れても、ファイルには全部残っている。"
+    Debug.Print ""
+    Debug.Print "  ★行頭の 6 桁は連番★ 欠番があればログが落ちている。"
+    Debug.Print "    これが K-1 を作った動機 (流れたことに気づけないのが危険)。"
+    Debug.Print ""
+    Debug.Print "  設定:"
+    Debug.Print "    Wv2Log.LogLevel = LOG_ERROR / LOG_WARN / LOG_INFO / LOG_DEBUG"
+    Debug.Print "    Wv2Log.LogEcho  = False   … イミディエイトへの併記を止める"
+    Debug.Print ""
+    Debug.Print "  ログは起動ごとに 1 本。20 本を超えると古いものから消える。"
+    Debug.Print "  置き場所: %APPDATA%\Wv2Browser\logs\"
+    Debug.Print String$(64, "=")
+End Sub
+
