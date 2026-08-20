@@ -140,6 +140,23 @@ def check_file(path):
     if buf:
         logical.append((buf_line, buf, ""))
 
+    # --- メンバー属性行が宣言から引き離されていないか ---
+    #   ★Attribute m_foo.VB_VarHelpID = -1 は「宣言行の直後」でなければならない★
+    #   間に行を差し込むと VBE が属性として吸収できず、コードとして露出する。
+    #   K-2 でパッチが宣言と属性の間に挿入してしまい、これを踏みかけた。
+    #   Export したファイルを編集するときの定番の事故なので常設で見る。
+    prev_code = ""
+    for i, code, line in logical:
+        s = code.strip()
+        m = re.match(r'Attribute\s+(\w+)\.\w+\s*=', s)
+        if m:
+            name = m.group(1)
+            if not re.search(r'\b' + re.escape(name) + r'\b', prev_code):
+                bad(i, "メンバー属性 %s が宣言行の直後にない (VBE がコードとして扱う)"
+                    % name, line)
+        if s:
+            prev_code = s
+
     stack = []          # (kind, lineno)
     for i, code, line in logical:
 

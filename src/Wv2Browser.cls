@@ -8,6 +8,36 @@ Attribute VB_Creatable = False
 Attribute VB_PredeclaredId = False
 Attribute VB_Exposed = False
 ''''''''''''''''''''''''''''''''''
+' --- Wv2Browser.cls  K-2 段階 (設定タブが検索で潰れるバグの修正) ---
+'
+'   ★症状★ 設定タブがアクティブな状態でアドレスバーに検索語を入れると、
+'     設定タブ自身が検索結果へ遷移して設定画面が消える。さらに歯車を押しても
+'     「既に設定タブがある」と判定されて新しい設定タブが開かない。
+'
+'   ★真因★ IsSettings は生成時に立てたきり、遷移しても False に戻らなかった。
+'     フラグが実態を反映していないので、OpenSettingsTab の重複判定が
+'     「元・設定タブ」を掴んでいた。
+'     ★アドレスバーだけの問題ではない★ リンク・戻る・リロード・JS 由来の遷移でも
+'     同じことが起きる。だから NavigateActive を塞ぐ対症療法では直らない。
+'
+'   ★修正 (A-2)★ 判定をフラグから ★ページ自身に聞く★ 方式へ変える。
+'     設定画面の HTML に window.__wv2Settings = true を埋め、OpenSettingsTab は
+'     各タブへ EvalSync (D-1) を撃って「今そのタブが設定画面を表示しているか」を
+'     直接尋ねる。アドレスの表現にも遷移経路にも依存せず、戻るで設定画面へ
+'     復帰したタブも正しく認識できる。
+'     ★判定の権威を、状態を実際に持っている側に置く (設計原則91)★
+'
+'   ★修正 (B-1)★ 判定を正確にしても、戻る操作は OpenSettingsTab を通らないので
+'     設定ビューが 2 枚並ぶことはありうる。その場合に値が食い違わないよう、
+'     ★検索エンジンが変わったら設定画面を表示中の全タブへ現在値を押し込む★
+'     (設計原則60 の全体同期そのまま)。
+'     ★仕様事実27 のデッドロックを避けるため SafeTimer で一拍置く★
+'     SetEngine は hostObjects 経由 (JS がブロック中) に呼ばれるので、
+'     その場で EvalSync を撃ってはいけない。
+'
+'   ★IsSettings フラグは残してあるが、もう重複判定には使っていない★
+'     「生成時に設定タブとして作られた」という由来の記録でしかない。
+''''''''''''''''''''''''''''''''''
 ' --- Wv2Browser.cls  第9.29 段階 (設定画面にカスタム検索 URL 入力欄 + 予備予約の掃除) ---
 '
 '   第9.29 のスコープ (本体は Wv2SettingsBridge 側。ここは UI と小掃除):
@@ -557,6 +587,13 @@ Private m_pendingUrls As Collection
 '     設定タブが生きている間 WebView2 から参照されるので Browser も 1 本持つ。
 Private WithEvents m_settingsTimer As SafeTimer
 Attribute m_settingsTimer.VB_VarHelpID = -1
+
+' --- K-2: 設定ビューの全体同期 (設計原則60) ---
+'   検索エンジンが変わったら、設定画面を表示中の全タブへ現在値を押し込む。
+'   ★SafeTimer を挟むのは仕様事実27 のデッドロック回避★
+Private WithEvents m_syncTimer As SafeTimer
+Attribute m_syncTimer.VB_VarHelpID = -1
+Private m_syncPending As Boolean
 Private m_settingsPending As Boolean
 Private m_settingsBridge As Wv2SettingsBridge
 
@@ -1768,8 +1805,11 @@ Public Property Let SearchEngine(ByVal template As String)
         Debug.Print "Wv2Browser.SearchEngine: 空テンプレートのため既定 (Google) にフォールバック"
     Else
         m_searchTemplate = t
-        Debug.Print "Wv2Browser.SearchEngine: 検索テンプレートを設定 = " & t
+        Wv2Log.LogD "Wv2Browser.SearchEngine: 検索テンプレートを設定 = " & t
     End If
+
+    ' --- K-2: 設定画面を表示中の全タブへ反映を予約する ---
+    RequestSettingsSyncAsync
 End Property
 
 
@@ -1927,6 +1967,124 @@ End Sub
 
 
 ' ============================================================
+' IsSettingsView (K-2)
+'
+'   その Pane が ★今★ 設定画面を表示しているかを、ページ自身に尋ねる。
+'   設定画面の HTML には window.__wv2Settings = true が埋めてある。
+'
+'   ★戻り値の読み方は Elem_CheckStale と同じ流儀★ オブジェクトを返させて
+'     InStr で読む。EvalSync が返すのは値の JSON テキストなので、
+'     真偽値をそのまま比較するより取り違えが起きにくい。
+'
+'   ★判定できないときは False (安全側)★ 読み込み中・Close 済み・in-callback は
+'     すべて「設定画面ではない」と扱う。取りこぼしても新しい設定タブが開くだけで、
+'     誤って別ページのタブを掴むより害が小さい (設計原則93 の LastEvalOk で区別)。
+' ============================================================
+Private Function IsSettingsView(ByVal pane As Wv2Pane) As Boolean
+    If pane Is Nothing Then Exit Function
+
+    Dim js As String
+    Dim res As String
+    js = "(function(){try{return {s:(window.__wv2Settings===true)?'yes':'no'};}" & _
+         "catch(e){return {s:'no'};}})()"
+
+    res = pane.EvalSync(js, 2)
+
+    If Not pane.LastEvalOk Then
+        Wv2Log.LogD "Wv2Browser.IsSettingsView: 判定できないので設定画面ではないと扱う (" & _
+                    pane.LastEvalError & ")"
+        Exit Function
+    End If
+
+    IsSettingsView = (InStr(1, res, """s"":""yes""") > 0)
+End Function
+
+
+' ============================================================
+' RequestSettingsSyncAsync / m_syncTimer_TimerCall (K-2)
+'
+'   ★なぜ一拍置くのか★ SetEngine / SetCustomEngine は hostObjects 経由
+'   (JS→VBA) で呼ばれる。仕様事実27 により、その間 ★呼び出し元ペインの JS は
+'   完全にブロックされている★。ここから EvalSync を撃つと完了通知が返らず
+'   タイムアウトまで固まる。SafeTimer でハンドラの外へ出してから撃つ
+'   (RequestSettingsTabAsync / RequestNewTabAsync と同じ型)。
+' ============================================================
+Public Sub RequestSettingsSyncAsync()
+    m_syncPending = True
+
+    Set m_syncTimer = New SafeTimer
+    m_syncTimer.StartTimer 1
+End Sub
+
+
+Private Sub m_syncTimer_TimerCall(ByVal wTime As Long, ByRef varData As Variant)
+    ' ワンショット化: 繰り返し発火を止める
+    If Not m_syncTimer Is Nothing Then m_syncTimer.StartTimer 0
+
+    If Not m_syncPending Then Exit Sub
+    m_syncPending = False
+
+    SyncSettingsViewsNow
+End Sub
+
+
+' ============================================================
+' SyncSettingsViewsNow (K-2、設定ビューの全体同期)
+'
+'   設定画面を表示中の全タブへ、現在のエンジン名を押し込む。
+'   ★設計原則60 (VBA→JS は全体同期)★ 差分を送らず、現在値をそのまま渡す。
+'
+'   これが要るのは、判定を正確にしても設定ビューが 2 枚並びうるため。
+'   戻る操作は OpenSettingsTab を通らないので、開くときの判定では塞げない。
+'   並んでも食い違わないようにするのがこの同期の役目。
+'
+'   ★カスタム入力欄の中身は上書きしない★ ユーザーが入力途中かもしれないため。
+'     選択状態とプレビューだけを合わせる。
+' ============================================================
+Private Sub SyncSettingsViewsNow()
+    If m_tabs Is Nothing Then Exit Sub
+    If m_tabs.count = 0 Then Exit Sub
+
+    ' ブリッジが無いなら設定画面は一度も開かれていない
+    If m_settingsBridge Is Nothing Then Exit Sub
+
+    Dim syncName As String
+    syncName = m_settingsBridge.GetEngine()
+    If Len(syncName) = 0 Then Exit Sub
+
+    Dim syncIdx As Long
+    Dim syncPane As Wv2Pane
+    Dim syncJs As String
+    Dim res As String
+    Dim hit As Long
+
+    For syncIdx = 1 To m_tabs.count
+        Set syncPane = m_tabs.Item(syncIdx)
+        If IsSettingsView(syncPane) Then
+            syncJs = "(function(){try{return {r:applyFromHost(" & _
+                     syncPane.JsQuote(syncName) & ")};}catch(e){return {r:'err'};}})()"
+            res = syncPane.EvalSync(syncJs, 2)
+            If syncPane.LastEvalOk Then
+                If InStr(1, res, """r"":""ok""") > 0 Then
+                    hit = hit + 1
+                Else
+                    Wv2Log.LogW "Wv2Browser.SyncSettingsViewsNow: index " & syncIdx & _
+                                " の適用が失敗 (" & res & ")"
+                End If
+            Else
+                Wv2Log.LogW "Wv2Browser.SyncSettingsViewsNow: index " & syncIdx & _
+                            " へ届かなかった (" & syncPane.LastEvalError & ")"
+            End If
+        End If
+    Next syncIdx
+
+    If hit > 0 Then
+        Wv2Log.LogD "Wv2Browser.SyncSettingsViewsNow: 設定ビュー " & hit & _
+                    " 枚へ " & syncName & " を反映した"
+    End If
+End Sub
+
+' ============================================================
 ' OpenSettingsTab (第9.18、設定タブを開いてブリッジを attach する)
 '
 '   手順 (順序A: attach してから Navigate):
@@ -1949,10 +2107,15 @@ Public Sub OpenSettingsTab()
     '   m_tabs を頭から走査して IsSettings = True の Pane を探す。見つかれば
     '   その index をアクティブにして Exit Sub (新規生成しない)。閉じられた
     '   設定タブは m_tabs から外れているので、この走査で自然に見つからない。
+    ' --- K-2: フラグではなく ★ページ自身に聞く★ ---
+    '   IsSettings は遷移しても False に戻らず、元・設定タブを掴んでいた。
+    '   EvalSync で window.__wv2Settings を尋ねれば、遷移経路によらず
+    '   「今そのタブが設定画面か」が分かる (戻るで復帰したタブも拾える)。
     Dim j As Long
     For j = 1 To m_tabs.count
-        If m_tabs.Item(j).IsSettings Then
-            Debug.Print "Wv2Browser.OpenSettingsTab: 既存の設定タブ(index " & j & ")をアクティブ化"
+        If IsSettingsView(m_tabs.Item(j)) Then
+            Wv2Log.LogD "Wv2Browser.OpenSettingsTab: 設定画面を表示中のタブ(index " & j & _
+                        ")を見つけたのでアクティブ化"
             ActivateTab j
             Exit Sub
         End If
@@ -2105,6 +2268,11 @@ Private Function BuildSettingsHtml() As String
     s = s & "  var current = '';" & vbLf
     ' --- 第9.19c: いまカーソルが乗っているカードの id (未 hover は null) ---
     s = s & "  var hoverId = null;" & vbLf
+    ' --- K-2: このページが設定画面であることの目印 ---
+    '   OpenSettingsTab が EvalSync で尋ねる。★早い位置に置く★
+    '   後続の JS が落ちても、設定画面だと名乗れるようにしておく
+    '   (名乗れないと歯車で設定タブが二重に開く)。
+    s = s & "  window.__wv2Settings = true;" & vbLf
     ' --- 現在エンジンとカード定義を VBA から同期取得 ---
     s = s & "  function loadState(){" & vbLf
     s = s & "    if(!S){ document.getElementById('grid').textContent='ホストオブジェクト未接続'; return null; }" & vbLf
@@ -2192,6 +2360,16 @@ Private Function BuildSettingsHtml() As String
     s = s & "    var btn=document.getElementById('capply');" & vbLf
     s = s & "    if(btn){ btn.onclick=function(){ applyCustom(); }; }" & vbLf
     s = s & "    markCustom();" & vbLf
+    s = s & "  }" & vbLf
+    ' --- K-2: ホストからの全体同期の受け口 ---
+    '   別の設定タブでエンジンが変わったとき、VBA がこれを呼んで現在値を渡す。
+    '   カスタム入力欄 (ctpl) は入力途中かもしれないので触らない。
+    s = s & "  function applyFromHost(name){" & vbLf
+    s = s & "    if(!name){ return 'ng'; }" & vbLf
+    s = s & "    current = name;" & vbLf
+    s = s & "    markSel();" & vbLf
+    s = s & "    showCurrentPreview();" & vbLf
+    s = s & "    return 'ok';" & vbLf
     s = s & "  }" & vbLf
     s = s & "  var list=loadState(); if(list){ build(list); }" & vbLf
     s = s & "  initCustom();" & vbLf
@@ -2590,7 +2768,4 @@ Private Sub Class_Terminate()
     m_state = Bs_Created
     Debug.Print "Wv2Browser.Terminate 完了"
 End Sub
-
-
-
 

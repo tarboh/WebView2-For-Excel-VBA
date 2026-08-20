@@ -3066,3 +3066,57 @@ Public Sub Test_K1_Help()
     Debug.Print String$(64, "=")
 End Sub
 
+
+' ============================================================
+' Test_K2_Help  (K-2 段階)
+'
+'   設定タブは WebView2 の実起動が要るので自動化しきれない。
+'   画面で確かめる手順を出す。
+' ============================================================
+Public Sub Test_K2_Help()
+    Debug.Print String$(64, "=")
+    Debug.Print "K-2 検証: 設定タブが検索で潰れるバグ"
+    Debug.Print String$(64, "=")
+    Debug.Print ""
+    Debug.Print "  ★先に Wv2Log.LogStart を打つと、この検証 1 回分が 1 ファイルに閉じる★"
+    Debug.Print "    ログの場所は ?Wv2Log.LogPath"
+    Debug.Print ""
+    Debug.Print "  【1】 直った本体"
+    Debug.Print "    1) ブラウザを起動する"
+    Debug.Print "    2) タブバー右端の歯車を押して設定タブを開く"
+    Debug.Print "    3) その設定タブがアクティブなまま、アドレスバーに 適当な検索語 を入れる"
+    Debug.Print "       → 検索結果へ遷移する (これは正常。設定タブも普通のタブ)"
+    Debug.Print "    4) ★もう一度 歯車 を押す★"
+    Debug.Print "       → ★新しい設定タブが開けば直っている★"
+    Debug.Print "       → 何も起きない / 検索結果のタブへ切り替わるだけなら直っていない"
+    Debug.Print ""
+    Debug.Print "  【2】 重複防止が壊れていないこと (第9.19 の回帰)"
+    Debug.Print "    5) 設定タブを開いたまま歯車を 3～4 回連打する"
+    Debug.Print "       → 設定タブは常に 1 枚のまま。増えないこと"
+    Debug.Print ""
+    Debug.Print "  【3】 アドレスバー以外の経路でも直っていること"
+    Debug.Print "    6) 設定タブでリンクのあるページへ遷移し、歯車 → 新しい設定タブが開く"
+    Debug.Print "    7) 設定タブでリロードしても設定画面が保たれること"
+    Debug.Print ""
+    Debug.Print "  【4】 ★設定ビューが 2 枚でも値が食い違わないこと (今回の新機能)★"
+    Debug.Print "    8) 歯車で設定タブ A を開く"
+    Debug.Print "    9) A のアドレスバーで適当なページへ遷移する"
+    Debug.Print "   10) 歯車を押して設定タブ B を開く"
+    Debug.Print "   11) A に切り替えて ★戻る★ を押す → A も設定画面に戻る (2 枚になる)"
+    Debug.Print "   12) B に切り替えて、検索エンジンを別のものに変える"
+    Debug.Print "   13) ★A に切り替える★"
+    Debug.Print "       → ★A の選択表示とプレビューも、変更後のエンジンになっていること★"
+    Debug.Print "       → A が古いエンジンを選択したままなら同期が効いていない"
+    Debug.Print ""
+    Debug.Print "  【5】 回帰 (壊していないこと)"
+    Debug.Print "   14) 設定タブでエンジンを変え、通常タブで検索して反映されること"
+    Debug.Print "   15) カスタム URL の入力・適用が従来どおり動くこと"
+    Debug.Print "       ※ カスタム入力欄の中身は同期で上書きしない仕様 (入力途中を壊さないため)"
+    Debug.Print ""
+    Debug.Print "  ログに出るもの:"
+    Debug.Print "    Wv2Browser.OpenSettingsTab: 設定画面を表示中のタブ(index N)を..."
+    Debug.Print "    Wv2Browser.SyncSettingsViewsNow: 設定ビュー N 枚へ <engine> を反映した"
+    Debug.Print "    Wv2Browser.IsSettingsView: 判定できないので... (読み込み中などで正常)"
+    Debug.Print String$(64, "=")
+End Sub
+
