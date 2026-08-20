@@ -202,7 +202,7 @@ Attribute VB_Name = "Wv2Tests"
 '
 '   ★この回は純ロジック検証が無い★ 見たいのは「WebView2 ランタイムが遷移を継続するか」
 '     という実機の挙動そのものなので、WebView2 を起動しない検証にはできない
-'     (9.21?9.25 と同じ判断)。
+'     (9.21～9.25 と同じ判断)。
 '
 ' --- Wv2Tests.bas  第9.25b 段階 (検証プローブの撤去 / 引数ゼロを恒久確定) ---
 '
@@ -228,7 +228,7 @@ Attribute VB_Name = "Wv2Tests"
 '
 '       ★この回は起動するだけで機構の答えが出る★ プローブは NavBar の JS が
 '       ready 送信の 500ms 後に自走するので、たーぼーさんは普通に起動して
-'       [PROBE] 行の並びを読むだけでよい。そのうえで ← → ? を 1 回ずつ押して
+'       [PROBE] 行の並びを読むだけでよい。そのうえで ← → [更新] を 1 回ずつ押して
 '       実物が二重実行にならないかを確認する。
 
 ''''''''''''''''''''''''''''''''''
@@ -239,7 +239,7 @@ Attribute VB_Name = "Wv2Tests"
 '       NavBar の back/forward/reload/navigate を hostObjects 経路へ移し、処理を
 '       HostBack/HostForward/HostReload/HostNavigate へ一元化した回の実機手順。
 '       実 URL Navigate + JS 実行 + hostObjects 経路の成立を見るため、純ロジック
-'       検証は無い (9.21?9.23 と同じ判断)。
+'       検証は無い (9.21～9.23 と同じ判断)。
 '
 '       ★この回の判定は 3 本立て★
 '         (1) 4 コマンドが host 経由になったか (HostXxx ログが出て、OnPaneWebMessage
@@ -251,7 +251,7 @@ Attribute VB_Name = "Wv2Tests"
 '             URL が HostNavigate のログに化けずに出るか
 '
 '       回帰確認は ready ハンドシェイク / Escape の編集破棄 / 編集中フラグ /
-'       TabBar 側 (9.21?9.23) が無傷であること。
+'       TabBar 側 (9.21～9.23) が無傷であること。
 
 ''''''''''''''''''''''''''''''''''
 ' --- Wv2Tests.bas  第9.23 段階 (整理: activate/close/reorder の Host 一元化 検証) ---
@@ -311,7 +311,7 @@ Attribute VB_Name = "Wv2Tests"
 '
 '   第9.19 の追加事項:
 '     ★Test_9_19_SettingsTabDedup_Help を追加★
-'       設定タブの重複防止 (? 連打で設定タブが増えない) は WebView2 の実際の
+'       設定タブの重複防止 ([歯車] 連打で設定タブが増えない) は WebView2 の実際の
 '       タブ生成・アクティブ化を伴うため、純ロジック検証ではなく実機手順で
 '       確認する。イミディエイトで Test_9_19_SettingsTabDedup_Help と打つと
 '       手順が出る。ロジックの要 (IsSettings フラグ立て + m_tabs 走査による
@@ -322,7 +322,7 @@ Attribute VB_Name = "Wv2Tests"
 '   第9.18 の追加: Test_9_18_BridgeLogic を追加。Wv2SettingsBridge を new し、
 '   実 Wv2Browser を BindBrowser で結び付けてから、設定画面の JS が呼ぶのと同じ
 '   メソッド (SetEngine / GetEngine / PreviewUrl / PreviewUrlFor / EngineList) を
-'   直接叩いて、名前?テンプレート解決・プレビュー URL 生成・副作用なしを照合する。
+'   直接叩いて、名前⇔テンプレート解決・プレビュー URL 生成・副作用なしを照合する。
 '   WebView2 は起動しない (ブリッジ + Browser の Debug_* を叩くだけ)。
 '   ※hostObjects 経路が実機で通るか (順序A) の確認は Help の実機手順で行う。
 '   汎用ヘルパー CheckEq (文字列一致) / CheckBool (真偽) を追加。
@@ -771,7 +771,7 @@ End Sub
 '   WebView2 は起動しない。Wv2SettingsBridge を new し、実 Wv2Browser を
 '   BindBrowser で結び付けてから、設定画面の JS が呼ぶのと同じメソッド
 '   (SetEngine / GetEngine / PreviewUrl / PreviewUrlFor / EngineList) を
-'   直接叩いて、名前?テンプレートの解決とプレビュー URL 生成を照合する。
+'   直接叩いて、名前⇔テンプレートの解決とプレビュー URL 生成を照合する。
 '
 '   ★これは何を保証するか★ 設定画面の JS は hostObjects.sync.Settings 経由で
 '     これらのメソッドを呼ぶだけなので、メソッドの戻り値がここで正しければ、
@@ -880,7 +880,7 @@ Public Sub Test_9_18_BridgeLogic_Help()
     Debug.Print ""
     Debug.Print "【B. 実機 hostObjects 疎通 + 設定画面 (WebView2 起動)】 ★9.18 の本命★"
     Debug.Print "  1) StartWebView2_Full で通常起動する。"
-    Debug.Print "  2) タブバー右端の ? (歯車) ボタンをクリックする。"
+    Debug.Print "  2) タブバー右端の [歯車] ボタンをクリックする。"
     Debug.Print "     → 新しいタブが開き、検索エンジン選択のカード画面が出れば設定タブ生成 OK。"
     Debug.Print "  3) ★順序A の実機判定★ カードが 4 枚 (Google/Bing/DuckDuckGo/Yahoo) 描かれ、"
     Debug.Print "     現在エンジン (既定 Google) のカードが青く選択強調されていること。"
@@ -894,7 +894,7 @@ Public Sub Test_9_18_BridgeLogic_Help()
     Debug.Print "     → Bing の検索結果が出れば、設定画面での切替が本番に反映されている。"
     Debug.Print "  7) 設定タブは × で普通に閉じられること (通常タブとして振る舞う)。"
     Debug.Print ""
-    Debug.Print "  ※ 通常タブが無い状態で ? を押しても設定タブは開く (最後の1タブでも可)。"
+    Debug.Print "  ※ 通常タブが無い状態で [歯車] を押しても設定タブは開く (最後の1タブでも可)。"
 End Sub
 
 
@@ -907,27 +907,27 @@ End Sub
 '     ・OpenSettingsTab の冒頭で m_tabs を走査し、IsSettings=True の Pane が
 '       あればそれを ActivateTab して Exit Sub (新規生成しない)。
 '     ・生成時は pane.IsSettings = True を立てる。
-'     ・閉じられた設定タブは m_tabs から外れるので走査で見つからず、次の ? で
+'     ・閉じられた設定タブは m_tabs から外れるので走査で見つからず、次の [歯車] で
 '       新規に開き直せる (生存確認が走査と一体)。
 ' ============================================================
 Public Sub Test_9_19_SettingsTabDedup_Help()
     Debug.Print "==== 第9.19 設定タブ重複防止 検証手順 (WebView2 起動) ===="
     Debug.Print ""
     Debug.Print "  1) StartWebView2_Full で通常起動する。"
-    Debug.Print "  2) タブバー右端の ? (歯車) を 1 回押す。"
+    Debug.Print "  2) タブバー右端の [歯車] を 1 回押す。"
     Debug.Print "     → 設定タブが 1 枚開き、アクティブになること。"
-    Debug.Print "  3) ★重複防止の本命★ 続けて ? をもう 2?3 回連打する。"
+    Debug.Print "  3) ★重複防止の本命★ 続けて [歯車] をもう 2～3 回連打する。"
     Debug.Print "     → 設定タブが増えず、既存の設定タブがアクティブになるだけであること。"
     Debug.Print "       (イミディエイトに『既存の設定タブ(index N)をアクティブ化』が出る)"
     Debug.Print "  4) 別の通常タブをクリックして設定タブから離れる。"
-    Debug.Print "     → その状態で ? を押すと、既存の設定タブへ切り替わる (新規は開かない)。"
+    Debug.Print "     → その状態で [歯車] を押すと、既存の設定タブへ切り替わる (新規は開かない)。"
     Debug.Print "  5) ★閉じてから開き直し★ 設定タブの × を押して閉じる。"
-    Debug.Print "     → その後もう一度 ? を押すと、設定タブが新規に 1 枚開くこと。"
+    Debug.Print "     → その後もう一度 [歯車] を押すと、設定タブが新規に 1 枚開くこと。"
     Debug.Print "       (閉じたら m_tabs から外れるので、走査で見つからず開き直せる)"
     Debug.Print "  6) 設定画面のカード操作 (エンジン選択・hover プレビュー・切替の本番反映) が"
     Debug.Print "     9.18 と同じく動くこと (重複防止で設定機能が壊れていないことの確認)。"
     Debug.Print ""
-    Debug.Print "  ※ 期待挙動まとめ: 設定タブは常に高々 1 枚。? は「無ければ開く/あれば移動」。"
+    Debug.Print "  ※ 期待挙動まとめ: 設定タブは常に高々 1 枚。[歯車] は「無ければ開く/あれば移動」。"
 End Sub
 
 
@@ -1003,7 +1003,7 @@ Public Sub Test_9_20_Persistence_Help()
     Debug.Print "==== 第9.20 検索エンジン選択の永続化 実機検証手順 ===="
     Debug.Print ""
     Debug.Print "  1) StartWebView2_Full で通常起動する。"
-    Debug.Print "  2) ? を押して設定タブを開き、Bing のカードをクリックする。"
+    Debug.Print "  2) [歯車] を押して設定タブを開き、Bing のカードをクリックする。"
     Debug.Print "     → イミディエイトに次の 2 行が出ること:"
     Debug.Print "         Wv2SettingsBridge.SetEngine: 'bing' → 'bing'"
     Debug.Print "         Wv2SettingsBridge.SaveSettingsFile: 保存 'bing' -> ...\settings.txt"
@@ -1041,7 +1041,7 @@ Public Sub Test_9_21_HostActivate_Help()
     Debug.Print "         Wv2TabBar.Init: TabBar ブリッジを attach OK (activate は hostObjects 優先)"
     Debug.Print "       ※ 代わりに『AddHostObjectToScript(TabBar) 失敗』が出た場合は"
     Debug.Print "         attach が通っておらず、以降 activate は postMessage に落ちる。"
-    Debug.Print "  2) ＋ ボタンでタブを 3?4 枚に増やす。"
+    Debug.Print "  2) ＋ ボタンでタブを 3～4 枚に増やす。"
     Debug.Print "  3) 別のタブ (今アクティブでないタブ) の本体をクリックして切替える。"
     Debug.Print ""
     Debug.Print "  --- ★ここが 9.21 の判定★ ---"
@@ -1056,7 +1056,7 @@ Public Sub Test_9_21_HostActivate_Help()
     Debug.Print ""
     Debug.Print "  --- 回帰確認 (9.18/9.19/9.20 に影響がないこと) ---"
     Debug.Print "  6) × でタブを閉じる / ＋ で開く / ドラッグで並べ替える がすべて従来どおり動く。"
-    Debug.Print "  7) ? で設定タブが開き、エンジンを変えると検索に反映され、"
+    Debug.Print "  7) [歯車] で設定タブが開き、エンジンを変えると検索に反映され、"
     Debug.Print "     Excel 再起動後もそのエンジンが持ち越される (9.20 の永続化) ことを確認。"
     Debug.Print ""
     Debug.Print "  ※ ブラウザの DevTools コンソールを開ける場合は、タブクリック時に"
@@ -1081,7 +1081,7 @@ Public Sub Test_9_22_HostCloseReorder_Help()
     Debug.Print "     → 起動ログに 9.21 と同じ attach 成功行が出ること:"
     Debug.Print "         Wv2TabBar.Init: TabBar ブリッジを attach OK (activate は hostObjects 優先)"
     Debug.Print "       ※ attach は TabBar 全体 (activate/close/reorder) で共有する 1 回の登録。"
-    Debug.Print "  2) ＋ ボタンでタブを 4?5 枚に増やす。"
+    Debug.Print "  2) ＋ ボタンでタブを 4～5 枚に増やす。"
     Debug.Print ""
     Debug.Print "  --- ★ここが 9.22 の判定 (close)★ ---"
     Debug.Print "  3) 適当なタブの × をクリックして閉じる。次の 1 行が出れば host経由成立:"
@@ -1106,7 +1106,7 @@ Public Sub Test_9_22_HostCloseReorder_Help()
     Debug.Print "  --- 回帰確認 (ready/newtab/settings は postMessage のまま) ---"
     Debug.Print "  6) ＋ で新規タブ → OnPaneWebMessage: msg={""cmd"":""newtab""} が出る"
     Debug.Print "     (SafeTimer 経由の従来動作。host経由ではない=正しい)。"
-    Debug.Print "  7) ? で設定タブ → OnPaneWebMessage: msg={""cmd"":""settings""} が出て"
+    Debug.Print "  7) [歯車] で設定タブ → OnPaneWebMessage: msg={""cmd"":""settings""} が出て"
     Debug.Print "     設定タブが開く。エンジン変更→検索反映→再起動持ち越し (9.20) も従来どおり。"
     Debug.Print "  8) 起動直後の初期同期で OnPaneWebMessage: msg={""cmd"":""ready""} が出る"
     Debug.Print "     (ready は通知なので postMessage のまま=正しい)。"
@@ -1138,7 +1138,7 @@ Public Sub Test_9_23_Consolidation_Help()
     Debug.Print "  1) StartWebView2_Full で通常起動する。"
     Debug.Print "     → 起動ログに 9.21/9.22 と同じ attach 成功行が出ること:"
     Debug.Print "         Wv2TabBar.Init: TabBar ブリッジを attach OK (activate は hostObjects 優先)"
-    Debug.Print "  2) ＋ ボタンでタブを 4?5 枚に増やす。"
+    Debug.Print "  2) ＋ ボタンでタブを 4～5 枚に増やす。"
     Debug.Print ""
     Debug.Print "  --- ★回帰確認: 3 コマンドが従来どおり host 経由★ ---"
     Debug.Print "  3) 別タブの本体クリック → Wv2TabBar.HostActivate: index=N (host経由)"
@@ -1150,7 +1150,7 @@ Public Sub Test_9_23_Consolidation_Help()
     Debug.Print ""
     Debug.Print "  --- 回帰確認: ready/newtab/settings は postMessage のまま ---"
     Debug.Print "  6) ＋ で新規タブ → OnPaneWebMessage: msg={""cmd"":""newtab""} (SafeTimer 経由)"
-    Debug.Print "  7) ? で設定タブ → OnPaneWebMessage: msg={""cmd"":""settings""} → 設定タブが開く"
+    Debug.Print "  7) [歯車] で設定タブ → OnPaneWebMessage: msg={""cmd"":""settings""} → 設定タブが開く"
     Debug.Print "  8) 起動直後の初期同期 → OnPaneWebMessage: msg={""cmd"":""ready""}"
     Debug.Print ""
     Debug.Print "  --- (任意) フォールバック経路の生存確認 ---"
@@ -1174,7 +1174,7 @@ End Sub
 '
 '   ★イミディエイトで  Test_9_24_HostNavBar_Help  と打つと手順が出る★
 '
-'   9.24 は TabBar (9.21?9.23) で確立した型を NavBar へ同型展開した回。
+'   9.24 は TabBar (9.21～9.23) で確立した型を NavBar へ同型展開した回。
 '   JS はハイブリッド (hostObjects 優先・postMessage フォールバック)、VBA は
 '   処理を Host メソッド 4 本へ一元化、Select Case は薄いアダプタ。
 ' ============================================================
@@ -1212,7 +1212,7 @@ Public Sub Test_9_24_HostNavBar_Help()
     Debug.Print "  5) URL 欄に日本語を打って Enter (例: 北海道 天気)。"
     Debug.Print "     → HostNavigate のログに日本語がそのまま出ること (文字化け・欠落なし)。"
     Debug.Print "         Wv2NavBar.HostNavigate: url=北海道 天気 (host経由)"
-    Debug.Print "       設定中の検索エンジンで検索されること (9.14/9.16?9.20 の経路)。"
+    Debug.Print "       設定中の検索エンジンで検索されること (9.14/9.16～9.20 の経路)。"
     Debug.Print "  6) 記号入り URL も試す (例: https://www.google.com/search?q=a&b=c#x )。"
     Debug.Print "     → ? & # がログでそのまま出て、そのページへ遷移すること。"
     Debug.Print "     ※ postMessage 経路では JSON エスケープを通っていた箇所。hostObjects"
@@ -1755,7 +1755,7 @@ Public Sub Test_9_27_Help()
     Debug.Print "      保たれている。本丸成立。UX まで含めて 405 問題が解決したことになる。"
     Debug.Print "  ★パターンB: タブは増えたが中身が真っ白 / 二重にウィンドウが開く★"
     Debug.Print "      put_Handled の併用が悪さをしている可能性。Test_9_27_Handled_Off にして"
-    Debug.Print "      手順 5?7 をやり直す。これで直れば「NewWindow をセットしたら Handled は"
+    Debug.Print "      手順 5～7 をやり直す。これで直れば「NewWindow をセットしたら Handled は"
     Debug.Print "      立てない」が正解と確定する (論点5 の保険が効いた形)。"
     Debug.Print "  ★パターンC: ★印つきのフォールバックログが出た★"
     Debug.Print "      予備タブが使えなかったケース。Test_9_27_Status の結果と併せて共有すること。"
@@ -1942,7 +1942,7 @@ Public Sub Test_9_29_Help()
     Debug.Print "  --- (A) カスタムの適用 ---"
     Debug.Print "  1) UserForm1.StartWebView2_Full   ' 通常どおり起動"
     Debug.Print "       ※ ★仕様事実 20★ ログが止まるまでブレーク/ステップ実行はしないこと。"
-    Debug.Print "  2) ? を押して設定タブを開く"
+    Debug.Print "  2) [歯車] を押して設定タブを開く"
     Debug.Print "       → 期待: カードの下に ★カスタム (プリセット以外)★ の枠と入力欄が出る"
     Debug.Print "  3) 入力欄に次を貼って、まだ適用は押さない:"
     Debug.Print "         https://ja.wikipedia.org/w/index.php?search="
@@ -2008,7 +2008,7 @@ Public Sub Test_9_31_Help()
     Debug.Print "  --- 準備 ---"
     Debug.Print "  1) UserForm1.StartWebView2_Full   ' 通常どおり起動"
     Debug.Print "       ※ ★仕様事実 20★ ログが止まるまでブレーク/ステップ実行はしないこと。"
-    Debug.Print "  2) + を 2?3 回押してタブを 3?4 枚にする"
+    Debug.Print "  2) + を 2～3 回押してタブを 3～4 枚にする"
     Debug.Print "       (アクティブ 1 枚 + 非アクティブ複数、の状態を作るのが目的)"
     Debug.Print ""
     Debug.Print "  --- (A-1) ホバー背景 ---"
@@ -2037,7 +2037,7 @@ Public Sub Test_9_31_Help()
     Debug.Print "       → 期待: ★タブが閉じない★ (= 見えないボタンは押せない)。"
     Debug.Print "               そのタブへ★切り替わる★のが正しい挙動。"
     Debug.Print "               ※これが閉じてしまうなら opacity:0 相当になっているので要報告"
-    Debug.Print " 10) タブを 8?10 枚まで増やして、タブが細くなった状態で 6?7 を再確認"
+    Debug.Print " 10) タブを 8～10 枚まで増やして、タブが細くなった状態で 6～7 を再確認"
     Debug.Print "       → 期待: min-width:80px で頭打ちになり、× の場所は常に確保されている"
     Debug.Print "       → ここでタイトルが読めなさすぎる等の不満が出たら、次段の材料にする"
     Debug.Print ""
@@ -2068,8 +2068,8 @@ Public Sub Test_9_31_Help()
     Debug.Print "       → 期待: 自前のタブで開く (ポップアップウィンドウにならない)"
     Debug.Print ""
     Debug.Print "  --- 判定 ---"
-    Debug.Print "  ・3?11 がすべて期待どおり → 第9.31 は合格"
-    Debug.Print "  ・12?16 がすべて期待どおり → ★v0_5_2 の通し確認 (第9.30 の宿題 1) を消化★"
+    Debug.Print "  ・3～11 がすべて期待どおり → 第9.31 は合格"
+    Debug.Print "  ・12～16 がすべて期待どおり → ★v0_5_2 の通し確認 (第9.30 の宿題 1) を消化★"
     Debug.Print "  ・気になった点 (色が濃い/薄い、遷移が遅い/速い、× が小さい等) は"
     Debug.Print "    論点 2・5・6 の再調整で対応できるので、遠慮なく挙げてください。"
 End Sub
@@ -2095,7 +2095,7 @@ Public Sub Test_9_32_Help()
     Debug.Print "  --- 準備 ---"
     Debug.Print "  1) UserForm1.StartWebView2_Full   ' 通常どおり起動"
     Debug.Print "       ※ ★仕様事実 20★ ログが止まるまでブレーク/ステップ実行はしないこと。"
-    Debug.Print "  2) + を押してタブを 4?5 枚にし、それぞれ別のページを開いておく"
+    Debug.Print "  2) + を押してタブを 4～5 枚にし、それぞれ別のページを開いておく"
     Debug.Print "       (切替に時間がかかるページの方が違いが分かりやすい)"
     Debug.Print ""
     Debug.Print "  --- (1) ★本命: タブ切替の体感★ ---"
@@ -2107,7 +2107,7 @@ Public Sub Test_9_32_Help()
     Debug.Print "               Wv2TabBar.HostActivate: index=N (host経由)"
     Debug.Print "               Wv2TabBar[EVT] ActiveChanged(index=N) → PushSyncToJs"
     Debug.Print "               Wv2TabBar.PushSyncToJs: 送信 OK (...)"
-    Debug.Print "  4) タブを 5?6 回続けて切り替えて、体感を第9.31 と比べる"
+    Debug.Print "  4) タブを 5～6 回続けて切り替えて、体感を第9.31 と比べる"
     Debug.Print "       → 判定: 『クリックと画面の変化がずれている』感覚が減ったか"
     Debug.Print "       ★注意★ ブラウザ本体の切替そのものは★速くなっていません★。"
     Debug.Print "               速くなったのは『タブバーが反応するまでの時間』だけです。"
@@ -2119,7 +2119,7 @@ Public Sub Test_9_32_Help()
     Debug.Print "               気になるようなら次段で同じ手を close にも入れられます。"
     Debug.Print ""
     Debug.Print "  --- (2)(3) スクロールバーとホイール ---"
-    Debug.Print "  6) + を連打してタブを 10?12 枚まで増やす"
+    Debug.Print "  6) + を連打してタブを 10～12 枚まで増やす"
     Debug.Print "       → 期待: ★タブ列の下に横スクロールバーが出ない★"
     Debug.Print "       → 期待: タブの高さが第9.31 のときのように★潰れない★"
     Debug.Print "               (第9.31 ではバーが高さを内側から食ってタブが上に寄っていた)"
@@ -2138,15 +2138,15 @@ Public Sub Test_9_32_Help()
     Debug.Print "               (論点 6 で現状維持と決定した仕様です)"
     Debug.Print " 10) × でタブを何枚か閉じる"
     Debug.Print "       → 期待: 正しく閉じ、アクティブが補正される"
-    Debug.Print " 11) ? で設定タブを開き、検索エンジンのカードをクリックする"
+    Debug.Print " 11) [歯車] で設定タブを開き、検索エンジンのカードをクリックする"
     Debug.Print "       → 期待: 第9.29 までと同じ (選択が反映され、保存ログが出る)"
     Debug.Print " 12) 設定タブを閉じて、通常タブのアドレスバーで検索してみる"
     Debug.Print "       → 期待: 選んだエンジンで検索できる"
     Debug.Print ""
     Debug.Print "  --- 判定 ---"
-    Debug.Print "  ・3?4 で体感が改善 → 第9.32 の本命は成功"
-    Debug.Print "  ・6?8 が期待どおり → スクロールバーの整理も成功"
-    Debug.Print "  ・9?12 が第9.31 と同じ → 回帰なし"
+    Debug.Print "  ・3～4 で体感が改善 → 第9.32 の本命は成功"
+    Debug.Print "  ・6～8 が期待どおり → スクロールバーの整理も成功"
+    Debug.Print "  ・9～12 が第9.31 と同じ → 回帰なし"
     Debug.Print "  ・色の変化が速すぎて『押す前に変わった』ように感じる等の違和感があれば"
     Debug.Print "    報告してください。二重 rAF を 1 回に減らす等で調整できます。"
 End Sub
@@ -2176,7 +2176,7 @@ Public Sub Test_9_32b_Help()
     Debug.Print "       → 期待: タブ列が★右へスクロールする★"
     Debug.Print "       → 期待: ブラウザ本体のページは★スクロールしない★"
     Debug.Print "  4) ホイールを上へ回す → 左へ戻る"
-    Debug.Print "  5) タブが 1?2 枚しか無い状態 (溢れていない状態) でもホイールを回す"
+    Debug.Print "  5) タブが 1～2 枚しか無い状態 (溢れていない状態) でもホイールを回す"
     Debug.Print "       → 期待: ★何も起きない★ (scrollWidth <= clientWidth で早期 return)"
     Debug.Print "               ここで本体ページがスクロールするなら仕様どおり (preventDefault"
     Debug.Print "               まで到達しないため)。タブバー上でのことなので実害は無い。"
@@ -2203,11 +2203,11 @@ Public Sub Test_9_32b_Help()
     Debug.Print " 11) タブ切替の体感が第9.32 と同じか (クリック即座に色が変わる)"
     Debug.Print " 12) D&D 並べ替えが効くか。ドラッグ後に位置が飛ばないか"
     Debug.Print " 13) × で閉じられるか。閉じた後にスクロール位置が破綻しないか"
-    Debug.Print " 14) ? で設定タブが開くか"
+    Debug.Print " 14) [歯車] で設定タブが開くか"
     Debug.Print ""
     Debug.Print "  --- 判定 ---"
-    Debug.Print "  ・3?4 が効けば論点 1 は成功 (効かなければ論点 1 を (b) 3px バーに戻す)"
-    Debug.Print "  ・6?7 で位置が動かなければ論点 3 の退避・復元は成功"
+    Debug.Print "  ・3～4 が効けば論点 1 は成功 (効かなければ論点 1 を (b) 3px バーに戻す)"
+    Debug.Print "  ・6～7 で位置が動かなければ論点 3 の退避・復元は成功"
     Debug.Print "  ・8 で新規タブが見えれば nearest 寄せも成功"
     Debug.Print "  ・スクロール量が速すぎ/遅すぎる場合は数値 1 つで調整できます"
 End Sub
@@ -2417,7 +2417,7 @@ Public Sub Test_D1_Help()
     Debug.Print "  7) URL 入力・戻る・進む・リロード (タイトルが更新されること)"
     Debug.Print "  8) リンクの新タブ展開 (Test_9_26_PostProbe の POST リンクも)"
     Debug.Print "  9) 設定タブ (歯車) が開き、検索エンジンを変更できること"
-    Debug.Print "     ※ 6?9 は View_On* を Core に分離した影響を見るためのもの。"
+    Debug.Print "     ※ 6～9 は View_On* を Core に分離した影響を見るためのもの。"
     Debug.Print "       どれか 1 つでも動かなければガードのラッパーを疑うこと。"
     Debug.Print ""
     Debug.Print "  --- 手で試したいとき ---"
@@ -2813,7 +2813,7 @@ Public Sub Test_D2_Help()
     Debug.Print "    仕様事実 20 の窓を踏む。"
     Debug.Print ""
     Debug.Print "  --- 見るもの (Test_D2_Find) ---"
-    Debug.Print "  ・(1)?(7) の全行が [OK  ] であること"
+    Debug.Print "  ・(1)～(7) の全行が [OK  ] であること"
     Debug.Print "  ・(2) の InnerHTML が★タグごと正しく★出ること"
     Debug.Print "      仕様事実30 (< が \u003C で届く) の復号が効いている証拠。"
     Debug.Print "      ここが FAIL なら Wv2Json.JsonUnescapeAt を疑う。"

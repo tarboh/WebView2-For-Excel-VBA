@@ -102,7 +102,7 @@ Attribute VB_Exposed = False
 ' --- Wv2NavBar.cls  第9.24 段階 (NavBar の hostObjects 化 + 処理の Host 一元化) ---
 '
 '   第9.24 のスコープ (9.23 で TabBar に確立した型を NavBar へ同型展開する):
-'     ★狙い★ 9.21?9.23 で TabBar の activate/close/reorder は
+'     ★狙い★ 9.21～9.23 で TabBar の activate/close/reorder は
 '       「JS はハイブリッド (hostObjects 優先・postMessage フォールバック)、
 '       VBA は処理を Host メソッド 1 箇所に集約、Select Case は薄いアダプタ」
 '       という形に落ち着いた。NavBar の back/forward/reload/navigate も
@@ -183,7 +183,7 @@ Attribute VB_Exposed = False
 '     ナビバーのボタンと URL 入力を VBA のナビゲーション操作に繋ぐ。
 '       ・←  クリック    → {"cmd":"back"}                 → Browser.GoBackActive
 '       ・→  クリック    → {"cmd":"forward"}              → Browser.GoForwardActive
-'       ・?  クリック    → {"cmd":"reload"}               → Browser.ReloadActive
+'       ・[更新]  クリック    → {"cmd":"reload"}               → Browser.ReloadActive
 '       ・URL 欄で Enter → {"cmd":"navigate","url":"..."} → Browser.NavigateActive
 '
 '   ★再入の安全性 = 設計原則 63★ ナビゲーション系はすべて「完了待ちを含まない」
@@ -616,7 +616,7 @@ Public Sub OnPaneWebMessage(ByVal pane As Wv2Pane, ByVal source As String, ByVal
             HostForward
 
         Case "reload"
-            ' --- 第9.12d/9.24: ? クリック (postMessage フォールバック経路) ---
+            ' --- 第9.12d/9.24: [更新] クリック (postMessage フォールバック経路) ---
             Debug.Print "  → reload [postmsg fallback → HostReload]"
             HostReload
 
@@ -1051,5 +1051,4 @@ Private Function BuildNavBarHtml() As String
     s = s & "</body></html>"
     BuildNavBarHtml = s
 End Function
-
 

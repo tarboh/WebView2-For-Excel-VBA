@@ -63,7 +63,7 @@ Attribute VB_Exposed = False
 ' --- Wv2SettingsBridge.cls  第9.20 段階 (検索エンジン選択の永続化) ---
 '
 '   第9.20 の追加事項 (選択したエンジンを次回起動へ持ち越す):
-'     ★保存先は外部ファイル (APPDATA) ? 非表示シートではない★
+'     ★保存先は外部ファイル (APPDATA) ― 非表示シートではない★
 '       当初 Excel の非表示シートを設定媒体にする案 (案D) も検討したが、
 '       それだと Sheets(...) という Excel オブジェクトモデルに依存し、Word 等
 '       他ホストへの移植性 (このプロジェクトの生命線) を壊す。よって外部ファイル
@@ -73,7 +73,7 @@ Attribute VB_Exposed = False
 '
 '     ★責務はこのブリッジに統合 (別モジュールを切らない)★
 '       このクラスは既に「検索エンジン設定の司令塔」(プリセット定数 SE_*・
-'       名前?テンプレート解決・SetEngine/GetEngine) を握っている。永続化は
+'       名前⇔テンプレート解決・SetEngine/GetEngine) を握っている。永続化は
 '       「その設定を起動間で保持する」責務なので、同じクラスに集約するのが
 '       ドメイン凝集として自然。Wv2Store.bas のような別モジュールは切らない
 '       (モジュール数を増やさない)。
@@ -114,7 +114,7 @@ Attribute VB_Exposed = False
 '     最小化する。設定画面が触れるのは検索エンジンだけで、タブ操作には手が届かない。
 '
 '   ★プリセット解決の集約 (DRY)★
-'     "google"/"bing"/"duckduckgo"(別名 "ddg")/"yahoo" ? テンプレート文字列 の
+'     "google"/"bing"/"duckduckgo"(別名 "ddg")/"yahoo" ⇔ テンプレート文字列 の
 '     相互変換をこのクラスに集約する。9.17 まで UserForm1 が持っていた
 '     プリセット定数 (SE_*) と名前解決ロジックはここへ移設し、UserForm1 の
 '     UseSearchEngine もこのブリッジ経由に変えた。名前解決が 1 箇所になり、
@@ -559,7 +559,7 @@ End Function
 '   LoadEngineName で名前を読み、ResolveTemplate でテンプレートへ解決して返す。
 '   保存が無い/未知の名前 (custom や壊れた値) の場合は "" を返し、呼び手
 '   (Wv2Browser.Class_Initialize) が既定 (Google) のままにできるようにする。
-'   ★名前?テンプレート解決をこのクラスに閉じたまま、Browser には「テンプレート
+'   ★名前⇔テンプレート解決をこのクラスに閉じたまま、Browser には「テンプレート
 '     文字列 or 空」だけを渡す★ Browser はエンジン名の語彙を知らずに済む。
 ' ============================================================
 Public Function LoadEngineTemplate() As String
@@ -651,5 +651,4 @@ End Sub
 Public Sub Debug_SaveSettings(ByVal engineName As String, ByVal template As String)
     SaveSettingsFile engineName, template
 End Sub
-
 

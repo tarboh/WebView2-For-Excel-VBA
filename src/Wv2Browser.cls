@@ -113,13 +113,13 @@ Attribute VB_Exposed = False
 '     その遷移を載せること。args.put_NewWindow (vtable index 4) に「こちらが用意した
 '     CoreWebView2」を渡せば、ランタイムはその WebView に元のリクエストを載せてくれる。
 '
-'   ★採用した方式 = プリウォーム (案B / 論点 1?7 合意済み)★
+'   ★採用した方式 = プリウォーム (案B / 論点 1～7 合意済み)★
 '     空の Pane を常時 1 枚温めておき、NewWindowRequested が来た瞬間に
 '     put_NewWindow(予備の ViewPtr) を撃って即 Exit する。
 '     → ★Deferral (GetDeferral / Complete) を一切使わない★ のが最大の利点。
 '       Deferral 方式は「イベントの外へ args / deferral の COM 参照を持ち越す」ため
 '       自前の AddRef/Release 管理が要り、仕様事実 10 (Sentinel MEM_FREE) の隣を歩く。
-'       プリウォームならイベント内でやるのは vtable 呼び 1?2 回だけで、待ちがゼロ。
+'       プリウォームならイベント内でやるのは vtable 呼び 1～2 回だけで、待ちがゼロ。
 '       仕様事実 14 (SafeTimer デッドロック) にも 20 (EBMode の窓) にも触れない。
 '
 '   ★追加したもの★
@@ -131,7 +131,7 @@ Attribute VB_Exposed = False
 '       ・m_adoptTimer / m_adoptPending / m_adoptUrl : 採用処理のワンショット SafeTimer
 '       ・m_creatingPane            : Pane 生成中フラグ (プリウォーム TimerCall の再入ガード)
 '     [切り出し = 論点2 案a]
-'       ・CreatePaneCore / CreatePaneCoreBody : 旧 AddTab の前半 (Pane 生成?ハンドラ登録)。
+'       ・CreatePaneCore / CreatePaneCoreBody : 旧 AddTab の前半 (Pane 生成～ハンドラ登録)。
 '         AddTab とプリウォーム生成の両方から呼ぶ。AddTab は「CreatePaneCore + 後半 3 つ
 '         (m_tabs.Add / TabAdded / ActivateTab)」だけの薄い関数になった。
 '     [新規メソッド]
@@ -213,7 +213,7 @@ Attribute VB_Exposed = False
 '       保存が無ければ既定 (Google) のまま。UserForm 経由でも直起動でも
 '       Browser 誕生時に確定するので、どの経路でも一貫して前回値で始まる。
 '
-'     ★名前?テンプレート解決は Bridge に閉じたまま★
+'     ★名前⇔テンプレート解決は Bridge に閉じたまま★
 '       Browser はエンジン名 ("bing" 等) の語彙を知らない。Bridge の
 '       LoadEngineTemplate() が「テンプレート文字列 or 空」を返すので、
 '       Browser はそれを m_searchTemplate に入れるだけ。保存側 (SetEngine の
@@ -242,7 +242,7 @@ Attribute VB_Exposed = False
 '       戻し処理はスキップされる)。
 '
 '     ★OpenSettingsTab の冒頭で既存の設定タブを探す★
-'       9.18 では ? を押すたびに設定タブが新規生成され、連打すると設定タブが
+'       9.18 では [歯車] を押すたびに設定タブが新規生成され、連打すると設定タブが
 '       いくつも増えてしまった。9.19 では OpenSettingsTab の冒頭で m_tabs を
 '       頭から走査し、Pane.IsSettings = True のタブが既にあれば、それを
 '       ActivateTab するだけで Exit Sub する (新規生成しない)。無ければ従来
@@ -258,7 +258,7 @@ Attribute VB_Exposed = False
 '
 '   第9.18 の追加事項 (設定タブ + AddHostObjectToScript による検索エンジン UI):
 '     ★設定タブを開く経路を新設★ (部品3)
-'       TabBar の ? ボタン → OnPaneWebMessage "settings" → RequestSettingsTabAsync。
+'       TabBar の [歯車] ボタン → OnPaneWebMessage "settings" → RequestSettingsTabAsync。
 '       設定タブ生成も内部で AddTab → WaitPaneReady を通るため、newtab と同じく
 '       WebMessage ハンドラ内から同期呼びするとデッドロックする (仕様事実 14)。
 '       専用のワンショット SafeTimer (m_settingsTimer) で遅延実行する。
@@ -272,7 +272,7 @@ Attribute VB_Exposed = False
 '       hostObjects.sync.Settings.SetEngine("bing") のように VBA を直接呼ばせる。
 '       Wv2Browser を丸ごと渡さずブリッジ越しにするのは「JS に晒す面」を検索
 '       エンジンだけに絞るため (設定画面から CloseTab 等を叩けないようにする)。
-'       プリセット名?テンプレートの解決はブリッジに集約した (9.17 まで UserForm1 が
+'       プリセット名⇔テンプレートの解決はブリッジに集約した (9.17 まで UserForm1 が
 '       持っていた SE_* 定数と名前解決を移設。DRY)。
 '
 '     ★attach は NavigateToString の前 (順序A) を第一候補に実機検証★
@@ -467,7 +467,7 @@ Attribute VB_Exposed = False
 '     - AddTab で pane.SetBrowser Me を実行し、各 Pane に自分 (Browser) への
 '       後方参照を張る (Wv2Pane が NewWindowRequested 時に AddTabWithUrl を
 '       呼べるようにする)。
-'     - Shutdown: 循環参照 (Browser.m_tabs ? Pane.m_browser) を断つ。各 Pane の
+'     - Shutdown: 循環参照 (Browser.m_tabs ⇔ Pane.m_browser) を断つ。各 Pane の
 '       ClearBrowserRef を呼んでから解放する。UserForm_Terminate から明示的に
 '       呼ぶ (設計原則 58)。UserForm 側の実装コストは Shutdown 呼び出し 1 行のみ。
 '
@@ -575,7 +575,7 @@ Attribute m_newTabTimer.VB_VarHelpID = -1
 Private m_pendingUrls As Collection
 
 ' 第9.18 段階 (設定タブの遅延生成) で追加:
-'   TabBar の ? ボタン → OnPaneWebMessage の "settings" ケースから
+'   TabBar の [歯車] ボタン → OnPaneWebMessage の "settings" ケースから
 '   RequestSettingsTabAsync が呼ばれる。設定タブを開く処理も内部で
 '   AddTab → WaitPaneReady (Controller 生成完了待ち) を通るため、WebMessage
 '   ハンドラ内から同期で呼ぶと 仕様事実 14 のデッドロックに嵌まる (newtab と
@@ -778,7 +778,7 @@ End Function
 '   戻り値: 生成された Wv2Pane (失敗時 Nothing)
 ' ============================================================
 Public Function AddTab() As Wv2Pane
-    ' --- 前半 (Pane 生成 ? 標準ハンドラ登録) は CreatePaneCore に切り出した (第9.27) ---
+    ' --- 前半 (Pane 生成 ～ 標準ハンドラ登録) は CreatePaneCore に切り出した (第9.27) ---
     Dim pane As Wv2Pane
     Set pane = CreatePaneCore()
     If pane Is Nothing Then Exit Function
@@ -1198,7 +1198,7 @@ Public Function CloseTab(ByVal index As Long) As Boolean
     Set pane = m_tabs.Item(index)
 
     ' --- 1. 後方参照を先に断つ (設計原則 58) ---
-    '   循環参照 Browser?Pane を解放前に切る。Shutdown と同じ手順。
+    '   循環参照 Browser⇔Pane を解放前に切る。Shutdown と同じ手順。
     pane.ClearBrowserRef
 
     ' --- 2. Controller を明示クローズ ---
@@ -1925,7 +1925,7 @@ End Sub
 ' ============================================================
 ' RequestSettingsTabAsync (第9.18、設定タブの遅延生成入口)
 '
-'   TabBar の ? ボタン → OnPaneWebMessage "settings" から呼ばれる。設定タブを
+'   TabBar の [歯車] ボタン → OnPaneWebMessage "settings" から呼ばれる。設定タブを
 '   開く処理は内部で AddTab → WaitPaneReady を通るため、WebMessage ハンドラ内
 '   から同期で呼ぶと 仕様事実 14 のデッドロックに嵌まる。そこで newtab と同型に、
 '   保留フラグを立ててワンショット SafeTimer を起動し即座に返す。ハンドラ完了後に
@@ -2129,7 +2129,7 @@ Public Sub OpenSettingsTab()
     End If
 
     ' --- 第9.19: 生成した Pane を設定タブとして印を付ける ---
-    '   以後の ? クリックはこのフラグを見て重複を防ぐ。
+    '   以後の [歯車] クリックはこのフラグを見て重複を防ぐ。
     pane.IsSettings = True
 
     ' ブリッジを用意して Browser を結び付ける
@@ -2682,7 +2682,7 @@ End Sub
 ' Shutdown (第9.10e、循環参照を断ち切ってから解放する)
 '
 '   第9.10e で Wv2Pane が Wv2Browser への後方参照 (m_browser) を持つように
-'   なったため、Browser.m_tabs ? Pane.m_browser の循環参照が生じる。
+'   なったため、Browser.m_tabs ⇔ Pane.m_browser の循環参照が生じる。
 '   VBA は参照カウント GC なので、UserForm が単に Set m_browser = Nothing しても
 '   循環参照でどちらも解放されない (Class_Terminate も呼ばれない)。
 '

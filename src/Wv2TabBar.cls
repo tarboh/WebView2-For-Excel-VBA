@@ -300,7 +300,7 @@ Attribute VB_Exposed = False
 ' --- Wv2TabBar.cls  第9.18 段階 ---
 '
 '   第9.18 の追加事項 (設定ボタン → 設定タブ):
-'     ★タブバー右端に ? (設定) ボタンを追加★ (部品3)
+'     ★タブバー右端に [歯車] (設定) ボタンを追加★ (部品3)
 '       BuildTabBarHtml に #settings 要素 (margin-left:auto で右端寄せ) と
 '       hover スタイル、onclick を追加。クリックで {"cmd":"settings"} を postMessage。
 '     ★OnPaneWebMessage に "settings" ケースを追加★
@@ -758,7 +758,7 @@ Public Sub OnPaneWebMessage(ByVal pane As Wv2Pane, ByVal source As String, ByVal
             m_browser.RequestNewTabAsync HOME_URL
 
         Case "settings"
-            ' --- 第9.18: ? ボタンクリック → 設定タブを開く ---
+            ' --- 第9.18: [歯車] ボタンクリック → 設定タブを開く ---
             '   ★★ 同期で OpenSettingsTab を呼んではいけない ★★
             '   設定タブ生成も内部で AddTab → WaitPaneReady (Controller 生成の
             '   完了待ち) を通るため、WebMessage ハンドラ内から直接呼ぶと newtab と
@@ -1073,7 +1073,7 @@ Private Function BuildTabBarHtml() As String
     s = s & "  #newtab{display:flex;align-items:center;justify-content:center;" & _
             "width:32px;height:100%;cursor:pointer;font-size:18px;color:#555;}" & vbLf
     s = s & "  #newtab:hover{background:#e0e0e0;}" & vbLf
-    ' --- 第9.18: 設定 (?) ボタン。newtab の右隣。右端に寄せる ---
+    ' --- 第9.18: 設定 ([歯車]) ボタン。newtab の右隣。右端に寄せる ---
     s = s & "  #settings{display:flex;align-items:center;justify-content:center;" & _
             "width:34px;height:100%;cursor:pointer;font-size:16px;color:#666;margin-left:auto;}" & vbLf
     s = s & "  #settings:hover{background:#e0e0e0;color:#333;}" & vbLf
@@ -1081,7 +1081,7 @@ Private Function BuildTabBarHtml() As String
     s = s & "</style></head><body>" & vbLf
     s = s & "  <div id=""tabs""></div>" & vbLf
     s = s & "  <div id=""newtab"" title=""新しいタブ"">+</div>" & vbLf
-    ' --- 第9.18: 設定ボタン (?)。margin-left:auto で右端へ ---
+    ' --- 第9.18: 設定ボタン ([歯車])。margin-left:auto で右端へ ---
     s = s & "  <div id=""settings"" title=""設定"">&#9881;</div>" & vbLf
     s = s & "<script>" & vbLf
     s = s & "  var W = window.chrome && window.chrome.webview;" & vbLf
@@ -1269,5 +1269,4 @@ Private Function BuildTabBarHtml() As String
     s = s & "</body></html>"
     BuildTabBarHtml = s
 End Function
-
 

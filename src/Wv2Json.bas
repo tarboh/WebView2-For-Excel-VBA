@@ -42,9 +42,9 @@ Attribute VB_Name = "Wv2Json"
 ''''''''''''''''''''''''''''''''''
 ' --- Wv2Json.bas  第9.13 段階 (整理: JSON ヘルパーの共通化) ---
 '
-'   ★VBA?JS 通信で使う最小限の JSON ヘルパー★
+'   ★VBA⇔JS 通信で使う最小限の JSON ヘルパー★
 '
-'   第9.11c?9.12d で Wv2TabBar と Wv2NavBar が各々 Private に同じ関数を持って
+'   第9.11c～9.12d で Wv2TabBar と Wv2NavBar が各々 Private に同じ関数を持って
 '   しまっていた (JsonEscape / GetJsonStr / GetJsonNum / BoolToJson)。3 つ目の UI が
 '   出る前に共通モジュールへ抽出する (合意済みのクリーンアップ)。
 '
@@ -369,5 +369,4 @@ Public Function JsonPickStr(ByVal json As String, _
     JsonPickStr = (en > 0)
     If Not JsonPickStr Then outVal = ""
 End Function
-
 

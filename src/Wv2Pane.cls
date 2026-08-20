@@ -271,9 +271,9 @@ Attribute VB_Exposed = False
 '     ★m_isSettings フラグ (設定タブ識別) を新設★
 '       この Pane が「設定タブ」かどうかを保持する真偽フラグ。Wv2Browser の
 '       OpenSettingsTab が、設定タブ生成時にこの Pane に IsSettings = True を
-'       立てる。? が再び押されたとき Browser は m_tabs を頭から走査し、
+'       立てる。[歯車] が再び押されたとき Browser は m_tabs を頭から走査し、
 '       IsSettings = True の Pane があればそれを ActivateTab するだけで新規
-'       生成しない (? 連打で設定タブが増えるのを防ぐ)。
+'       生成しない ([歯車] 連打で設定タブが増えるのを防ぐ)。
 '
 '     ★なぜ Pane のフラグで識別するか (案A)★
 '       設定タブは NavigateToString で data:text/html;base64,... を表示して
@@ -1141,7 +1141,7 @@ End Property
 
 ' --- IsSettings (第9.19 で追加、設定タブ識別フラグ) ---
 '   この Pane が設定タブとして開かれたものかどうか。Wv2Browser.OpenSettingsTab
-'   が生成時に True を立て、? 再クリック時の重複チェックで参照する。
+'   が生成時に True を立て、[歯車] 再クリック時の重複チェックで参照する。
 Public Property Get IsSettings() As Boolean
     IsSettings = m_isSettings
 End Property
