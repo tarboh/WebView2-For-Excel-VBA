@@ -129,9 +129,21 @@ function Split-ModuleFile([string]$path) {
     }
 }
 
-# CodeModule.Lines はメンバー属性行 (Attribute m_browser.VB_VarHelpID = -1) を
-# 返さないが、Export は書き出す (仕様事実39)。比較のときだけ両側から落とす。
-# 書き込みには残す (AddFromString は受け付け、メンバー属性として保存する)。
+# ★メンバー属性行 (Attribute m_browser.VB_VarHelpID = -1) は書き込みからも落とす★
+#
+#   当初は「AddFromString が属性として保存してくれる」と考えて残していたが、
+#   ★それは誤りだった★ AddFromString は属性行を「ただのテキスト」として挿入する。
+#   一方 VBE は WithEvents 変数に対して自分で VB_VarHelpID を生成するので、
+#   結果として ★同じ属性行が 2 本になり、片方がコードとして露出する★。
+#   VBE のコードペインに Attribute 行が現れ、コンパイルエラーになる。
+#
+#   ★しかも CodeModule.Lines は Attribute 行を一切返さないので、
+#     COM 経由の照合ではこの重複を検出できない★ (K-2 で実際に踏んだ)。
+#     検出には olevba でブック内部の実体を読む必要がある (tools/check_book.py)。
+#
+#   落として問題ないことの根拠: K-2 で追加した m_syncTimer は src/ に属性行が
+#   無い状態で import したが、VBE が自動で VB_VarHelpID を生成した。
+#   つまり WithEvents の属性は VBE の管轄で、こちらが送る必要がない。
 function Strip-MemberAttrs([string]$s) {
     $keep = @()
     foreach ($l in ($s -split "`n")) {
@@ -327,7 +339,8 @@ try {
 
         if ($Apply) {
             if ($cm.CountOfLines -ge 1) { $cm.DeleteLines(1, $cm.CountOfLines) }
-            $cm.AddFromString($body)
+            # ★属性行を落として渡す★ 残すと二重になって露出する
+            $cm.AddFromString((Strip-MemberAttrs $body))
             $back = ''
             if ($cm.CountOfLines -ge 1) { $back = Normalize $cm.Lines(1, $cm.CountOfLines) }
             $state = '★書き戻し後の照合に失敗★'

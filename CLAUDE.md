@@ -90,6 +90,12 @@ powershell -ExecutionPolicy Bypass -File tools/import.ps1
   新規モジュールが既存と同じ綴りの識別子を別の大小で宣言していると、
   VBA がプロジェクト全体の綴りを統一する（仕様事実38）。
   `import.ps1` が検出して報告するので、**`export.ps1 -Force` で `src/` に取り込む**
+- ★**メンバー属性行（`Attribute m_foo.VB_VarHelpID`）は書き込みから落とす**★
+  残すと VBE が生成する本物と二重になり、**片方がコードとして露出して
+  コンパイルエラーになる**。`VB_VarHelpID` は VBE が自動生成するので送る必要がない
+- ★**`CodeModule` 経由の照合ではこの重複を検出できない**★
+  `-Apply` の後は `python tools/check_book.py` でブック内部を直接確かめる。
+  露出してしまったら `tools/repair_book.ps1 -Modules <名前> -Apply` で作り直す
 - 対象は `src/*.bas` と `src/*.cls` のみ。`src/document/` と `forms/` は対象外
 
 ---
@@ -144,6 +150,21 @@ powershell -ExecutionPolicy Bypass -File tools/import.ps1
 D-2 で確立: **`Wv2Pane.JsQuote` を使えばよい。** 実体は
 `Chr$(34) & Wv2Json.JsonEscape(s) & Chr$(34)` なので、エスケープ列は実行時に組み立てられ、
 VBA のソース上に現れない。
+
+---
+
+## ★ブックは OneDrive の外に置く（2026-08-20 確定）★
+
+リポジトリは `C:\Users\gugug\GitHub\WebView2-For-Excel-VBA`。**OneDrive 配下に置かない。**
+
+OneDrive 上に置くと:
+
+- Excel がブックを **`https://d.docs.live.net/...` のクラウド URL で開く**
+- そのため **AutoSave が既定で ON** になり、**編集が意識せず書き戻される**
+- ローカルファイルと Excel が見ている版が食い違い、
+  `import.ps1` で直したはずの内容が古い在庫で上書きされる
+
+K-2 でこれを踏み、`import.ps1` で正常化したブックが AutoSave に潰された。
 
 ---
 
@@ -215,6 +236,9 @@ Wv2Log.LogD "..."   ' DEBUG
    ★仕様事実43★ 既存と同じ綴りを別の大小で宣言すると**プロジェクト全体が書き換わる**。
 4. **原典との全数照合**: 変換後のファイルを原典と `Counter` で突き合わせ、
    消失行がすべて意図した削除であることを確認する
+5. **★ブック内部の検査★**: `python tools/check_book.py`
+   ★`CodeModule` 経由では見えない異常がある★ メンバー属性行の重複など。
+   **`import.ps1 -Apply` の後は必ず走らせる**（K-2 で実際にコンパイルエラーを作った）
 
 ### アルゴリズムは Python で先に検証できる
 
