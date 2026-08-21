@@ -8,6 +8,58 @@ Attribute VB_Creatable = False
 Attribute VB_PredeclaredId = False
 Attribute VB_Exposed = False
 ''''''''''''''''''''''''''''''''''
+' --- Wv2Pane.cls  D-3 段階 (要素への書き込みと操作) ---
+'
+'   D-3 で Wv2Pane に増えたのは ★Elem_Exec (Friend) 1 本だけ★。
+'   書き込み・操作の入口は Wv2Element 側 (Value = / Click / SetAttribute) にあり、
+'   Wv2Pane は D-2 の Elem_Read と対になる「撃つ側」の経路を提供する。
+'
+'     Elem_Read (D-2) … 値を 1 個★読む★   変数 e を使う JS ★式★ を受け取る
+'     Elem_Exec (D-3) … 操作を 1 回★撃つ★ 変数 e を使う JS ★文★ を受け取る
+'
+'   ■ Elem_Exec の JS 側の返し方 (Elem_Read と同じ形に揃えた)
+'     {s:'gen', g:...}            世代違い = stale
+'     {s:'nil', g:...}            添字に要素が無い = stale 扱い
+'     {s:'ok',  g:..., v:'<rv>'}  成功。v は★操作が選んだ経路の名前★
+'
+'     ★JS 例外は try-catch しない★ View_ExecuteScriptSafe が既に包んでいるので、
+'     例外は EvalSync の LastEvalError ("TypeError: ..." 等) として上がってくる。
+'     二重に包むと理由が潰れる。
+'
+'   ■ 経路の名前 (v) を返す理由
+'     .Value = の書き込みが★ネイティブ setter 経由 ('setter') か素の代入
+'     ('direct') か★は、SPA に効いたかどうかの唯一の手掛かりになる。
+'     Wv2Element.LastInfo で読める (D-3 の事後報告)。
+'
+'   ■ DOM 条件待ち (D-3b、論点2 案C: ★明示待ちを第一級に、暗黙待ちは opt-in★)
+'
+'     WaitFor(selector, timeoutSec)  As Wv2Element  現れるまで待つ
+'     WaitGone(selector, timeoutSec) As Boolean     消えるまで待つ
+'     ImplicitWaitSec                As Single      ★既定 0 = 無効★
+'
+'     ★未知1 は実測で決着した (2026-08-22)★
+'       raw ExecuteScript に★決して解決しない Promise★ を渡しても、完了通知が
+'       即座に resultJson={} で返ってきた。つまり ExecuteScript は Promise を待たない。
+'       したがって待ちは JS 側では書けず、★VBA 側でポーリングする★ (論点3 の骨格)。
+'       (そもそも EvalSync は JSON.stringify(式) を撃つので、待てたとしても
+'        Promise はその場で {} に潰れる。JS 側で待つなら D-1 の包み方から作り直しになる)
+'
+'     ★ポーリング中はブレーク/ステップ実行しないこと★ (仕様事実20)
+'       EvalSync の DoEvents 区間が待ち時間ぶん伸びる。10 秒待てば 10 秒間ずっと危険域。
+'
+'     ★Nothing / False の意味は LastEvalOk で分ける (設計原則93)★
+'       WaitFor  → Nothing + LastEvalOk=True  … 時間内に現れなかった (正常)
+'                  Nothing + LastEvalOk=False … 失敗 (セレクタ不正 / in-callback 等)
+'       WaitGone → False   + LastEvalOk=True  … 時間内に消えなかった (正常)
+'                  False   + LastEvalOk=False … 失敗
+'       ★失敗と判った時点で待たずに抜ける★ in-callback で 10 秒固まるのを防ぐため。
+'
+'     ImplicitWaitSec は QuerySelector / GetElementById に暗黙のリトライを掛ける
+'     (SeleniumVBA と同じ流儀)。★既定は 0 で、明示的に設定した人だけが影響を受ける★
+'     理由: 既定で待つと「本当に無い」の確認が毎回タイムアウト待ちになり、
+'     D-2 で決めた「Nothing + LastEvalOk=True = 本当に存在しない」の意味が濁る。
+'
+''''''''''''''''''''''''''''''''''
 ' --- Wv2Pane.cls  K-1 段階 (デバッグログのファイル出力への移行) ---
 '
 '   K-1 の変更は ★ログの出し先だけ★ で、ロジックは 1 行も変えていない。
@@ -703,6 +755,18 @@ Private Const EVAL_DISCARDED As Long = 2
 ' タイムアウトの既定値 (秒)。READY_TIMEOUT (Controller 生成待ち 10 秒) より短くする。
 ' JS 式 1 本の実行は本来ミリ秒オーダーなので、5 秒待つ時点で異常とみなす。
 Private Const EVAL_TIMEOUT_DEFAULT As Single = 5
+
+' --- D-3: DOM 条件待ちの設定 (論点2 案C / 論点4 案A) ---
+'   m_implicitWaitSec : QuerySelector / GetElementById に掛ける暗黙待ち (秒)。
+'                       ★既定 0 = 無効★ ImplicitWaitSec プロパティで設定する。
+'   POLL_INTERVAL_SEC : ポーリング間隔 (論点4 案A の固定 100ms)。
+'                       ★EvalSync 1 往復が実測 38ms なので、実際の判定間隔は
+'                       約 140ms になる★ (2026-08-22 の実機ログから)。
+'   WAIT_TIMEOUT_DEFAULT : WaitFor / WaitGone の既定の上限 (秒)。
+Private m_implicitWaitSec As Single
+Private Const POLL_INTERVAL_SEC    As Single = 0.1
+Private Const WAIT_TIMEOUT_DEFAULT As Single = 10
+
 
 ' --- D-2: 要素レジストリの世代キャッシュ ---
 '   m_domGen : JS から最後に受け取った window.__wv2.gen。高速パス専用。
@@ -3763,14 +3827,16 @@ End Function
 '         Debug.Print el.TagName & " / " & el.Value
 '     End If
 ' ============================================================
+'   ★D-3 から ImplicitWaitSec > 0 なら見つかるまでリトライする★
+'     既定は 0 なので、設定しない限り D-2 と同じ「1 往復で答える」ままである。
 Public Function GetElementById(ByVal elementId As String) As Wv2Element
-    Set GetElementById = FindOne("document.getElementById(" & JsQuote(elementId) & ")", _
-                                 "GetElementById", elementId)
+    Set GetElementById = FindWithWait("document.getElementById(" & JsQuote(elementId) & ")", _
+                                      "GetElementById", elementId, m_implicitWaitSec)
 End Function
 
 Public Function QuerySelector(ByVal selector As String) As Wv2Element
-    Set QuerySelector = FindOne("document.querySelector(" & JsQuote(selector) & ")", _
-                                "QuerySelector", selector)
+    Set QuerySelector = FindWithWait("document.querySelector(" & JsQuote(selector) & ")", _
+                                     "QuerySelector", selector, m_implicitWaitSec)
 End Function
 
 
@@ -3787,9 +3853,12 @@ End Function
 '   ★h に負値を使わない理由★ Wv2Json.JsonGetNum は負数を扱わない (設計原則64)。
 '     found フラグで分けるので h は常に 0 以上でよい。
 ' ============================================================
+'   quiet (D-3): True なら「見つからない」のログを出さない。ポーリング中に
+'                1 往復ごとに出ると、イミディエイトが埋まってしまうため。
 Private Function FindOne(ByVal finderExpr As String, _
                          ByVal apiName As String, _
-                         ByVal arg As String) As Wv2Element
+                         ByVal arg As String, _
+                         Optional ByVal quiet As Boolean = False) As Wv2Element
     Dim js As String
     Dim res As String
     Dim gen As String
@@ -3818,7 +3887,9 @@ Private Function FindOne(ByVal finderExpr As String, _
 
     If InStr(1, res, """found"":true") = 0 Then
         ' 見つからなかった。★これは正常★ なので m_lastEvalOk は True のまま。
-        Debug.Print "Wv2Pane." & apiName & ": 見つからない (" & arg & ")"
+        If Not quiet Then
+            Debug.Print "Wv2Pane." & apiName & ": 見つからない (" & arg & ")"
+        End If
         Exit Function
     End If
 
@@ -4000,5 +4071,293 @@ Friend Function Elem_CheckStale(ByVal elemHandle As Long, _
     End If
 
     Elem_CheckStale = (InStr(1, res, """s"":""ok""") = 0)
+End Function
+
+
+' ============================================================
+' Elem_Exec (D-3、Friend) - 要素への書き込み・操作を 1 回撃つ
+'
+'   引数:
+'     elemHandle  : JS 側 R.els[] の添字
+'     elemGen     : 要素を取得したときの世代
+'     actionStmts : 変数 e (対象要素) を使う JS ★文★ (末尾のセミコロン込み)。
+'                   結果の手掛かりを返したいときは変数 rv に文字列を入れる。
+'     outVal      : rv の内容 (経路の名前)。使わない操作では空文字
+'     outStatus   : 失敗理由。成功時は空文字
+'   戻り値:
+'     True  = 操作が JS 側で最後まで走った
+'     False = stale または失敗。理由は outStatus
+'
+'   ★成功 = 「JS が例外なく走った」であって「意図した効果が出た」ではない★
+'     例えば disabled なボタンへの Click は例外にならないが何も起きない。
+'     効果を確かめたいときは読み取り (Elem_Read) で確認すること。
+'
+'   高速パスと世代キャッシュの扱いは Elem_Read と同じ (安全側にしか倒れない)。
+' ============================================================
+Friend Function Elem_Exec(ByVal elemHandle As Long, _
+                          ByVal elemGen As String, _
+                          ByVal actionStmts As String, _
+                          ByRef outVal As String, _
+                          ByRef outStatus As String) As Boolean
+    Dim js As String
+    Dim res As String
+    Dim gen As String
+
+    outVal = ""
+    outStatus = ""
+    Elem_Exec = False
+
+    ' --- 高速パス: 手元の世代がキャッシュと違えば、往復せずに stale と確定できる ---
+    If Len(m_domGen) > 0 Then
+        If elemGen <> m_domGen Then
+            outStatus = "stale"
+            Exit Function
+        End If
+    End If
+
+    js = "(function(){" & JsRegistryPrologue() & _
+         "if(R.gen!==" & JsQuote(elemGen) & "){return {s:'gen',g:R.gen};}" & _
+         "var e=R.els[" & CStr(elemHandle) & "];" & _
+         "if(!e){return {s:'nil',g:R.gen};}" & _
+         "var rv='';" & actionStmts & _
+         "return {s:'ok',g:R.gen,v:String(rv)};})()"
+
+    res = EvalSync(js)
+
+    If Not m_lastEvalOk Then
+        outStatus = m_lastEvalError
+        Exit Function
+    End If
+
+    If Wv2Json.JsonPickStr(res, "g", gen) Then
+        m_domGen = gen
+    End If
+
+    If InStr(1, res, """s"":""ok""") = 0 Then
+        outStatus = "stale"
+        Exit Function
+    End If
+
+    Wv2Json.JsonPickStr res, "v", outVal
+    Elem_Exec = True
+End Function
+
+' ============================================================
+' ★D-3b の本体: DOM 条件待ち★
+'
+'   未知1 の実測 (2026-08-22) で「ExecuteScript は Promise を待たない」が確定した
+'   ため、待ちは論点3 の骨格どおり★VBA 側のポーリング★で実装する。
+'   JS 側に仕掛けを置く案 (postMessage で完了を通知する) は採らない。保留テーブルが
+'   増えるうえ、D-1 で作った EvalSync の型から外れるため。
+' ============================================================
+
+
+' ============================================================
+' ImplicitWaitSec (D-3、論点2 案C の opt-in 部分)
+'
+'   0 より大きくすると、QuerySelector / GetElementById が★見つかるまで★
+'   リトライするようになる (SeleniumVBA の ImplicitMaxWait と同じ流儀)。
+'
+'   ★既定は 0 (無効)★ 既定で待たせない理由はヘッダー参照。
+'   WaitFor / WaitGone は明示的な待ちなので★この設定の影響を受けない★。
+'
+'   使用例:
+'     p.ImplicitWaitSec = 5      ' 以後の検索は最大 5 秒粘る
+'     p.ImplicitWaitSec = 0      ' 元に戻す
+' ============================================================
+Public Property Get ImplicitWaitSec() As Single
+    ImplicitWaitSec = m_implicitWaitSec
+End Property
+
+Public Property Let ImplicitWaitSec(ByVal waitSec As Single)
+    If waitSec < 0 Then waitSec = 0
+    m_implicitWaitSec = waitSec
+    Wv2Log.LogD "Wv2Pane.ImplicitWaitSec = " & waitSec & " 秒"
+End Property
+
+
+' ============================================================
+' WaitFor (D-3、論点2 案C の第一級 API)
+'   セレクタに一致する要素が★現れるまで★待つ。
+'
+'   引数:
+'     selector   : CSS セレクタ
+'     timeoutSec : 上限 (秒)。既定 10。0 以下なら既定値に丸める
+'   戻り値:
+'     見つかった            → Wv2Element
+'     時間内に現れなかった  → ★Nothing + LastEvalOk = True★ (正常)
+'     失敗 (セレクタ不正等) → ★Nothing + LastEvalOk = False★ (LastEvalError に理由)
+'
+'   ★存在だけを見る (論点5 案A)★
+'     display:none でも「現れた」と判定する。SPA では DOM にあるが不可視、が
+'     普通にあるため。可視まで待ちたくなったら WaitVisible を別に用意する。
+'
+'   ★失敗したら待たずに即座に返す★
+'     in-callback (仕様事実14) やセレクタの構文エラーは、待っても直らない。
+'     ここで粘ると、イベントハンドラ内から呼んだときに timeoutSec ぶん固まる。
+'
+'   ★待っている間はブレーク/ステップ実行しないこと★ (仕様事実20)
+'
+'   使用例:
+'     Dim el As Wv2Element
+'     Set el = p.WaitFor("#result", 5)
+'     If el Is Nothing Then
+'         Debug.Print IIf(p.LastEvalOk, "現れなかった", "失敗: " & p.LastEvalError)
+'     End If
+' ============================================================
+Public Function WaitFor(ByVal selector As String, _
+                        Optional ByVal timeoutSec As Single = WAIT_TIMEOUT_DEFAULT) As Wv2Element
+    If timeoutSec <= 0 Then timeoutSec = WAIT_TIMEOUT_DEFAULT
+
+    Set WaitFor = FindWithWait("document.querySelector(" & JsQuote(selector) & ")", _
+                               "WaitFor", selector, timeoutSec)
+End Function
+
+
+' ============================================================
+' WaitGone (D-3)
+'   セレクタに一致する要素が★無くなるまで★待つ。
+'
+'   戻り値:
+'     True                  … 消えた (または最初から 1 個も無かった)
+'     False + LastEvalOk=True  … 時間内に消えなかった (正常な「まだ居る」)
+'     False + LastEvalOk=False … 失敗 (理由は LastEvalError)
+'
+'   ★存在確認にレジストリを使わない★ (D-3 の事後報告)
+'     FindOne を回すと、まだ消えていない要素をポーリングのたびに R.els へ
+'     push してしまう (10 秒待てば 70 個ほど積む)。WaitGone は掴む必要が
+'     無いので、found の真偽だけを返す専用の式 (ExistsNow) を使う。
+'
+'   使用例:
+'     If Not p.WaitGone(".spinner", 10) Then Debug.Print "まだ回っている"
+' ============================================================
+Public Function WaitGone(ByVal selector As String, _
+                         Optional ByVal timeoutSec As Single = WAIT_TIMEOUT_DEFAULT) As Boolean
+    Dim t0 As Single
+    Dim found As Boolean
+    Dim ok As Boolean
+
+    WaitGone = False
+    If timeoutSec <= 0 Then timeoutSec = WAIT_TIMEOUT_DEFAULT
+
+    t0 = Timer
+    Do
+        found = ExistsNow(selector, ok)
+
+        If Not ok Then
+            ' 失敗は待っても直らない。LastEvalOk = False のまま返す。
+            Debug.Print "Wv2Pane.WaitGone: 失敗 (" & selector & ") err=" & m_lastEvalError
+            Exit Function
+        End If
+
+        If Not found Then
+            WaitGone = True
+            Exit Function
+        End If
+
+        If ElapsedSec(t0) >= timeoutSec Then
+            Debug.Print "Wv2Pane.WaitGone: 時間切れ (" & selector & ") " & _
+                        timeoutSec & " 秒たっても消えなかった"
+            Exit Function
+        End If
+
+        PollPause
+    Loop
+End Function
+
+
+' ============================================================
+' FindWithWait (D-3、Private) - 見つかるまで FindOne を繰り返す
+'
+'   waitSec <= 0 なら 1 回だけ試す (= D-2 までの挙動そのまま)。
+'   ★見つからない (Nothing + LastEvalOk=True) ときだけ粘る★
+'   失敗 (LastEvalOk=False) は即座に諦める。
+' ============================================================
+Private Function FindWithWait(ByVal finderExpr As String, _
+                              ByVal apiName As String, _
+                              ByVal arg As String, _
+                              ByVal waitSec As Single) As Wv2Element
+    Dim el As Wv2Element
+    Dim t0 As Single
+
+    t0 = Timer
+    Do
+        Set el = FindOne(finderExpr, apiName, arg, (waitSec > 0))
+
+        If Not el Is Nothing Then
+            Set FindWithWait = el
+            Exit Function
+        End If
+
+        If Not m_lastEvalOk Then Exit Function
+        If waitSec <= 0 Then Exit Function
+        If ElapsedSec(t0) >= waitSec Then
+            Debug.Print "Wv2Pane." & apiName & ": 時間切れ (" & arg & ") " & _
+                        waitSec & " 秒たっても現れなかった"
+            Exit Function
+        End If
+
+        PollPause
+    Loop
+End Function
+
+
+' ============================================================
+' ExistsNow (D-3、Private) - 要素があるかだけを 1 往復で調べる
+'
+'   ★レジストリに登録しない★ WaitGone のポーリング用 (上のコメント参照)。
+'   outOk : JS の実行自体が成功したか。False なら戻り値に意味は無い。
+' ============================================================
+Private Function ExistsNow(ByVal selector As String, ByRef outOk As Boolean) As Boolean
+    Dim js As String
+    Dim res As String
+    Dim gen As String
+
+    ExistsNow = False
+    outOk = False
+
+    js = "(function(){" & JsRegistryPrologue() & _
+         "var e=document.querySelector(" & JsQuote(selector) & ");" & _
+         "return {g:R.gen,found:!!e};})()"
+
+    res = EvalSync(js)
+    If Not m_lastEvalOk Then Exit Function
+
+    If Wv2Json.JsonPickStr(res, "g", gen) Then
+        m_domGen = gen
+    End If
+
+    outOk = True
+    ExistsNow = (InStr(1, res, """found"":true") > 0)
+End Function
+
+
+' ============================================================
+' PollPause / ElapsedSec (D-3、Private) - ポーリングの足踏みと経過時間
+'
+'   PollPause : POLL_INTERVAL_SEC (100ms) だけ DoEvents を回す。
+'               ★Sleep を使わない★ WebView2 の完了通知を回すため、
+'               この間もメッセージポンプを止めてはいけない。
+'
+'   ElapsedSec: ★Timer は深夜 0 時に 0 へ戻る★ ので、素の引き算だと負になり
+'               待ちループが永久に抜けなくなる。またいだ分を足して補正する
+'               (D-3 の事後報告。実機検証が 1:53 に走ったので他人事ではない)。
+' ============================================================
+Private Sub PollPause()
+    Dim t0 As Single
+
+    t0 = Timer
+    Do
+        DoEvents
+        If ElapsedSec(t0) >= POLL_INTERVAL_SEC Then Exit Do
+    Loop
+End Sub
+
+Private Function ElapsedSec(ByVal sinceTimer As Single) As Single
+    Dim d As Single
+
+    d = Timer - sinceTimer
+    If d < 0 Then d = d + 86400
+    ElapsedSec = d
 End Function
 

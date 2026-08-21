@@ -7,7 +7,63 @@ Attribute VB_GlobalNameSpace = False
 Attribute VB_Creatable = False
 Attribute VB_PredeclaredId = False
 Attribute VB_Exposed = False
-''''''''''''''''''''''''''''''''''
+' --- Wv2Element.cls  D-3 段階 (書き込みと操作) ---
+'
+'   D-3 で増えた公開メンバは 4 つ:
+'
+'     Value = v                  Property Let  値を書き込む (★戻り値が無い★)
+'     Click()             As Boolean           クリックする
+'     SetAttribute(n, v)  As Boolean           属性を書き込む
+'     LastInfo            As String            直前の操作が選んだ経路の名前
+'
+'   ■ 成否の見方 (D-2 の LastOk / LastError 規約をそのまま踏襲、論点8)
+'     Click / SetAttribute … 戻り値 (Boolean) で足りる。理由が要るときは LastError。
+'     Value =              … ★Property Let は戻り値を返せない★ ので、
+'                            書き込みが通ったかは★必ず LastOk を見る★。
+'
+'       el.Value = "abc"
+'       If Not el.LastOk Then Debug.Print el.LastError
+'
+'     LastError に入る値は D-2 と同じ (stale / no-pane / in-callback / timeout(n s) /
+'     JS の例外メッセージ)。
+'
+'   ■ ★成功は「JS が例外なく走った」であって「意図した効果が出た」ではない★
+'     disabled なボタンを Click しても例外は出ないので True が返る。readonly な
+'     input への書き込みも同じ。効果が要るときは★読み戻して確かめる★こと。
+'
+'   ■ Value = がやっていること (論点6: ★SPA 対応の核心★)
+'     素直に e.value = x とすると、React / Vue などのフレームワークは
+'     値の変更に★気づかない★。フレームワークは要素インスタンスに独自の
+'     value setter (value tracker) を被せていて、そこを通った代入は
+'     「自分が知っている値」として記録されてしまうため。
+'
+'     そこで D-3 は次の順で撃つ:
+'       (1) e.constructor.prototype から value の★ネイティブ setter★ を取り出し、
+'           あればそれを e に対して呼ぶ (= tracker を迂回する)。LastInfo = 'setter'
+'           取り出せない要素なら素の代入に落とす。            LastInfo = 'direct'
+'       (2) input イベントを発火 (React 系がこれを見る)
+'       (3) change イベントを発火 (jQuery 系がこれを見る)
+'     ★両方撃つ★のが論点6 の合意。素の HTML では change が 1 回余分に飛ぶが、
+'     実害よりも「反応しないページがある」事故の方が高くつくと判断した。
+'
+'   ■ Click の形 (論点7 案A)
+'     e.click() があればそれを使う (LastInfo = 'click')。無ければ
+'     MouseEvent('click') を bubbles つきで dispatch する (LastInfo = 'dispatch')。
+'     ★mousedown / mouseup は撃たない★ ドラッグ系 UI が要るようになってから考える。
+'     なお発火するイベントの isTrusted は false になる (JS から作った合成イベント
+'     なので原理的にそうなる)。isTrusted を見て弾くページには効かない。
+'
+'   ■ 使用例
+'     Dim p As Wv2Pane, el As Wv2Element
+'     Set p = UserForm1.GetActivePane
+'     Set el = p.QuerySelector("input[name='q']")
+'     el.Value = "検索語"
+'     If el.LastOk Then p.QuerySelector("button[type='submit']").Click
+'
+'   ★D-3 の時点では「変化し終わるのを待つ」手段はまだ無い★
+'     Click の後に DOM が書き変わるのを待つ WaitFor / WaitGone は、
+'     論点3 の前提を実測してから入れる (Wv2Tests.Test_D3_Probe_Promise)。
+'''''''''''''''''''''''''''''''''''
 ' --- Wv2Element.cls  D-2 段階 (要素ハンドルの読み取り操作) ---
 '
 '   ★D 軸 (DOM / ページ自動制御) の中核クラス。D-2 で新規追加。★
@@ -87,6 +143,9 @@ Private m_gen    As String
 Private m_lastOk    As Boolean
 Private m_lastError As String
 
+' --- 直前の★操作★が選んだ経路の名前 (D-3。'setter' / 'direct' / 'click' 等) ---
+Private m_lastInfo  As String
+
 
 Private Sub Class_Initialize()
     Set m_pane = Nothing
@@ -94,6 +153,7 @@ Private Sub Class_Initialize()
     m_gen = ""
     m_lastOk = False
     m_lastError = ""
+    m_lastInfo = ""
 End Sub
 
 
@@ -116,6 +176,7 @@ Friend Sub InitElement(ByVal ownerPane As Wv2Pane, _
     m_gen = elemGen
     m_lastOk = True
     m_lastError = ""
+    m_lastInfo = ""
 End Sub
 
 
@@ -144,6 +205,22 @@ End Property
 
 Public Property Get LastError() As String
     LastError = m_lastError
+End Property
+
+
+' ============================================================
+' LastInfo (D-3) - 直前の★操作★が選んだ経路の名前
+'
+'   Value =      : 'setter' (ネイティブ setter 経由) / 'direct' (素の代入)
+'   Click        : 'click'  (e.click())             / 'dispatch' (合成イベント)
+'   SetAttribute : 'ok'
+'
+'   ★読み取り系 (TagName 等) を呼ぶと空文字に戻る★ 「直前の操作」の記録なので、
+'   書き込みの経路を見たいときは★書いた直後に★読むこと。
+'   診断用であって、成否の判定には使わない (それは LastOk / 戻り値の役目)。
+' ============================================================
+Public Property Get LastInfo() As String
+    LastInfo = m_lastInfo
 End Property
 
 
@@ -202,6 +279,107 @@ End Function
 
 
 ' ============================================================
+' Value (D-3、Property Let) - 値を書き込む
+'
+'   ★Property Let なので戻り値が無い★ 成否は必ず LastOk を見ること (論点8)。
+'   ★フレームワークに気づかせるための 3 手順★ (ヘッダー参照):
+'     ネイティブ setter ← input イベント ← change イベント の順に撃つ
+'
+'   使用例:
+'     el.Value = "検索語"
+'     If Not el.LastOk Then Debug.Print "書き込み失敗: " & el.LastError
+'
+'   ★input / textarea / select 以外に撃つとどうなるか★
+'     div などは value プロパティを持たないので、ネイティブ setter が取れず
+'     素の代入に落ちる (LastInfo = 'direct')。JS 的には独自プロパティが 1 個
+'     生えるだけで例外にはならないので、★LastOk は True になる★。
+'     「効果が出たか」は読み戻して確かめること。
+' ============================================================
+Public Property Let value(ByVal newValue As String)
+    Dim jsVal As String
+    Dim js As String
+
+    If m_pane Is Nothing Then
+        m_lastOk = False
+        m_lastError = "no-pane"
+        m_lastInfo = ""
+        Exit Property
+    End If
+
+    jsVal = m_pane.JsQuote(newValue)
+
+    js = "var d=Object.getOwnPropertyDescriptor(e.constructor.prototype,'value');" & _
+         "if(d&&d.set){d.set.call(e," & jsVal & ");rv='setter';}" & _
+         "else{e.value=" & jsVal & ";rv='direct';}" & _
+         "e.dispatchEvent(new Event('input',{bubbles:true}));" & _
+         "e.dispatchEvent(new Event('change',{bubbles:true}));"
+
+    ExecAction js, "Value"
+End Property
+
+
+' ============================================================
+' Click (D-3) - クリックする
+'
+'   戻り値: True = JS 側で例外なく走った / False = 失敗 (理由は LastError)
+'
+'   e.click() があればそれを使い (LastInfo = 'click')、無ければ
+'   MouseEvent('click') を bubbles + cancelable つきで dispatch する
+'   (LastInfo = 'dispatch')。どちらも★合成イベントなので isTrusted は false★。
+'
+'   ★戻り値 True は「押した結果どうなったか」を保証しない★
+'     disabled なボタンでも例外は出ないので True が返る。ページ遷移や DOM の
+'     書き換えが起きるかは別問題で、それを待つ手段は D-3 の時点ではまだ無い。
+'
+'   使用例:
+'     If Not el.Click() Then Debug.Print el.LastError
+' ============================================================
+Public Function Click() As Boolean
+    Dim js As String
+
+    js = "if(typeof e.click==='function'){e.click();rv='click';}" & _
+         "else{e.dispatchEvent(new MouseEvent('click'," & _
+         "{bubbles:true,cancelable:true,view:window}));rv='dispatch';}"
+
+    Click = ExecAction(js, "Click")
+End Function
+
+
+' ============================================================
+' SetAttribute (D-3) - 属性を書き込む
+'
+'   戻り値: True = 書き込めた / False = 失敗 (理由は LastError)
+'
+'   ★GetAttribute と .Value の違いは D-2 のヘッダー参照★
+'     SetAttribute("value", ...) は★属性★を変えるだけで、ユーザーが編集済みの
+'     input の★現在値★は変わらない。値を変えたいなら .Value = を使うこと。
+'
+'   属性名が不正なとき (空文字など) は JS が InvalidCharacterError を投げるので、
+'   False + LastError にその名前とメッセージが入る。
+'
+'   使用例:
+'     el.SetAttribute "data-id", "42"
+' ============================================================
+Public Function SetAttribute(ByVal attrName As String, _
+                             ByVal attrValue As String) As Boolean
+    Dim js As String
+
+    SetAttribute = False
+
+    If m_pane Is Nothing Then
+        m_lastOk = False
+        m_lastError = "no-pane"
+        m_lastInfo = ""
+        Exit Function
+    End If
+
+    js = "e.setAttribute(" & m_pane.JsQuote(attrName) & "," & _
+         m_pane.JsQuote(attrValue) & ");rv='ok';"
+
+    SetAttribute = ExecAction(js, "SetAttribute")
+End Function
+
+' ============================================================
 ' IsStale (D-2)
 '   このハンドルがもう使えなくなっていないかを返す。
 '
@@ -221,6 +399,7 @@ Public Property Get IsStale() As Boolean
 
     m_lastOk = False
     m_lastError = ""
+    m_lastInfo = ""
 
     If m_pane Is Nothing Then
         m_lastError = "no-pane"
@@ -251,6 +430,7 @@ Private Function ReadProp(ByVal valueExpr As String) As String
 
     m_lastOk = False
     m_lastError = ""
+    m_lastInfo = ""
     ReadProp = ""
 
     If m_pane Is Nothing Then
@@ -267,3 +447,37 @@ Private Function ReadProp(ByVal valueExpr As String) As String
         m_lastError = st
     End If
 End Function
+
+
+' ============================================================
+' ExecAction (D-3、内部共通: 操作を 1 回撃つ)
+'   actionStmts は JS 側で変数 e (対象要素) を使える★文★。
+'   経路の名前を残したいときは JS 側で変数 rv に代入する。
+'   ReadProp と対になる書き込み側の窓口で、状態の更新の仕方も揃えてある。
+' ============================================================
+Private Function ExecAction(ByVal actionStmts As String, _
+                            ByVal apiName As String) As Boolean
+    Dim v As String
+    Dim st As String
+
+    m_lastOk = False
+    m_lastError = ""
+    m_lastInfo = ""
+    ExecAction = False
+
+    If m_pane Is Nothing Then
+        m_lastError = "no-pane"
+        Exit Function
+    End If
+
+    If m_pane.Elem_Exec(m_handle, m_gen, actionStmts, v, st) Then
+        m_lastOk = True
+        m_lastInfo = v
+        ExecAction = True
+    Else
+        m_lastError = st
+        Wv2Log.LogW "Wv2Element." & apiName & ": 失敗 (handle=" & m_handle & _
+                    ") err=" & st
+    End If
+End Function
+

@@ -1,5 +1,31 @@
 Attribute VB_Name = "Wv2Tests"
 ''''''''''''''''''''''''''''''''''
+' --- Wv2Tests.bas  D-3 段階 (書き込みと操作の検証) ---
+'
+'   D-3 の追加事項:
+'     Test_D3_Probe_Promise … ★最初に走らせる★ 未知1 の実測。
+'                             ExecuteScript が Promise を待つかを確かめる。
+'                             ここの結果で「待ちループをどこで回すか」(論点3) が決まる。
+'     Test_D3_Write         … Value = / Click / SetAttribute を自前 HTML で一括検証。
+'     Test_D3_Framework     … ★ネイティブ setter 経由で書けているか★ を
+'                             React の value tracker を模した監視で確かめる (未知3)。
+'     Test_D3_Help          … 上 3 つの手順と、見るべきログの説明。
+'
+'   判定ヘルパー (TestEq / TestBool / D2El / D2WaitTitle) は D-2 のものを再利用する。
+'   ★D-3 で判定の出し先を Wv2Log に変え、D-1 / D-2 のテストもそれに乗せた★
+'   (イミディエイトは ExecuteScript の配管ログで流れて読めないため)。
+'   既存の Test_* は 1 つも変更していない。
+'
+'   ★検証ページ (BuildD3ProbeHtml) は D-2 と同じく自前 HTML★
+'     D-2 のページとの違いは、ページ側に★監視用の JS★ を仕込んであること:
+'       window.__p = {inputs, changes, clicks, clickInfo,
+'                     trackedSet, notified, ignored}
+'     ・input / change の発火回数 (論点6 の「両方撃つ」の確認)
+'     ・click の回数とイベントの素性 (type / bubbles / isTrusted)
+'     ・★React 風の value tracker★ を #react に被せてあり、
+'       tracker 経由の代入 (trackedSet) と、フレームワークが
+'       変更に気づいた回数 (notified) / 気づけなかった回数 (ignored) を数える。
+'''''''''''''''''''''''''''''''''''
 ' --- Wv2Tests.bas  D-2 段階 (要素レジストリ + Wv2Element の検証) ---
 '
 '   D-2 の追加事項:
@@ -365,6 +391,12 @@ Attribute VB_Name = "Wv2Tests"
 ''''''''''''''''''''''''''''''''''
 
 Option Explicit
+
+' --- 判定カウンタ (TestBool / TestEq / D1Case が数え、TestCountPrint が出す) ---
+'     ★イミディエイトは ExecuteScript の配管ログで流れてしまうので、
+'     判定はログファイルにも残す (K-1 の Wv2Log 経由)。★
+Private m_okCount As Long
+Private m_ngCount As Long
 
 
 ' ============================================================
@@ -2230,17 +2262,18 @@ Public Sub Test_D1_Eval()
     Set p = UserForm1.GetActivePane
 
     If p Is Nothing Then
-        Debug.Print "Test_D1_Eval: アクティブな Pane がありません。" & _
+        Wv2Log.LogI "Test_D1_Eval: アクティブな Pane がありません。" & _
                     "先に StartWebView2_Full を実行してください。"
         Exit Sub
     End If
 
-    Debug.Print ""
-    Debug.Print "================ Test_D1_Eval 開始 ================"
-    Debug.Print "  対象タブ: " & p.DocumentTitle
-    Debug.Print "  in-callback 深さ (期待 0): " & p.InCallbackDepth
-    Debug.Print ""
-    Debug.Print "  --- (1) 型ごとの戻り値 ---"
+    Wv2Log.LogI ""
+    TestCountReset
+    Wv2Log.LogI "================ Test_D1_Eval 開始 ================"
+    Wv2Log.LogI "  対象タブ: " & p.DocumentTitle
+    Wv2Log.LogI "  in-callback 深さ (期待 0): " & p.InCallbackDepth
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (1) 型ごとの戻り値 ---"
 
     D1Case p, "整数", "1 + 2", 5, True
     D1Case p, "小数", "1 / 4", 5, True
@@ -2256,23 +2289,23 @@ Public Sub Test_D1_Eval()
     D1Case p, "長い文字列 (300 字)", _
               "(function(){var s='';for(var i=0;i<300;i++){s+='x';}return s;})()", 5, True
 
-    Debug.Print ""
-    Debug.Print "  --- (2) 実ページの情報 ---"
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (2) 実ページの情報 ---"
     D1Case p, "document.title", "document.title", 5, True
     D1Case p, "location.href", "document.location.href", 5, True
     D1Case p, "body の文字数", "document.body.innerText.length", 5, True
 
-    Debug.Print ""
-    Debug.Print "  --- (3) 失敗系 (FAIL 表示にならず OK と出れば正常) ---"
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (3) 失敗系 (FAIL 表示にならず OK と出れば正常) ---"
     D1Case p, "JS 例外 (ReferenceError)", "nonexistentFunctionForTest()", 5, False
     D1Case p, "JS 例外 (throw を即時関数で包む)", _
               "(function(){throw new Error('boom');})()", 5, False
     D1Case p, "構文エラー (式が壊れている)", "1 +", 5, False
 
-    Debug.Print ""
-    Debug.Print "  --- (4) タイムアウトと回復 ---"
-    Debug.Print "  ※ JS を 3 秒ブロックし、1 秒で打ち切る。数秒後に"
-    Debug.Print "     ★破棄済み★ の遅延到着ログが出れば論点5 は成功。"
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (4) タイムアウトと回復 ---"
+    Wv2Log.LogI "  ※ JS を 3 秒ブロックし、1 秒で打ち切る。数秒後に"
+    Wv2Log.LogI "     ★破棄済み★ の遅延到着ログが出れば論点5 は成功。"
     D1Case p, "タイムアウト (3 秒を 1 秒で打ち切り)", _
               "(function(){var t=Date.now();while(Date.now()-t<3000){}return 1;})()", 1, False
 
@@ -2285,10 +2318,11 @@ Public Sub Test_D1_Eval()
 
     D1Case p, "タイムアウト後の回復", "1 + 1", 5, True
 
-    Debug.Print ""
-    Debug.Print "  in-callback 深さ (期待 0): " & p.InCallbackDepth
-    Debug.Print "================ Test_D1_Eval 終了 ================"
-    Debug.Print ""
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  in-callback 深さ (期待 0): " & p.InCallbackDepth
+    TestCountPrint
+    Wv2Log.LogI "================ Test_D1_Eval 終了 ================"
+    Wv2Log.LogI ""
 End Sub
 
 
@@ -2309,14 +2343,16 @@ Private Sub D1Case(ByVal p As Wv2Pane, _
 
     If p.LastEvalOk = expectOk Then
         mark = "  [OK  ] "
+        m_okCount = m_okCount + 1
     Else
         mark = "  [FAIL] "
+        m_ngCount = m_ngCount + 1
     End If
 
     If p.LastEvalOk Then
-        Debug.Print mark & caseName & " → " & Left$(r, 100)
+        Wv2Log.LogI mark & caseName & " → " & Left$(r, 100)
     Else
-        Debug.Print mark & caseName & " → 失敗: " & p.LastEvalError
+        Wv2Log.LogI mark & caseName & " → 失敗: " & p.LastEvalError
     End If
 End Sub
 
@@ -2333,42 +2369,35 @@ Public Sub Test_D1_Guard()
 
     Set p = UserForm1.GetActivePane
     If p Is Nothing Then
-        Debug.Print "Test_D1_Guard: アクティブな Pane がありません。" & _
+        Wv2Log.LogI "Test_D1_Guard: アクティブな Pane がありません。" & _
                     "先に StartWebView2_Full を実行してください。"
         Exit Sub
     End If
 
-    Debug.Print ""
-    Debug.Print "================ Test_D1_Guard 開始 ================"
+    Wv2Log.LogI ""
+    TestCountReset
+    Wv2Log.LogI "================ Test_D1_Guard 開始 ================"
 
-    Debug.Print "  1) 通常状態 (深さ=" & p.InCallbackDepth & ") で EvalSync"
+    Wv2Log.LogI "  1) 通常状態 (深さ=" & p.InCallbackDepth & ") で EvalSync"
     r = p.EvalSync("1 + 1", 5)
-    If p.LastEvalOk And r = "2" Then
-        Debug.Print "     [OK  ] 2 が返った"
-    Else
-        Debug.Print "     [FAIL] r=" & r & " err=" & p.LastEvalError
-    End If
+    TestBool "  通常状態で 2 が返る", (p.LastEvalOk And r = "2")
+    If Not p.LastEvalOk Then Wv2Log.LogI "         r=" & r & " err=" & p.LastEvalError
 
-    Debug.Print "  2) ハンドラ内にいる状態を作って EvalSync (拒否されるのが正常)"
+    Wv2Log.LogI "  2) ハンドラ内にいる状態を作って EvalSync (拒否されるのが正常)"
     p.Debug_SetInCallback 1
     r = p.EvalSync("1 + 1", 5)
-    If (Not p.LastEvalOk) And p.LastEvalError = "in-callback" Then
-        Debug.Print "     [OK  ] in-callback で拒否された (固まらずに即戻った)"
-    Else
-        Debug.Print "     [FAIL] r=" & r & " ok=" & p.LastEvalOk & " err=" & p.LastEvalError
-    End If
+    TestBool "  ★in-callback で拒否された (固まらずに即戻った)★", _
+             ((Not p.LastEvalOk) And p.LastEvalError = "in-callback")
 
-    Debug.Print "  3) ResetCallbackGuard で復帰させて再実行"
+    Wv2Log.LogI "  3) ResetCallbackGuard で復帰させて再実行"
     p.ResetCallbackGuard
     r = p.EvalSync("1 + 1", 5)
-    If p.LastEvalOk And r = "2" Then
-        Debug.Print "     [OK  ] 復帰した (深さ=" & p.InCallbackDepth & ")"
-    Else
-        Debug.Print "     [FAIL] r=" & r & " err=" & p.LastEvalError
-    End If
+    TestBool "  ResetCallbackGuard で復帰する", (p.LastEvalOk And r = "2")
+    Wv2Log.LogI "         深さ=" & p.InCallbackDepth
 
-    Debug.Print "================ Test_D1_Guard 終了 ================"
-    Debug.Print ""
+    TestCountPrint
+    Wv2Log.LogI "================ Test_D1_Guard 終了 ================"
+    Wv2Log.LogI ""
 End Sub
 
 
@@ -2382,7 +2411,9 @@ Public Sub Test_D1_Help()
     Debug.Print "=========================================================="
     Debug.Print ""
     Debug.Print "  --- 準備 ---"
-    Debug.Print "  1) StartWebView2_Full でブラウザを起動する"
+    Debug.Print "  1) UserForm1.Show vbModeless して StartWebView2_Full を実行する"
+    Debug.Print "     ★Show が先★ フォームのウィンドウが無いと Frame1 の HWND が"
+    Debug.Print "     取れず、hWnd_Frame = 0 のまま Browser.Init が失敗する。"
     Debug.Print "  2) 適当な実ページを開く (Google などで可)"
     Debug.Print "  3) ★イベントバーストが静まるまで待つ★ (仕様事実 20)"
     Debug.Print "     イミディエイトのログが止まってから次に進むこと。"
@@ -2394,6 +2425,12 @@ Public Sub Test_D1_Help()
     Debug.Print "  ★実行中はブレーク/ステップ実行しないこと★"
     Debug.Print "    EvalSync は DoEvents を回して待つので、その最中に止めると"
     Debug.Print "    仕様事実 20 の窓を踏む。"
+    Debug.Print ""
+    Debug.Print "  --- ★判定はログファイルに残る★ ---"
+    Debug.Print "    イミディエイトは ExecuteScript の配管ログ (1 往復で 15 行) で"
+    Debug.Print "    すぐ流れるので、合否はログファイルで見る:"
+    Debug.Print "      ?Wv2Log.LogPath   … ファイルの場所"
+    Debug.Print "      末尾の「★判定 n 件: OK x / FAIL y★」だけ見れば合否が分かる"
     Debug.Print ""
     Debug.Print "  --- 見るもの (Test_D1_Eval) ---"
     Debug.Print "  ・(1) 全ケースが [OK  ] であること"
@@ -2440,120 +2477,123 @@ Public Sub Test_D2_Find()
 
     Set b = UserForm1.CurrentBrowser
     If b Is Nothing Then
-        Debug.Print "Test_D2_Find: Browser が起動していません。" & _
+        Wv2Log.LogI "Test_D2_Find: Browser が起動していません。" & _
                     "先に UserForm1.StartWebView2_Full を実行してください。"
         Exit Sub
     End If
 
     Set p = b.AddTabWithHtml(BuildD2ProbeHtml())
     If p Is Nothing Then
-        Debug.Print "Test_D2_Find: タブの生成に失敗しました。"
+        Wv2Log.LogI "Test_D2_Find: タブの生成に失敗しました。"
         Exit Sub
     End If
 
     If Not D2WaitTitle(p, "D-2 プローブ", 10) Then
-        Debug.Print "Test_D2_Find: 検証ページの読み込みを確認できませんでした。中止します。"
+        Wv2Log.LogI "Test_D2_Find: 検証ページの読み込みを確認できませんでした。中止します。"
         Exit Sub
     End If
 
-    Debug.Print ""
-    Debug.Print "================ Test_D2_Find 開始 ================"
-    Debug.Print "  世代 (取得前は空文字が正常): [" & p.CurrentDomGen & "]"
-    Debug.Print ""
-    Debug.Print "  --- (1) 取得できること ---"
+    Wv2Log.LogI ""
+    TestCountReset
+    Wv2Log.LogI "================ Test_D2_Find 開始 ================"
+    Wv2Log.LogI "  世代 (取得前は空文字が正常): [" & p.CurrentDomGen & "]"
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (1) 取得できること ---"
 
     Set el = p.GetElementById("ttl")
-    D2Bool "GetElementById(ttl) が Nothing でない", Not (el Is Nothing)
+    TestBool "GetElementById(ttl) が Nothing でない", Not (el Is Nothing)
     If el Is Nothing Then
-        Debug.Print "  以降の検証は続けられません。中止します。"
+        Wv2Log.LogI "  以降の検証は続けられません。中止します。"
+        TestCountPrint
         Exit Sub
     End If
-    Debug.Print "        handle=" & el.Handle & " gen=" & el.Generation
-    Debug.Print "        Pane 側の世代キャッシュ: " & p.CurrentDomGen
-    D2Bool "取得直後は stale でない", (el.IsStale = False)
+    Wv2Log.LogI "        handle=" & el.Handle & " gen=" & el.Generation
+    Wv2Log.LogI "        Pane 側の世代キャッシュ: " & p.CurrentDomGen
+    TestBool "取得直後は stale でない", (el.IsStale = False)
 
-    Debug.Print ""
-    Debug.Print "  --- (2) 読み取り 4 種 + 属性 ---"
-    D2Eq "TagName (大文字で返る)", el, el.TagName, "H1"
-    D2Eq "InnerText (日本語)", el, el.InnerText, "D-2 要素レジストリのプローブ"
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (2) 読み取り 4 種 + 属性 ---"
+    TestEq "TagName (大文字で返る)", el, el.TagName, "H1"
+    TestEq "InnerText (日本語)", el, el.InnerText, "D-2 要素レジストリのプローブ"
 
     Set el = D2El(p, "box")
-    D2Eq "GetAttribute(class)", el, el.GetAttribute("class"), "card"
-    D2Eq "GetAttribute(data-note) 日本語属性", el, _
+    TestEq "GetAttribute(class)", el, el.GetAttribute("class"), "card"
+    TestEq "GetAttribute(data-note) 日本語属性", el, _
          el.GetAttribute("data-note"), "属性の値 (日本語)"
-    D2Eq "InnerHTML (★仕様事実30 の復号★)", el, _
+    TestEq "InnerHTML (★仕様事実30 の復号★)", el, _
          el.InnerHTML, "<span class=""tag"">内側</span>テキスト"
 
     Set el = D2El(p, "esc")
-    D2Eq "記号の混在", el, el.InnerText, "記号: < > & "" ' \ の混在"
+    TestEq "記号の混在", el, el.InnerText, "記号: < > & "" ' \ の混在"
 
     Set el = D2El(p, "pre")
-    D2Eq "改行を含むテキスト (\n の復号)", el, el.InnerText, "1 行目" & vbLf & "2 行目"
+    TestEq "改行を含むテキスト (\n の復号)", el, el.InnerText, "1 行目" & vbLf & "2 行目"
 
-    Debug.Print ""
-    Debug.Print "  --- (3) 入力要素の value ---"
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (3) 入力要素の value ---"
     Set el = D2El(p, "txt")
-    D2Eq "input の TagName", el, el.TagName, "INPUT"
-    D2Eq "input の Value", el, el.value, "初期値"
-    D2Eq "input の GetAttribute(value)", el, el.GetAttribute("value"), "初期値"
+    TestEq "input の TagName", el, el.TagName, "INPUT"
+    TestEq "input の Value", el, el.value, "初期値"
+    TestEq "input の GetAttribute(value)", el, el.GetAttribute("value"), "初期値"
 
     Set el = D2El(p, "area")
-    D2Eq "textarea の Value", el, el.value, "テキストエリアの値"
+    TestEq "textarea の Value", el, el.value, "テキストエリアの値"
 
     Set el = D2El(p, "sel")
-    D2Eq "select の Value (selected の option)", el, el.value, "b"
+    TestEq "select の Value (selected の option)", el, el.value, "b"
 
-    Debug.Print ""
-    Debug.Print "  --- (4) 空・不在は★成功して空文字★になること (LastOk=True) ---"
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (4) 空・不在は★成功して空文字★になること (LastOk=True) ---"
     Set el = D2El(p, "empty")
-    D2Eq "空要素の InnerText", el, el.InnerText, ""
+    TestEq "空要素の InnerText", el, el.InnerText, ""
 
     Set el = D2El(p, "lnk")
-    D2Eq "a 要素の Value (value を持たない)", el, el.value, ""
-    D2Eq "存在しない属性", el, el.GetAttribute("data-nothing"), ""
-    D2Eq "href 属性", el, el.GetAttribute("href"), "https://example.com/path?x=1"
+    TestEq "a 要素の Value (value を持たない)", el, el.value, ""
+    TestEq "存在しない属性", el, el.GetAttribute("data-nothing"), ""
+    TestEq "href 属性", el, el.GetAttribute("href"), "https://example.com/path?x=1"
 
-    Debug.Print ""
-    Debug.Print "  --- (5) QuerySelector (★セレクタ内のシングルクォート★) ---"
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (5) QuerySelector (★セレクタ内のシングルクォート★) ---"
     Set el2 = p.QuerySelector("input[name='q']")
-    D2Bool "QuerySelector(input[name='q']) が取れる", Not (el2 Is Nothing)
+    TestBool "QuerySelector(input[name='q']) が取れる", Not (el2 Is Nothing)
     If Not el2 Is Nothing Then
-        D2Eq "同じ要素が取れている", el2, el2.value, "初期値"
+        TestEq "同じ要素が取れている", el2, el2.value, "初期値"
     End If
 
     Set el2 = p.QuerySelector("#box .tag")
-    D2Bool "子孫セレクタが効く", Not (el2 Is Nothing)
+    TestBool "子孫セレクタが効く", Not (el2 Is Nothing)
     If Not el2 Is Nothing Then
-        D2Eq "子孫セレクタの InnerText", el2, el2.InnerText, "内側"
+        TestEq "子孫セレクタの InnerText", el2, el2.InnerText, "内側"
     End If
 
-    Debug.Print ""
-    Debug.Print "  --- (6) 見つからない / 失敗の区別 (論点4) ---"
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (6) 見つからない / 失敗の区別 (論点4) ---"
     Set el2 = p.QuerySelector("#nothing-here")
-    D2Bool "存在しないセレクタ → Nothing", (el2 Is Nothing)
-    D2Bool "  かつ LastEvalOk = True (本当に無い、の意味)", (p.LastEvalOk = True)
+    TestBool "存在しないセレクタ → Nothing", (el2 Is Nothing)
+    TestBool "  かつ LastEvalOk = True (本当に無い、の意味)", (p.LastEvalOk = True)
 
     Set el2 = p.QuerySelector("###")
-    D2Bool "不正なセレクタ → Nothing", (el2 Is Nothing)
-    D2Bool "  かつ LastEvalOk = False (失敗、の意味)", (p.LastEvalOk = False)
-    Debug.Print "        LastEvalError = " & p.LastEvalError
+    TestBool "不正なセレクタ → Nothing", (el2 Is Nothing)
+    TestBool "  かつ LastEvalOk = False (失敗、の意味)", (p.LastEvalOk = False)
+    Wv2Log.LogI "        LastEvalError = " & p.LastEvalError
 
-    Debug.Print ""
-    Debug.Print "  --- (7) ClearElementRegistry (論点3) ---"
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (7) ClearElementRegistry (論点3) ---"
     Set el = D2El(p, "ttl")
-    D2Bool "掃除前は stale でない", (el.IsStale = False)
-    D2Bool "ClearElementRegistry が成功する", p.ClearElementRegistry()
-    D2Bool "掃除後は stale になる", (el.IsStale = True)
+    TestBool "掃除前は stale でない", (el.IsStale = False)
+    TestBool "ClearElementRegistry が成功する", p.ClearElementRegistry()
+    TestBool "掃除後は stale になる", (el.IsStale = True)
     Set el = p.GetElementById("ttl")
-    D2Bool "掃除後も取り直せる", Not (el Is Nothing)
+    TestBool "掃除後も取り直せる", Not (el Is Nothing)
     If Not el Is Nothing Then
-        D2Eq "取り直した要素が読める", el, el.TagName, "H1"
+        TestEq "取り直した要素が読める", el, el.TagName, "H1"
     End If
 
-    Debug.Print ""
-    Debug.Print "  in-callback 深さ (期待 0): " & p.InCallbackDepth
-    Debug.Print "================ Test_D2_Find 終了 ================"
-    Debug.Print ""
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  in-callback 深さ (期待 0): " & p.InCallbackDepth
+    TestCountPrint
+    Wv2Log.LogI "================ Test_D2_Find 終了 ================"
+    Wv2Log.LogI ""
 End Sub
 
 
@@ -2570,94 +2610,66 @@ Public Sub Test_D2_Stale()
 
     Set b = UserForm1.CurrentBrowser
     If b Is Nothing Then
-        Debug.Print "Test_D2_Stale: Browser が起動していません。" & _
+        Wv2Log.LogI "Test_D2_Stale: Browser が起動していません。" & _
                     "先に UserForm1.StartWebView2_Full を実行してください。"
         Exit Sub
     End If
 
     Set p = b.AddTabWithHtml(BuildD2ProbeHtml())
     If p Is Nothing Then
-        Debug.Print "Test_D2_Stale: タブの生成に失敗しました。"
+        Wv2Log.LogI "Test_D2_Stale: タブの生成に失敗しました。"
         Exit Sub
     End If
     If Not D2WaitTitle(p, "D-2 プローブ", 10) Then
-        Debug.Print "Test_D2_Stale: 検証ページの読み込みを確認できませんでした。中止します。"
+        Wv2Log.LogI "Test_D2_Stale: 検証ページの読み込みを確認できませんでした。中止します。"
         Exit Sub
     End If
 
-    Debug.Print ""
-    Debug.Print "================ Test_D2_Stale 開始 ================"
+    Wv2Log.LogI ""
+    TestCountReset
+    Wv2Log.LogI "================ Test_D2_Stale 開始 ================"
 
     Set el = p.GetElementById("ttl")
     If el Is Nothing Then
-        Debug.Print "  [FAIL] 要素が取れないので中止します。"
+        Wv2Log.LogI "  [FAIL] 要素が取れないので中止します。"
+        m_ngCount = m_ngCount + 1
+        TestCountPrint
         Exit Sub
     End If
     genBefore = el.Generation
-    Debug.Print "  1) 遷移前: handle=" & el.Handle & " gen=" & genBefore
-    D2Eq "     読める", el, el.TagName, "H1"
-    D2Bool "     stale でない", (el.IsStale = False)
+    Wv2Log.LogI "  1) 遷移前: handle=" & el.Handle & " gen=" & genBefore
+    TestEq "     読める", el, el.TagName, "H1"
+    TestBool "     stale でない", (el.IsStale = False)
 
-    Debug.Print "  2) 同じタブを別のページへ遷移させる"
+    Wv2Log.LogI "  2) 同じタブを別のページへ遷移させる"
     p.View_NavigateToString BuildD2SecondHtml()
     If Not D2WaitTitle(p, "D-2 プローブ 2 枚目", 10) Then
-        Debug.Print "  [FAIL] 2 枚目の読み込みを確認できませんでした。中止します。"
+        Wv2Log.LogI "  [FAIL] 2 枚目の読み込みを確認できませんでした。中止します。"
         Exit Sub
     End If
 
-    Debug.Print "  3) 遷移後: 古いハンドルの状態を見る"
-    D2Bool "     IsStale = True になる", (el.IsStale = True)
+    Wv2Log.LogI "  3) 遷移後: 古いハンドルの状態を見る"
+    TestBool "     IsStale = True になる", (el.IsStale = True)
     v = el.TagName
-    D2Bool "     読み取りは空文字 + LastOk=False", (Len(v) = 0 And el.LastOk = False)
-    Debug.Print "        LastError = " & el.LastError
-    D2Bool "     LastError が stale であること", (el.LastError = "stale")
+    TestBool "     読み取りは空文字 + LastOk=False", (Len(v) = 0 And el.LastOk = False)
+    Wv2Log.LogI "        LastError = " & el.LastError
+    TestBool "     LastError が stale であること", (el.LastError = "stale")
 
-    Debug.Print "  4) 新しいページで取り直せる"
+    Wv2Log.LogI "  4) 新しいページで取り直せる"
     Set el = p.GetElementById("second")
-    D2Bool "     取得できる", Not (el Is Nothing)
+    TestBool "     取得できる", Not (el Is Nothing)
     If Not el Is Nothing Then
         genAfter = el.Generation
-        D2Eq "     読める", el, el.InnerText, "2 枚目のページ"
-        Debug.Print "        新しい gen=" & genAfter
-        D2Bool "     世代が変わっている", (genAfter <> genBefore)
+        TestEq "     読める", el, el.InnerText, "2 枚目のページ"
+        Wv2Log.LogI "        新しい gen=" & genAfter
+        TestBool "     世代が変わっている", (genAfter <> genBefore)
     End If
 
-    Debug.Print ""
-    Debug.Print "  in-callback 深さ (期待 0): " & p.InCallbackDepth
-    Debug.Print "================ Test_D2_Stale 終了 ================"
-    Debug.Print ""
-End Sub
-
-
-' ============================================================
-' D2Eq / D2Bool (D-2 の判定ヘルパー)
-'   D2Eq  … 値の一致を見る。LastOk が False なら失敗理由も出す。
-'   D2Bool… 条件だけを見る。
-' ============================================================
-Private Sub D2Eq(ByVal label As String, _
-                 ByVal el As Wv2Element, _
-                 ByVal got As String, _
-                 ByVal want As String)
-    If got = want Then
-        Debug.Print "  [OK  ] " & label
-    Else
-        Debug.Print "  [FAIL] " & label
-        Debug.Print "         期待: [" & want & "]"
-        Debug.Print "         実際: [" & got & "]"
-    End If
-
-    If el Is Nothing Then Exit Sub
-    If Not el.LastOk Then
-        Debug.Print "         ※ LastOk=False err=" & el.LastError
-    End If
-End Sub
-
-Private Sub D2Bool(ByVal label As String, ByVal cond As Boolean)
-    If cond Then
-        Debug.Print "  [OK  ] " & label
-    Else
-        Debug.Print "  [FAIL] " & label
-    End If
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  in-callback 深さ (期待 0): " & p.InCallbackDepth
+    TestCountPrint
+    Wv2Log.LogI "================ Test_D2_Stale 終了 ================"
+    Wv2Log.LogI ""
 End Sub
 
 
@@ -2674,7 +2686,7 @@ Private Function D2El(ByVal p As Wv2Pane, ByVal elementId As String) As Wv2Eleme
 
     Set e = p.GetElementById(elementId)
     If e Is Nothing Then
-        Debug.Print "  [FAIL] 要素 #" & elementId & " が取得できない " & _
+        Wv2Log.LogI "  [FAIL] 要素 #" & elementId & " が取得できない " & _
                     "(LastEvalOk=" & p.LastEvalOk & " err=" & p.LastEvalError & ")"
         Set e = New Wv2Element
     End If
@@ -2714,7 +2726,7 @@ Private Function D2WaitTitle(ByVal p As Wv2Pane, _
             End If
         End If
         If (Timer - t0) > timeoutSec Then
-            Debug.Print "D2WaitTitle: タイムアウト (期待=" & wantTitle & _
+            Wv2Log.LogI "D2WaitTitle: タイムアウト (期待=" & wantTitle & _
                         " 実際=" & cur & " err=" & p.LastEvalError & ")"
             Exit Function
         End If
@@ -2798,7 +2810,9 @@ Public Sub Test_D2_Help()
     Debug.Print "=========================================================="
     Debug.Print ""
     Debug.Print "  --- 準備 ---"
-    Debug.Print "  1) StartWebView2_Full でブラウザを起動する"
+    Debug.Print "  1) UserForm1.Show vbModeless して StartWebView2_Full を実行する"
+    Debug.Print "     ★Show が先★ フォームのウィンドウが無いと Frame1 の HWND が"
+    Debug.Print "     取れず、hWnd_Frame = 0 のまま Browser.Init が失敗する。"
     Debug.Print "  2) ★イベントバーストが静まるまで待つ★ (仕様事実 20)"
     Debug.Print "     イミディエイトのログが止まってから次に進むこと。"
     Debug.Print "     ※検証ページは自前 HTML なので、外部サイトを開く必要はない。"
@@ -2811,6 +2825,12 @@ Public Sub Test_D2_Help()
     Debug.Print "  ★実行中はブレーク/ステップ実行しないこと★"
     Debug.Print "    EvalSync が DoEvents を回して待つので、その最中に止めると"
     Debug.Print "    仕様事実 20 の窓を踏む。"
+    Debug.Print ""
+    Debug.Print "  --- ★判定はログファイルに残る★ ---"
+    Debug.Print "    イミディエイトは ExecuteScript の配管ログ (1 往復で 15 行) で"
+    Debug.Print "    すぐ流れるので、合否はログファイルで見る:"
+    Debug.Print "      ?Wv2Log.LogPath   … ファイルの場所"
+    Debug.Print "      末尾の「★判定 n 件: OK x / FAIL y★」だけ見れば合否が分かる"
     Debug.Print ""
     Debug.Print "  --- 見るもの (Test_D2_Find) ---"
     Debug.Print "  ・(1)～(7) の全行が [OK  ] であること"
@@ -3118,5 +3138,723 @@ Public Sub Test_K2_Help()
     Debug.Print "    Wv2Browser.SyncSettingsViewsNow: 設定ビュー N 枚へ <engine> を反映した"
     Debug.Print "    Wv2Browser.IsSettingsView: 判定できないので... (読み込み中などで正常)"
     Debug.Print String$(64, "=")
+End Sub
+
+' ============================================================
+' Test_D3_Probe_Promise (D-3 の初手: ★未知1 の実測★)
+'
+'   「ExecuteScript は Promise を待つか」を確かめる。ここの結果で
+'   論点3 (待ちループを VBA で回すか JS で回すか) が決まる。
+'
+'   ★(B) は自動判定できない★ raw ExecuteScript の結果は EvalSync の
+'   保留テーブルを通らないので、VBA からは受け取れない。代わりに
+'   Wv2Pane.OnExecuteScriptCompleted が出す resultJson= の行を目で見る。
+'   その行が★どのマーカーの間に出たか★で判定できるようにしてある。
+' ============================================================
+Public Sub Test_D3_Probe_Promise()
+    Dim p As Wv2Pane
+    Dim res As String
+    Dim cb As Long
+
+    Set p = UserForm1.GetActivePane
+    If p Is Nothing Then
+        Wv2Log.LogI "Test_D3_Probe_Promise: アクティブな Pane がありません。" & _
+                    "先に UserForm1.StartWebView2_Full を実行してください。"
+        Exit Sub
+    End If
+
+    Wv2Log.LogI ""
+    TestCountReset
+    Wv2Log.LogI "================ Test_D3_Probe_Promise 開始 ================"
+    Wv2Log.LogI "  ★未知1 の実測: ExecuteScript は Promise を待つか★"
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (A) EvalSync 経由 (D-1 の同期プリミティブ) ---"
+    Wv2Log.LogI "      EvalSync は JSON.stringify(式) を撃つので、式が Promise を"
+    Wv2Log.LogI "      返してもその場で {} に潰れる。★仕様上そうなる★ことの確認。"
+
+    res = p.EvalSync("1+1")
+    Wv2Log.LogI "      1+1                 → [" & res & "] ok=" & p.LastEvalOk
+    res = p.EvalSync("Promise.resolve(42)")
+    Wv2Log.LogI "      Promise.resolve(42) → [" & res & "] ok=" & p.LastEvalOk
+    TestBool "EvalSync は Promise を値に解決しない ({} になる)", (res = "{}")
+
+    res = p.EvalSync("(async function(){return 5;})()")
+    Wv2Log.LogI "      async 関数の戻り    → [" & res & "] ok=" & p.LastEvalOk
+
+    res = p.EvalSync("new Promise(function(r){setTimeout(function(){r(7);},300);})")
+    Wv2Log.LogI "      遅延 Promise        → [" & res & "] ok=" & p.LastEvalOk
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (B) raw ExecuteScript (JSON.stringify で包まない) ---"
+    Wv2Log.LogI "      ★ここは目で見る★ マーカーの間に出る"
+    Wv2Log.LogI "      「OnExecuteScriptCompleted: ... resultJson=」の行を読むこと。"
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  ★★★ (B-1) Promise.resolve(42) ここから ★★★"
+    cb = p.View_ExecuteScript("Promise.resolve(42)")
+    D3Pump 2
+    Wv2Log.LogI "  ★★★ (B-1) ここまで (callbackId=" & cb & ") ★★★"
+    Wv2Log.LogI "      resultJson={} なら★待たない★ / resultJson=42 なら★待つ★"
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  ★★★ (B-2) 決して解決しない Promise ここから ★★★"
+    cb = p.View_ExecuteScript("new Promise(function(r){})")
+    D3Pump 2
+    Wv2Log.LogI "  ★★★ (B-2) ここまで (callbackId=" & cb & ") ★★★"
+    Wv2Log.LogI "      この間に resultJson={} が出た → ★待たない★ (確定)"
+    Wv2Log.LogI "      この間に何も出なかった       → ★待つ★ (確定)"
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- 判定の意味 ---"
+    Wv2Log.LogI "  ・待たない → 論点3 の骨格どおり★VBA 側でポーリング★する"
+    Wv2Log.LogI "  ・待つ     → JS 側で待てるので EvalSync の包み方から設計し直す"
+    Wv2Log.LogI "                (第9.30 / D-1 の教訓: 前提が違えば初手を差し替える)"
+    Wv2Log.LogI "  ※ (A) の結果は (B) がどちらでも変わらない。今の EvalSync は"
+    Wv2Log.LogI "     Promise を待てないので、待ちを JS 側に置くなら D-1 の包み方に手が要る。"
+
+    Wv2Log.LogI "  in-callback 深さ (期待 0): " & p.InCallbackDepth
+    TestCountPrint
+    Wv2Log.LogI "================ Test_D3_Probe_Promise 終了 ================"
+    Wv2Log.LogI ""
+End Sub
+
+
+' ============================================================
+' Test_D3_Write (D-3 本体の検証: 書き込み・操作)
+' ============================================================
+Public Sub Test_D3_Write()
+    Dim b As Wv2Browser
+    Dim p As Wv2Pane
+    Dim el As Wv2Element
+    Dim dummy As Wv2Element
+    Dim info As String
+    Dim res As String
+
+    Set b = UserForm1.CurrentBrowser
+    If b Is Nothing Then
+        Wv2Log.LogI "Test_D3_Write: Browser が起動していません。" & _
+                    "先に UserForm1.StartWebView2_Full を実行してください。"
+        Exit Sub
+    End If
+
+    Set p = b.AddTabWithHtml(BuildD3ProbeHtml())
+    If p Is Nothing Then
+        Wv2Log.LogI "Test_D3_Write: タブの生成に失敗しました。"
+        Exit Sub
+    End If
+    If Not D2WaitTitle(p, "D-3 プローブ", 10) Then
+        Wv2Log.LogI "Test_D3_Write: 検証ページの読み込みを確認できませんでした。中止します。"
+        Exit Sub
+    End If
+
+    Wv2Log.LogI ""
+    TestCountReset
+    Wv2Log.LogI "================ Test_D3_Write 開始 ================"
+    Wv2Log.LogI "  --- (1) input への書き込み ---"
+
+    Set el = D2El(p, "txt")
+    el.value = "書き込んだ値"
+    info = el.LastInfo
+    TestBool "Value = が成功する (LastOk)", el.LastOk
+    Wv2Log.LogI "        経路 (LastInfo) = " & info & "  ★setter が期待値★"
+    TestBool "  ★ネイティブ setter 経由である★", (info = "setter")
+    TestEq "読み戻すと書いた値になる", el, el.value, "書き込んだ値"
+    TestEq "★属性の value は変わらない★ (初期値のまま)", el, _
+         el.GetAttribute("value"), "初期値"
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (2) 記号・日本語 (JsQuote の確認) ---"
+    el.value = "記号: < > & "" ' \ の混在"
+    TestBool "記号混じりでも成功する", el.LastOk
+    TestEq "記号混じりが往復する", el, el.value, _
+         "記号: < > & "" ' \ の混在"
+    el.value = ""
+    TestEq "空文字を書き込める", el, el.value, ""
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (3) input と change の両方が飛ぶこと (論点6) ---"
+    Wv2Log.LogI "        ここまでの書き込みは 3 回。"
+    TestBool "input イベントが 3 回飛んだ", (D3Cnt(p, "inputs") = 3)
+    TestBool "change イベントが 3 回飛んだ", (D3Cnt(p, "changes") = 3)
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (4) textarea / select / checkbox ---"
+    Set el = D2El(p, "area")
+    el.value = "書き換えたテキスト"
+    TestEq "textarea に書ける", el, el.value, "書き換えたテキスト"
+
+    Set el = D2El(p, "sel")
+    TestEq "select の初期値", el, el.value, "b"
+    el.value = "a"
+    TestEq "select を切り替えられる", el, el.value, "a"
+
+    Set el = D2El(p, "chk")
+    TestBool "checkbox の Click が成功する", el.Click()
+    res = p.EvalSync("document.getElementById('chk').checked")
+    TestBool "  checked が true になった", (res = "true")
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (5) ボタンの Click (論点7) ---"
+    Set el = D2El(p, "btn")
+    TestBool "Click が True を返す", el.Click()
+    Wv2Log.LogI "        経路 (LastInfo) = " & el.LastInfo
+    TestBool "  ★e.click() が使われた★", (el.LastInfo = "click")
+    TestBool "  ページ側で 1 回数えられた", (D3Cnt(p, "clicks") = 1)
+    Wv2Log.LogI "        イベントの素性 (type/bubbles/isTrusted) = " & _
+                D3Str(p, "clickInfo")
+    Wv2Log.LogI "        ※ isTrusted=false は★合成イベントなので原理的にそうなる★"
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (6) SetAttribute ---"
+    Set el = D2El(p, "dv")
+    TestBool "SetAttribute が True を返す", _
+           el.SetAttribute("data-note", "属性の値 (日本語)")
+    TestEq "書いた属性が読める", el, el.GetAttribute("data-note"), _
+         "属性の値 (日本語)"
+    TestBool "引用符を含む属性値も書ける", _
+           el.SetAttribute("data-q", "a""b'c")
+    TestEq "  往復する", el, el.GetAttribute("data-q"), "a""b'c"
+    TestBool "★不正な属性名は False になる★", (el.SetAttribute("", "x") = False)
+    Wv2Log.LogI "        LastError = " & el.LastError
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (7) value を持たない要素への書き込み ---"
+    Wv2Log.LogI "        div は value を持たないので素の代入に落ちる。"
+    Wv2Log.LogI "        ★JS 的には例外にならないので LastOk は True★"
+    el.value = "div に書いてみる"
+    info = el.LastInfo
+    TestBool "LastOk は True (エラーではない)", el.LastOk
+    TestBool "  経路は direct (ネイティブ setter が無い)", (info = "direct")
+    TestEq "  読み戻すと生えたプロパティが見える", el, el.value, "div に書いてみる"
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (8) 失敗の区別 (D-2 の規約を踏襲、論点8) ---"
+    Set dummy = New Wv2Element
+    TestBool "New で作った要素の Click は False", (dummy.Click() = False)
+    TestBool "  LastError = no-pane", (dummy.LastError = "no-pane")
+    dummy.value = "x"
+    TestBool "  Value = も LastOk=False / no-pane", _
+           (dummy.LastOk = False And dummy.LastError = "no-pane")
+
+    Set el = D2El(p, "txt")
+    TestBool "掃除前は書ける", el.SetAttribute("data-a", "1")
+    TestBool "ClearElementRegistry が成功する", p.ClearElementRegistry()
+    TestBool "★掃除後の Click は False★", (el.Click() = False)
+    TestBool "  LastError = stale", (el.LastError = "stale")
+    el.value = "書けないはず"
+    TestBool "  Value = も stale で止まる", _
+           (el.LastOk = False And el.LastError = "stale")
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  in-callback 深さ (期待 0): " & p.InCallbackDepth
+    TestCountPrint
+    Wv2Log.LogI "================ Test_D3_Write 終了 ================"
+    Wv2Log.LogI ""
+End Sub
+
+
+' ============================================================
+' Test_D3_Framework (★未知3 の実測★ フレームワークに伝わるか)
+'
+'   検証ページの #react には★React の value tracker を模した監視★が
+'   被せてある。tracker は「自分が知っている値」を覚えていて、input
+'   イベントが来たときに現在値と食い違っていたら★変更に気づく★。
+'
+'     素の代入 (e.value = x)  … tracker 経由なので tracker が値を覚えてしまい、
+'                               input が飛んでも★気づけない★ (ignored が増える)
+'     ネイティブ setter 経由  … tracker を迂回するので値が食い違い、
+'                               input で★気づく★ (notified が増える)
+'
+'   ここが D-3 の存在意義そのもの。FAIL したら Wv2Element.Value = の
+'   ディスクリプタ取得 (e.constructor.prototype) を疑うこと。
+' ============================================================
+Public Sub Test_D3_Framework()
+    Dim b As Wv2Browser
+    Dim p As Wv2Pane
+    Dim el As Wv2Element
+
+    Set b = UserForm1.CurrentBrowser
+    If b Is Nothing Then
+        Wv2Log.LogI "Test_D3_Framework: Browser が起動していません。" & _
+                    "先に UserForm1.StartWebView2_Full を実行してください。"
+        Exit Sub
+    End If
+
+    Set p = b.AddTabWithHtml(BuildD3ProbeHtml())
+    If p Is Nothing Then
+        Wv2Log.LogI "Test_D3_Framework: タブの生成に失敗しました。"
+        Exit Sub
+    End If
+    If Not D2WaitTitle(p, "D-3 プローブ", 10) Then
+        Wv2Log.LogI "Test_D3_Framework: 検証ページの読み込みを確認できませんでした。"
+        Exit Sub
+    End If
+
+    Wv2Log.LogI ""
+    TestCountReset
+    Wv2Log.LogI "================ Test_D3_Framework 開始 ================"
+    Wv2Log.LogI "  --- (1) ★素の代入★ + input 発火 (D-3 を使わない書き方) ---"
+
+    p.EvalSync "(function(){var e=document.getElementById('react');" & _
+               "e.value='素の代入';" & _
+               "e.dispatchEvent(new Event('input',{bubbles:true}));return 1;})()"
+    TestBool "素の代入が走った", p.LastEvalOk
+    TestBool "  tracker 経由になった (trackedSet=1)", (D3Cnt(p, "trackedSet") = 1)
+    TestBool "  ★フレームワークは気づかない (notified=0)★", _
+           (D3Cnt(p, "notified") = 0)
+    TestBool "  取りこぼしとして数えられた (ignored=1)", (D3Cnt(p, "ignored") = 1)
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (2) ★Wv2Element.Value =★ (D-3 の書き方) ---"
+
+    Set el = D2El(p, "react")
+    el.value = "D-3 の書き込み"
+    TestBool "書き込みが成功する", el.LastOk
+    TestBool "  ネイティブ setter 経由 (LastInfo=setter)", (el.LastInfo = "setter")
+    TestBool "  ★tracker を迂回した (trackedSet は 1 のまま)★", _
+           (D3Cnt(p, "trackedSet") = 1)
+    TestBool "  ★フレームワークが変更に気づいた (notified=1)★", _
+           (D3Cnt(p, "notified") = 1)
+    TestEq "  値も入っている", el, el.value, "D-3 の書き込み"
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  ここが D-3 の核心。(1) が notified=0 で (2) が notified=1 なら、"
+    Wv2Log.LogI "  React / Vue のページでも .Value = が効くことになる。"
+    Wv2Log.LogI "  in-callback 深さ (期待 0): " & p.InCallbackDepth
+    TestCountPrint
+    Wv2Log.LogI "================ Test_D3_Framework 終了 ================"
+    Wv2Log.LogI ""
+End Sub
+
+
+' ============================================================
+' TestBool / TestEq / TestCountReset / TestCountPrint (判定ヘルパー)
+'
+'   ★D-1 / D-2 / D-3 の全テストが使う共通の判定★ (元は D-2 の D2Bool / D2Eq。
+'   D-3 でログファイルにも出すようにしたのを機に 1 組へ統合した)
+'
+'   D-2 の TestBool / TestEq と同じ判定だが、★出し先が Wv2Log★ である点が違う。
+'   Wv2Log は内部で Debug.Print も撃つのでイミディエイトの見え方は変わらない。
+'   狙いは★判定行がログファイルに残ること★:
+'     ・イミディエイトは ExecuteScript の配管ログ (1 往復で 15 行) で流れてしまう
+'     ・ログファイルなら ' [FAIL]' を検索するだけで済む
+'
+'   TestCountPrint が最後に「OK n / FAIL m」を出すので、そこだけ見れば合否が分かる。
+' ============================================================
+Private Sub TestCountReset()
+    m_okCount = 0
+    m_ngCount = 0
+End Sub
+
+Private Sub TestCountPrint()
+    Wv2Log.LogI "  ★判定 " & (m_okCount + m_ngCount) & " 件: OK " & m_okCount & _
+                " / FAIL " & m_ngCount & "★"
+End Sub
+
+Private Sub TestBool(ByVal label As String, ByVal cond As Boolean)
+    If cond Then
+        m_okCount = m_okCount + 1
+        Wv2Log.LogI "  [OK  ] " & label
+    Else
+        m_ngCount = m_ngCount + 1
+        Wv2Log.LogI "  [FAIL] " & label
+    End If
+End Sub
+
+Private Sub TestEq(ByVal label As String, _
+                 ByVal el As Wv2Element, _
+                 ByVal got As String, _
+                 ByVal want As String)
+    If got = want Then
+        m_okCount = m_okCount + 1
+        Wv2Log.LogI "  [OK  ] " & label
+    Else
+        m_ngCount = m_ngCount + 1
+        Wv2Log.LogI "  [FAIL] " & label
+        Wv2Log.LogI "         期待: [" & want & "]"
+        Wv2Log.LogI "         実際: [" & got & "]"
+    End If
+
+    If el Is Nothing Then Exit Sub
+    If Not el.LastOk Then
+        Wv2Log.LogI "         ※ LastOk=False err=" & el.LastError
+    End If
+End Sub
+
+' ============================================================
+' D3Cnt / D3Str (D-3: 検証ページの監視カウンタを読む)
+'   ページ側の window.__p から 1 項目を取り出す。読めなければ -1 を返す。
+' ============================================================
+Private Function D3Cnt(ByVal p As Wv2Pane, ByVal countName As String) As Long
+    Dim res As String
+
+    res = p.EvalSync("window.__p." & countName)
+    If Not p.LastEvalOk Then
+        m_ngCount = m_ngCount + 1
+        Wv2Log.LogW "  [FAIL] カウンタ " & countName & " を読めない err=" & p.LastEvalError
+        D3Cnt = -1
+        Exit Function
+    End If
+
+    D3Cnt = CLng(Val(res))
+End Function
+
+Private Function D3Str(ByVal p As Wv2Pane, ByVal itemName As String) As String
+    Dim res As String
+
+    res = p.EvalSync("window.__p." & itemName)
+    If Not p.LastEvalOk Then
+        D3Str = "(読めない: " & p.LastEvalError & ")"
+        Exit Function
+    End If
+
+    D3Str = Wv2Json.JsonUnescape(res)
+End Function
+
+
+' ============================================================
+' D3Pump (D-3: 指定秒だけ DoEvents を回す)
+'   raw ExecuteScript の完了通知が出るのを待つためだけの足踏み。
+'   ★この間もブレーク/ステップ実行しないこと★ (仕様事実20)
+' ============================================================
+Private Sub D3Pump(ByVal waitSec As Single)
+    Dim t0 As Single
+
+    t0 = Timer
+    Do
+        DoEvents
+        If (Timer - t0) > waitSec Then Exit Do
+    Loop
+End Sub
+
+
+' ============================================================
+' BuildD3ProbeHtml (D-3 の検証ページ)
+'
+'   D-2 のページに★監視用の JS★ を足したもの。数えているのは:
+'     inputs / changes … #txt に飛んだ input / change の回数 (論点6)
+'     clicks / clickInfo … #btn のクリック回数とイベントの素性
+'     trackedSet … ★React 風 value tracker★ を通った代入の回数
+'     notified   … tracker が「値が変わった」と気づいた回数
+'     ignored    … input は来たが tracker が気づけなかった回数
+'
+'   ★静的な HTML 部分の引用符は VBA の "" で書く★ (JS ではないので問題ない)
+'   ★JS の文字列は必ずシングルクォート★ (プロジェクト規則)
+' ============================================================
+Private Function BuildD3ProbeHtml() As String
+    Dim s As String
+
+    s = "<!DOCTYPE html>" & vbLf
+    s = s & "<html lang=""ja""><head><meta charset=""UTF-8"">" & vbLf
+    s = s & "<title>D-3 プローブ</title>" & vbLf
+    s = s & "<style>" & vbLf
+    s = s & "  body{font-family:'Segoe UI','Meiryo',sans-serif;background:#12161f;" & _
+            "color:#e8eaed;padding:32px;line-height:1.8;}" & vbLf
+    s = s & "  h1{font-size:22px;margin:0 0 18px;}" & vbLf
+    s = s & "  .card{border:1px solid rgba(255,255,255,.12);border-radius:10px;" & _
+            "padding:14px 16px;margin:12px 0;background:rgba(255,255,255,.04);}" & vbLf
+    s = s & "  input,textarea,select,button{font-size:14px;padding:6px 8px;margin:4px 4px;" & _
+            "background:#0b0e15;color:#e8eaed;border:1px solid rgba(255,255,255,.18);" & _
+            "border-radius:6px;}" & vbLf
+    s = s & "  pre{background:#0b0e15;padding:10px 12px;border-radius:8px;" & _
+            "white-space:pre-wrap;word-break:break-all;}" & vbLf
+    s = s & "  .note{color:#8ea2c8;font-size:12.5px;}" & vbLf
+    s = s & "</style></head><body>" & vbLf
+    s = s & "<h1 id=""ttl"">D-3 書き込みと操作のプローブ</h1>" & vbLf
+    s = s & "<p class=""note"">このページは Test_D3_Write / Test_D3_Framework 専用です。" & _
+            "外部サイトに依存しません。</p>" & vbLf
+    s = s & "<div class=""card"">" & vbLf
+    s = s & "  <input id=""txt"" type=""text"" name=""q"" value=""初期値"">" & vbLf
+    s = s & "  <textarea id=""area"" rows=""2"">元のテキスト</textarea>" & vbLf
+    s = s & "  <select id=""sel""><option value=""a"">A</option>" & _
+            "<option value=""b"" selected>B</option></select>" & vbLf
+    s = s & "  <input id=""chk"" type=""checkbox"">" & vbLf
+    s = s & "  <input id=""react"" type=""text"" value="""">" & vbLf
+    s = s & "</div>" & vbLf
+    s = s & "<p><button id=""btn"" type=""button"">クリックしてね</button>" & _
+            "<span id=""btnlog"">未クリック</span></p>" & vbLf
+    s = s & "<div id=""dv"" class=""card"">属性の書き込み先</div>" & vbLf
+    s = s & "<pre id=""cnt""></pre>" & vbLf
+    s = s & "<script>" & vbLf
+    s = s & "(function(){" & vbLf
+    s = s & "  var P={inputs:0,changes:0,clicks:0,clickInfo:''," & _
+            "trackedSet:0,notified:0,ignored:0};" & vbLf
+    s = s & "  window.__p=P;" & vbLf
+    s = s & "  function show(){" & _
+            "document.getElementById('cnt').textContent=JSON.stringify(P);}" & vbLf
+    s = s & "  var t=document.getElementById('txt');" & vbLf
+    s = s & "  t.addEventListener('input',function(){P.inputs++;show();});" & vbLf
+    s = s & "  t.addEventListener('change',function(){P.changes++;show();});" & vbLf
+    s = s & "  var b=document.getElementById('btn');" & vbLf
+    s = s & "  b.addEventListener('click',function(ev){P.clicks++;" & vbLf
+    s = s & "    P.clickInfo=ev.type+'/'+ev.bubbles+'/'+ev.isTrusted;" & vbLf
+    s = s & "    document.getElementById('btnlog').textContent=" & _
+            "'クリック '+P.clicks+' 回';show();});" & vbLf
+    s = s & "  var r=document.getElementById('react');" & vbLf
+    s = s & "  var d=Object.getOwnPropertyDescriptor(r.constructor.prototype,'value');" & vbLf
+    s = s & "  var last=d.get.call(r);" & vbLf
+    s = s & "  Object.defineProperty(r,'value',{configurable:true," & vbLf
+    s = s & "    get:function(){return d.get.call(this);}," & vbLf
+    s = s & "    set:function(v){P.trackedSet++;last=v;d.set.call(this,v);show();}});" & vbLf
+    s = s & "  r.addEventListener('input',function(){" & vbLf
+    s = s & "    var cur=d.get.call(r);" & vbLf
+    s = s & "    if(cur!==last){P.notified++;last=cur;}else{P.ignored++;}" & vbLf
+    s = s & "    show();});" & vbLf
+    s = s & "  show();" & vbLf
+    s = s & "})();" & vbLf
+    s = s & "</" & "script>" & vbLf
+    s = s & "</body></html>"
+
+    BuildD3ProbeHtml = s
+End Function
+
+
+' ============================================================
+' Test_D3_Wait (D-3b の検証: DOM 条件待ち)
+'
+'   遅れて現れる / 遅れて消える要素を setTimeout で作り、
+'   WaitFor / WaitGone / ImplicitWaitSec が期待どおり粘るかを見る。
+'   ★待った秒数も出す★ 「粘った」だけでなく「粘りすぎない」ことも見たいため。
+'
+'   ★実行中はブレーク/ステップ実行しないこと★ (仕様事実20)
+'   待ちループ全体が長い DoEvents 区間になる (未知2 のとおり)。
+' ============================================================
+Public Sub Test_D3_Wait()
+    Dim b As Wv2Browser
+    Dim p As Wv2Pane
+    Dim el As Wv2Element
+    Dim t0 As Single
+    Dim took As Single
+
+    Set b = UserForm1.CurrentBrowser
+    If b Is Nothing Then
+        Wv2Log.LogI "Test_D3_Wait: Browser が起動していません。" & _
+                    "先に UserForm1.Show vbModeless と StartWebView2_Full を実行してください。"
+        Exit Sub
+    End If
+
+    Set p = b.AddTabWithHtml(BuildD3ProbeHtml())
+    If p Is Nothing Then
+        Wv2Log.LogI "Test_D3_Wait: タブの生成に失敗しました。"
+        Exit Sub
+    End If
+    If Not D2WaitTitle(p, "D-3 プローブ", 10) Then
+        Wv2Log.LogI "Test_D3_Wait: 検証ページの読み込みを確認できませんでした。"
+        Exit Sub
+    End If
+
+    Wv2Log.LogI ""
+    TestCountReset
+    Wv2Log.LogI "================ Test_D3_Wait 開始 ================"
+    Wv2Log.LogI "  --- (1) 既にある要素は待たずに返る ---"
+
+    t0 = Timer
+    Set el = p.WaitFor("#txt", 5)
+    took = D3Took(t0)
+    TestBool "既にある要素を WaitFor で掴める", Not (el Is Nothing)
+    Wv2Log.LogI "        待った時間 = " & Format$(took, "0.00") & " 秒"
+    TestBool "  ★待たずに返る (0.5 秒未満)★", (took < 0.5)
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (2) 遅れて現れる要素 (800ms 後に追加) ---"
+
+    p.EvalSync "(function(){setTimeout(function(){" & _
+               "var d=document.createElement('input');d.id='late';d.type='text';" & _
+               "d.value='遅れて出た';document.body.appendChild(d);},800);return 1;})()"
+    TestBool "遅延追加を仕掛けられた", p.LastEvalOk
+
+    t0 = Timer
+    Set el = p.WaitFor("#late", 5)
+    took = D3Took(t0)
+    TestBool "★遅れて現れた要素を掴めた★", Not (el Is Nothing)
+    Wv2Log.LogI "        待った時間 = " & Format$(took, "0.00") & " 秒 (仕掛けは 0.80 秒)"
+    TestBool "  待ち時間が妥当 (0.4～3.0 秒)", (took > 0.4 And took < 3)
+
+    If Not el Is Nothing Then
+        TestEq "  掴んだ要素の値が読める", el, el.value, "遅れて出た"
+        el.value = "待ってから書いた"
+        TestBool "  ★待った要素にそのまま書ける (D-3a との接続)★", el.LastOk
+        TestEq "    読み戻せる", el, el.value, "待ってから書いた"
+    End If
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (3) 現れないもの (1 秒でタイムアウト) ---"
+
+    t0 = Timer
+    Set el = p.WaitFor("#never-ever", 1)
+    took = D3Took(t0)
+    TestBool "現れないものは Nothing", (el Is Nothing)
+    TestBool "  ★LastEvalOk=True (現れなかった、の意味)★", (p.LastEvalOk = True)
+    Wv2Log.LogI "        待った時間 = " & Format$(took, "0.00") & " 秒 (指定は 1.00 秒)"
+    TestBool "  ちゃんと粘った (0.8 秒以上)", (took > 0.8)
+    TestBool "  粘りすぎない (2.5 秒未満)", (took < 2.5)
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (4) ★失敗は待たずに諦める★ (不正なセレクタ) ---"
+
+    t0 = Timer
+    Set el = p.WaitFor("###", 5)
+    took = D3Took(t0)
+    TestBool "不正なセレクタは Nothing", (el Is Nothing)
+    TestBool "  ★LastEvalOk=False (失敗、の意味)★", (p.LastEvalOk = False)
+    Wv2Log.LogI "        待った時間 = " & Format$(took, "0.00") & " 秒 (指定は 5.00 秒)"
+    TestBool "  ★5 秒待たずに即座に返る (0.5 秒未満)★", (took < 0.5)
+    Wv2Log.LogI "        LastEvalError = " & p.LastEvalError
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (5) WaitGone (800ms 後に #dv を消す) ---"
+
+    p.EvalSync "(function(){setTimeout(function(){" & _
+               "var e=document.getElementById('dv');" & _
+               "if(e){e.parentNode.removeChild(e);}},800);return 1;})()"
+    TestBool "遅延削除を仕掛けられた", p.LastEvalOk
+
+    t0 = Timer
+    TestBool "★消えるまで待てた★", p.WaitGone("#dv", 5)
+    took = D3Took(t0)
+    Wv2Log.LogI "        待った時間 = " & Format$(took, "0.00") & " 秒 (仕掛けは 0.80 秒)"
+    TestBool "  待ち時間が妥当 (0.4～3.0 秒)", (took > 0.4 And took < 3)
+
+    t0 = Timer
+    TestBool "最初から無いものは即 True", p.WaitGone("#never-ever", 5)
+    TestBool "  待たずに返る (0.5 秒未満)", (D3Took(t0) < 0.5)
+
+    t0 = Timer
+    TestBool "消えないものは False", (p.WaitGone("#ttl", 1) = False)
+    took = D3Took(t0)
+    TestBool "  ★LastEvalOk=True (まだ居る、の意味)★", (p.LastEvalOk = True)
+    TestBool "  ちゃんと粘った (0.8 秒以上)", (took > 0.8)
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (6) ImplicitWaitSec (論点2 案C の opt-in) ---"
+
+    TestBool "★既定は 0 (無効)★", (p.ImplicitWaitSec = 0)
+    t0 = Timer
+    Set el = p.QuerySelector("#late2")
+    took = D3Took(t0)
+    TestBool "既定では QuerySelector が待たずに Nothing", _
+           (el Is Nothing And took < 0.5)
+
+    p.EvalSync "(function(){setTimeout(function(){" & _
+               "var d=document.createElement('div');d.id='late2';" & _
+               "d.textContent='後から出た 2';document.body.appendChild(d);},800);" & _
+               "return 1;})()"
+    TestBool "遅延追加を仕掛けられた", p.LastEvalOk
+
+    p.ImplicitWaitSec = 5
+    t0 = Timer
+    Set el = p.QuerySelector("#late2")
+    took = D3Took(t0)
+    TestBool "★ImplicitWaitSec=5 なら QuerySelector が粘って拾う★", _
+           Not (el Is Nothing)
+    Wv2Log.LogI "        待った時間 = " & Format$(took, "0.00") & " 秒 (仕掛けは 0.80 秒)"
+    TestBool "  待ち時間が妥当 (0.4～3.0 秒)", (took > 0.4 And took < 3)
+
+    p.ImplicitWaitSec = 0
+    TestBool "0 に戻せる", (p.ImplicitWaitSec = 0)
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  in-callback 深さ (期待 0): " & p.InCallbackDepth
+    TestCountPrint
+    Wv2Log.LogI "================ Test_D3_Wait 終了 ================"
+    Wv2Log.LogI ""
+End Sub
+
+
+' ============================================================
+' D3Took (D-3b: 経過秒。★Timer は深夜 0 時に 0 へ戻る★ ので補正する)
+' ============================================================
+Private Function D3Took(ByVal sinceTimer As Single) As Single
+    Dim d As Single
+
+    d = Timer - sinceTimer
+    If d < 0 Then d = d + 86400
+    D3Took = d
+End Function
+
+' ============================================================
+' Test_D3_Help (D-3 の手順)
+' ============================================================
+Public Sub Test_D3_Help()
+    Debug.Print ""
+    Debug.Print "=========================================================="
+    Debug.Print " D-3 検証手順 (書き込みと操作)"
+    Debug.Print "=========================================================="
+    Debug.Print ""
+    Debug.Print "  --- 準備 ---"
+    Debug.Print "  1) Wv2Log.LogStart  … このテスト 1 回分を 1 ファイルに閉じる"
+    Debug.Print "  2) UserForm1.Show vbModeless して StartWebView2_Full を実行する"
+    Debug.Print "     ★Show が先★ フォームのウィンドウが無いと Frame1 の HWND が"
+    Debug.Print "     取れず、hWnd_Frame = 0 のまま Browser.Init が失敗する。"
+    Debug.Print "  3) ★イベントバーストが静まるまで待つ★ (仕様事実 20)"
+    Debug.Print ""
+    Debug.Print "  --- 実行 (★この順番★) ---"
+    Debug.Print "  4) Test_D3_Probe_Promise … ★済★ 未知1 の実測 (2026-08-22 決着)"
+    Debug.Print "     ExecuteScript が Promise を待つかの実測。ここの結果で"
+    Debug.Print "     待ち API (WaitFor / WaitGone) の設計が決まる。"
+    Debug.Print "     ★アクティブなタブが要る★ (新しいタブは開かない)"
+    Debug.Print "  5) Test_D3_Write      … ★済★ 書き込み・操作 (33 件 OK)"
+    Debug.Print "  6) Test_D3_Framework  … ★済★ SPA に効くかの実測 (7 件 OK)"
+    Debug.Print "  7) Test_D3_Wait       … ★D-3b の検証★ 待ち API (タブを 1 枚開く)"
+    Debug.Print "     ※ 4～6 は決着済み。次に見るのは 7 だけでよい。"
+    Debug.Print ""
+    Debug.Print "  ★実行中はブレーク/ステップ実行しないこと★ (仕様事実 20)"
+    Debug.Print ""
+    Debug.Print "  --- ★判定はログファイルに残る★ ---"
+    Debug.Print "    D-3 のテストは判定を Wv2Log にも書く。イミディエイトは"
+    Debug.Print "    ExecuteScript の配管ログ (1 往復で 15 行) ですぐ流れるので、"
+    Debug.Print "    ★合否はログファイルで見る★:"
+    Debug.Print "      ?Wv2Log.LogPath      … ファイルの場所"
+    Debug.Print "      末尾の「★判定 n 件: OK x / FAIL y★」だけ見れば合否が分かる"
+    Debug.Print "      FAIL があれば [FAIL] で検索する"
+    Debug.Print ""
+    Debug.Print "  --- 見るもの (Test_D3_Probe_Promise) ---"
+    Debug.Print "  ・(B-1)(B-2) のマーカーの間に resultJson= の行が出たか"
+    Debug.Print "      (B-2) で {} が出た   → ★待たない★ = 論点3 の骨格どおり VBA でポーリング"
+    Debug.Print "      (B-2) で何も出ない   → ★待つ★   = 設計を組み直す"
+    Debug.Print ""
+    Debug.Print "  --- 見るもの (Test_D3_Write) ---"
+    Debug.Print "  ・(1)～(8) の全行が [OK  ] であること"
+    Debug.Print "  ・(1) の LastInfo が setter であること (ネイティブ setter 経由)"
+    Debug.Print "  ・(3) の input / change がどちらも 3 回であること (論点6 の両方撃ち)"
+    Debug.Print "  ・(7) が [OK  ] = 「JS が走った」と「効果が出た」の違いの確認"
+    Debug.Print "  ・(8) が [OK  ] = no-pane / stale の区別 (D-2 の規約踏襲)"
+    Debug.Print ""
+    Debug.Print "  --- 見るもの (Test_D3_Framework) ★D-3 の核心★ ---"
+    Debug.Print "  ・(1) が notified=0 / ignored=1  … 素の代入では気づかれない"
+    Debug.Print "  ・(2) が notified=1 / trackedSet=1 のまま … D-3 の書き方なら気づく"
+    Debug.Print "    ここが FAIL なら React / Vue のページで .Value = が効かない。"
+    Debug.Print ""
+    Debug.Print "  --- 見るもの (Test_D3_Wait) ★D-3b★ ---"
+    Debug.Print "  ・(1)～(6) の全行が [OK  ] であること"
+    Debug.Print "  ・(2) 遅れて現れる要素を掴み、そのまま書き込めること"
+    Debug.Print "      = 待ち (D-3b) と書き込み (D-3a) が繋がっている証拠"
+    Debug.Print "  ・(3) 現れないものは★1 秒粘ってから★ Nothing + LastEvalOk=True"
+    Debug.Print "  ・(4) ★不正なセレクタは待たずに即座に諦める★"
+    Debug.Print "      ここが FAIL だと、ハンドラ内から呼んだとき待ち時間ぶん固まる"
+    Debug.Print "  ・(6) ImplicitWaitSec が既定 0 で、5 にすると QuerySelector が粘ること"
+    Debug.Print ""
+    Debug.Print "  --- 回帰確認 (D-3 は Wv2Pane と Wv2Element を触ったため) ---"
+    Debug.Print "  8) Test_D2_Find   … 読み取りが壊れていないこと"
+    Debug.Print "  9) Test_D2_Stale  … 世代と stale の扱いが壊れていないこと"
+    Debug.Print " 10) Test_D1_Eval / Test_D1_Guard … EvalSync とガード"
+    Debug.Print ""
+    Debug.Print "  --- 手で試したいとき ---"
+    Debug.Print "  Set p = UserForm1.GetActivePane"
+    Debug.Print "  Set el = p.QuerySelector(""input[name='q']"")"
+    Debug.Print "  el.Value = ""検索語"""
+    Debug.Print "  ?el.LastOk : ?el.LastInfo : ?el.Value"
+    Debug.Print "  ?p.QuerySelector(""button"").Click"
+    Debug.Print ""
+    Debug.Print "  --- 待ち (D-3b) ---"
+    Debug.Print "  Set el = p.WaitFor(""#result"", 5)   ' 現れるまで最大 5 秒"
+    Debug.Print "  ?p.WaitGone("".spinner"", 10)        ' 消えるまで最大 10 秒"
+    Debug.Print "  p.ImplicitWaitSec = 5               ' 既定 0。検索に暗黙の粘りを足す"
+    Debug.Print ""
+    Debug.Print "  ★待てるのは「DOM の条件」まで★"
+    Debug.Print "    WaitFor / WaitGone は指定した要素の有無しか見ない。"
+    Debug.Print "    「通信が全部終わって静かになるまで」を待つ静穏待ち"
+    Debug.Print "    (MutationObserver / fetch カウンタ) は D-4 の宿題。"
+    Debug.Print ""
 End Sub
 
