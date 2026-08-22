@@ -5,7 +5,7 @@ Excel VBA **だけ**（外部 COM ライブラリ不使用、マシンコード�
 **開発言語は日本語。応答も日本語で行う。**
 
 タブブラウザとして一通り使える形は完成済み。現在は「ページ自動制御（MSHTML 相当）」の
-D 軸を進行中で、**D-5b まで完了**。
+D 軸を進行中で、**D-6 まで完了**。
 
 ## コンセプト（取捨選択の基準）
 
@@ -329,13 +329,14 @@ D-1 は `json.dumps` がコロンの後に空白を入れるのが原因、D-2 �
 
 ## 現在地と次にやること
 
-**D-5b（実用: 住所 → 座標 + シート連携）まで完了・実機検証済み・開発メモ記録済み。**
+**D-6（`QuerySelectorAll` と寿命管理）まで完了・実機検証済み・開発メモ記録済み。**
 **D 軸は「読む・書く・待つ」が揃い、その上に★実用 (住所 → 座標) が 1 本載った★。**
 着手中の作業は無い。
 
 D 軸で使えるもの:
 
 - `QuerySelector` / `GetElementById` → `Wv2Element`（D-2）
+- `QuerySelectorAll` → `Collection`（D-6。★0 件でも Nothing にしない★ / `ElementCount`）
 - `.Value =` / `.Click` / `.SetAttribute`（D-3。★ネイティブ setter 経由なので React / Vue にも効く★）
 - `WaitFor` / `WaitGone` / `ImplicitWaitSec`（D-3。DOM 条件待ち）
 - `WaitSettled` / `AutoWaitAfterAction`（D-4。静穏待ち）
