@@ -8,7 +8,96 @@ Attribute VB_Creatable = False
 Attribute VB_PredeclaredId = False
 Attribute VB_Exposed = False
 ''''''''''''''''''''''''''''''''''
-' --- Wv2Pane.cls  D-3 段階 (要素への書き込みと操作) ---
+' --- Wv2Pane.cls  D-4b 段階 (静穏待ち) ---
+'
+'   D-4a で置いたプローブを使って★落ち着くまで待つ★。
+'
+'   ■ 追加した Public メンバ
+'     WaitSettled(timeoutSec, stableMs) As Boolean  静穏になるまで待つ
+'     AutoWaitAfterAction  As Boolean  ★既定 False★ 操作の後に自動で待つ (opt-in)
+'     AddIgnoreNetwork(pattern)        静穏判定から外す URL の部分一致パターン
+'     ClearIgnoreNetwork()             同上を空にする
+'     IgnoreSelectors  As String       静穏判定から外す DOM 変化のセレクタ
+'     LastSettleInfo   As String       直前の待ちの内訳 (診断用)
+'
+'   ■ 静穏の判定式 (論点4)
+'     実行中の fetch + XHR が 0 かつ、最後の DOM 変化から stableMs 以上たったら静穏。
+'     ★ただし静穏窓は「WaitSettled を呼んだ時点」から測る★ 呼ぶ前から静かでも
+'     いきなり成立させない。したがって★最短でも stableMs は待つ★。
+'     既定は stableMs = 500 / 上限 10 秒 / ポーリング 100ms (参考プロダクトに倣った)。
+'
+'   ★★★ WaitSettled が True でも「アプリの処理が終わった」証明にはならない ★★★
+'     静かなだけである。**アプリが要求を無視して静かなのか、終わって静かなのかは
+'     区別できない。** 重要な操作では D-4c の明示シグナル (arm) を併用すること。
+'     ★名前を WaitIdle でなく WaitSettled にしたのはこのため★ (論点8)
+'     「idle = 何も起きていない」と読めると保証と誤解される。
+'
+'   ■ 戻り値 (D-2 / D-3 の規約を踏襲、設計原則93)
+'     True                     … 静穏に達した
+'     False + LastEvalOk=True  … 時間内に静まらなかった (★正常な結果★)
+'     False + LastEvalOk=False … 失敗 (in-callback / Close 済み等)
+'     どちらでも LastSettleInfo に内訳が入る (slack / 実行中の通信 / 経過)。
+'
+'   ■ ノイズ除外 (論点5)
+'     ★除外リストは VBA 側が持ち、毎回の往復でページへ送り込む★
+'     ページ側に持たせると遷移で消えるため。送り込みは状態の読み取りと
+'     同じ 1 往復に相乗りするので、往復は増えない。
+'     ★広すぎる除外は「早すぎる静穏」を生む★ 参考プロダクトも警告している。
+'     遮断 (要求そのものを止める) はやらない。ページの挙動を変えるため。
+'
+'   ■ ★プローブを置く前に始まった通信は数えられない★ (D-4a の仕様)
+'     待ちの直前に操作する運用 (D-4c の arm-then-act) なら実害が無い。
+'     ページを開いた直後の読み込み完了を待ちたいときは、既存の
+'     NavigationCompleted / DOMContentLoaded を使うこと。
+'
+''''''''''''''''''''''''''''''''''
+' --- Wv2Pane.cls  D-4a 段階 (ページ内 SPA プローブと健康診断) ---
+'
+'   D-4 の目的は★静穏待ち★ (通信と DOM の変化が落ち着くまで待つ)。
+'   D-3 の WaitFor / WaitGone は「何を待つか」を書ける場合の手段で、
+'   **待つ対象が特定できないとき**には使えない。そこを埋めるのが D-4。
+'
+'   D-4a はその土台。★観測する仕掛け (プローブ) をページ内に置くところまで★で、
+'   待ちの本体 (WaitSettled) と明示シグナル (Arm 系) は D-4b / D-4c。
+'
+'   ■ 追加した Public メンバ
+'     SpaProbeState()  As String   プローブを整えてから状態 JSON を返す
+'     SpaProbeReset()  As Boolean  プローブを捨てて作り直す (診断用)
+'     SpaProbeHealthy() As Boolean 状態 JSON の h を読むだけの薄い口
+'
+'   ■ プローブが数えているもの (window.__wv2p)
+'     fetchN / xhrN … ★実行中★ の fetch / XHR の数 (in-flight)
+'     lastMut       … 最後に数えた DOM 変化の時刻。静穏窓はここから測る
+'     netN / mutN   … 数えた総数 (診断用)
+'     skipNet / skipMut … 除外した数 (ノイズ除外が効いているかの確認用)
+'
+'   ■ ★設計原則92 の拡張: 「無ければ作る」から「壊れていたら作り直す」へ★
+'     fetch と XMLHttpRequest.prototype.open/send をラップして数えるが、
+'     ★ページ側のフレームワークが後からこれらを差し替えることがある★
+'     (参考プロダクト WebDriver BiDi for SeleniumVBA が健康診断を実装している
+'      = 実際に壊れるということ)。そこで毎回
+'       ・版番号が一致するか
+'       ・window.fetch が今もこちらのラッパーか
+'       ・XHR の open/send が今もこちらのラッパーか
+'       ・MutationObserver が生きているか
+'     を確かめ、1 つでも欠けたら★作り直す★。作り直した回数は repairs で読める。
+'
+'     ★作り直すときは「現在の window.fetch」を包む★
+'     フレームワークが被せたラッパーごと包むので、向こうの機能を壊さない。
+'     自分のラッパーを二重に包まない判定も入れてある (数え漏れ / 二重計上の防止)。
+'
+'   ■ ★いつ仕掛けるか (論点2 案A: 自己生成プロローグの拡張)★
+'     AddScriptToExecuteOnDocumentCreated は使わない。D-2 と同じく
+'     「使う式が自分で用意する」形にする。したがって
+'     ★プローブを置いた時点より前に始まった通信は数えられない★
+'     これは仕様。D-4c の「操作の直前に arm する」運用と組み合わせれば実害が無い
+'     (arm した時点でプローブが立つので、必ず操作より前になる)。
+'
+'   ■ プローブが作られる場所
+'     ★これらのメンバを呼んだ Pane にしか作られない★ タブバー / ナビバー /
+'     設定タブの Pane は呼ばないので無傷 (D-2 で注入を避けた理由と同じ)。
+'
+''''''''''''''''''''''''''''''''''' --- Wv2Pane.cls  D-3 段階 (要素への書き込みと操作) ---
 '
 '   D-3 で Wv2Pane に増えたのは ★Elem_Exec (Friend) 1 本だけ★。
 '   書き込み・操作の入口は Wv2Element 側 (Value = / Click / SetAttribute) にあり、
@@ -768,6 +857,45 @@ Private Const POLL_INTERVAL_SEC    As Single = 0.1
 Private Const WAIT_TIMEOUT_DEFAULT As Single = 10
 
 
+' --- D-4a: ページ内 SPA プローブの版番号 ---
+'   プローブの中身を変えたら★必ず上げる★。ページに古い版が残っていても、
+'   版が違えば健康診断が落ちて作り直される (参考プロダクトと同じ契約)。
+Private Const SPA_PROBE_VER As Long = 3
+
+
+' --- D-4b: 静穏待ちの設定 ---
+'   m_ignoreNet / m_ignoreSel : ★VBA 側が持つ★ 除外リスト (ページ側は遷移で消えるため)。
+'   m_autoWait   : 操作の後に自動で WaitSettled するか。★既定 False★
+'   m_lastSettle : 直前の待ちの内訳 (診断用)。
+Private m_ignoreNet  As Collection
+Private m_ignoreSel  As String
+Private m_autoWait   As Boolean
+Private m_lastSettle As String
+
+' 静穏窓の既定 (ms)。参考プロダクト (WebDriver BiDi for SeleniumVBA) と同じ値。
+Private Const SETTLE_STABLE_MS_DEFAULT As Long = 500
+
+' 居座り判定の既定 (ms)。★10 秒を超えて飛んでいる要求は数えない★
+Private Const STALE_INFLIGHT_MS_DEFAULT As Long = 10000
+
+
+' --- D-4c: 明示シグナル (arm) ---
+'   ★VBA 側も arm 済みかを覚える★ ページ側だけに持たせると、遷移でプローブごと
+'   消えたときに「arm したのに消えた」ことに気づけない (黙って条件なしの待ちに
+'   化けてしまう)。両方で持ち、食い違ったら signal-lost として失敗させる。
+Private m_sigDom As Boolean
+Private m_sigNet As Boolean
+Private m_sigUrl As Boolean
+
+' --- D-4f: 居座る要求を静穏判定から外す ---
+'   ★ロングポーリングやストリーミングはどのサイトにもある★
+'   Google Maps の検索は /search?tbm=map を開きっぱなしにして結果を流すので、
+'   これを数えていると永久に静穏が来ない (D-4d で実測)。
+'   一定時間を超えて飛んでいる要求は「流れっぱなしのもの」とみなして数えない。
+'   0 にすると無効 (すべて数える)。
+Private m_staleMs As Long
+
+
 ' --- D-2: 要素レジストリの世代キャッシュ ---
 '   m_domGen : JS から最後に受け取った window.__wv2.gen。高速パス専用。
 '              まだ一度も要素検索をしていなければ空文字。
@@ -779,6 +907,7 @@ Private m_domGen As String
 ' Class_Initialize / Class_Terminate
 ' ============================================================
 Private Sub Class_Initialize()
+    m_staleMs = STALE_INFLIGHT_MS_DEFAULT
     m_state = Cs_Created
     m_pCtrl = 0
     m_pView = 0
@@ -4198,6 +4327,11 @@ End Property
 '
 '   ★待っている間はブレーク/ステップ実行しないこと★ (仕様事実20)
 '
+'   ★タブを開いた直後に呼ばないこと★
+'     View がまだ無いうちは EvalSync が no-view で失敗し、上の方針により
+'     ★待たずに即座に Nothing を返す★。ページを開いた直後は、まず
+'     EvalSync が通るようになるまで待つこと (検証では D4WaitPane が実例)。
+'
 '   使用例:
 '     Dim el As Wv2Element
 '     Set el = p.WaitFor("#result", 5)
@@ -4359,5 +4493,799 @@ Private Function ElapsedSec(ByVal sinceTimer As Single) As Single
     d = Timer - sinceTimer
     If d < 0 Then d = d + 86400
     ElapsedSec = d
+End Function
+
+' ============================================================
+' ★D-4a の本体: ページ内 SPA プローブ★
+' ============================================================
+
+
+' ============================================================
+' SpaProbeState (D-4a) - プローブを整えてから状態を読む
+'
+'   戻り値: 状態 JSON (成功時)。失敗時は空文字 + LastEvalOk = False
+'
+'   JSON の中身:
+'     v  版番号        h  健康か (True/False)   g  設置世代    rp 作り直した回数
+'     f  実行中 fetch  x  実行中 XHR
+'     q  最後の DOM 変化からの経過 ms   qn 最後の通信完了からの経過 ms
+'     m  数えた DOM 変化  sm 除外した DOM 変化
+'     n  数えた通信        sn 除外した通信
+'     up プローブ設置からの経過 ms      ob MutationObserver が生きているか
+'     sda DOM シグナルを arm 済みか     sdh その当たり回数
+'     sna 通信シグナルを arm 済みか     snh その当たり回数
+'     sua URL シグナルを arm 済みか      suh 今それに一致しているか
+'     lgN 診断ログの件数                 lgOn 診断ログが有効か
+'     il  ★今飛んでいる要求★ (最大 5 件。"xhr 1234ms https://..." の形)
+'     ifn 飛んでいる要求のうち★新しいもの★の数 (静穏判定はこれを見る)
+'     ifo 同じく★居座っているもの★の数 (StaleInflightMs を超えたもの)
+'
+'   ★呼ぶたびに健康診断が走り、壊れていれば作り直す★
+'   したがって「まず Ensure、次に Read」の 2 往復は要らない。
+'
+'   使用例:
+'     Debug.Print p.SpaProbeState
+'     → {""v"":1,""h"":true,""g"":1,...}
+' ============================================================
+Public Function SpaProbeState() As String
+    Dim js As String
+
+    js = "(function(){" & SpaProbeJs() & SpaProbeApplyJs() & _
+         "return {v:P.v,h:HP(P),g:P.gen,rp:P.repairs," & _
+         "f:P.fetchN,x:P.xhrN," & _
+         "q:Math.round(N()-P.lastMut),qn:Math.round(N()-P.lastNet)," & _
+         "m:P.mutN,sm:P.skipMut,n:P.netN,sn:P.skipNet," & _
+         "up:Math.round(N()-P.since),ob:!!P.ob," & _
+         "sda:!!P.sdArmed,sdh:P.sdHits,sna:!!P.snArmed,snh:P.snHits," & _
+         "sua:!!P.suArmed," & _
+         "suh:(P.suArmed&&String(location.href).indexOf(P.suPat)>=0)?1:0," & _
+         "lgN:P.log.length,lgOn:!!P.logOn," & _
+         "il:P.ifl.map(function(o){" & _
+         "return o.w+' '+Math.round(N()-o.t)+'ms '+o.u;}).slice(0,5).join(' # ')," & _
+         "ifn:P.ifl.filter(function(o){return (N()-o.t)<" & StaleMsJs() & ";}).length," & _
+         "ifo:P.ifl.filter(function(o){return (N()-o.t)>=" & StaleMsJs() & ";}).length};})()"
+
+    SpaProbeState = EvalSync(js)
+
+    If Not m_lastEvalOk Then
+        Wv2Log.LogW "Wv2Pane.SpaProbeState: 失敗 err=" & m_lastEvalError
+        SpaProbeState = ""
+    End If
+End Function
+
+
+' ============================================================
+' SpaProbeHealthy (D-4a) - 健康かどうかだけを見る薄い口
+'   ★判定できなかった場合は False を返す★ (安全側)。区別が要るなら LastEvalOk。
+' ============================================================
+Public Function SpaProbeHealthy() As Boolean
+    Dim st As String
+
+    st = SpaProbeState()
+    If Not m_lastEvalOk Then Exit Function
+
+    SpaProbeHealthy = (InStr(1, st, """h"":true") > 0)
+End Function
+
+
+' ============================================================
+' SpaProbeReset (D-4a) - プローブを捨てて作り直す
+'
+'   ★通常は不要★ 健康診断が壊れを検出して自動で作り直すため。
+'   数えた値をゼロに戻したいときと、健康診断そのものを検証したいときに使う。
+'
+'   ★元の fetch / XHR には戻さない★ ラップを外すと、フレームワークが
+'   こちらのラッパーを掴んでいた場合に壊れる。直後に現在の window.fetch を包み直す。
+'
+'   ★実装は「版番号を壊してから作り直させる」形★ (window.__wv2p を null に
+'   しない)。こうすると世代と作り直し回数が増え続け、除外リストも引き継がれる。
+'   null にすると世代が 1 に戻ってしまい、いつ作り直したのかが追えなくなる。
+' ============================================================
+Public Function SpaProbeReset() As Boolean
+    Dim js As String
+
+    js = "(function(){var o=window.__wv2p;if(o){o.v=-1;}" & SpaProbeJs() & _
+         "return {g:P.gen,h:HP(P)};})()"
+
+    EvalSync js
+    SpaProbeReset = m_lastEvalOk
+
+    If Not m_lastEvalOk Then
+        Wv2Log.LogW "Wv2Pane.SpaProbeReset: 失敗 err=" & m_lastEvalError
+    Else
+        Wv2Log.LogD "Wv2Pane.SpaProbeReset: プローブを作り直した"
+    End If
+End Function
+
+
+' ============================================================
+' SpaProbeJs (D-4a、Private) - プローブを整える JS (自己生成プロローグの拡張)
+'
+'   実行すると、変数 P にプローブが束縛された状態になる。
+'   無ければ作り、★壊れていれば作り直す★。健康診断は HP(P) で呼べる。
+'
+'   ★JS の文字列リテラルはシングルクォート★ (プロジェクト規則)。
+'   ★数える対象★
+'     fetch          … 呼び出しで +1、解決/失敗で -1
+'     XHR            … send で +1、loadend で -1 (二重減算を __wv2d で防ぐ)
+'     MutationObserver … childList / characterData / subtree / attributes
+'   除外リスト (ignoreNet / ignoreSel) は★参照を毎回読む★ので、
+'   作り直さずに差し替えられる (D-4b でその口を足す)。
+' ============================================================
+Private Function SpaProbeJs() As String
+    Dim js As String
+
+    js = "var V=" & CStr(SPA_PROBE_VER) & ",N=function(){return performance.now();};"
+    js = js & "var XP=(window.XMLHttpRequest?XMLHttpRequest.prototype:null);"
+    js = js & "var HP=function(p){return !!p&&p.v===V" & _
+                      "&&(typeof window.fetch!=='function'||window.fetch===p.fw)" & _
+                      "&&(!XP||(XP.open===p.xo&&XP.send===p.xs))&&!!p.ob;};"
+    js = js & "var P=window.__wv2p;"
+    js = js & "if(!HP(P)){var prev=P;"
+
+    ' --- 新しいプローブの器 (除外リストは引き継ぐ) ---
+    js = js & "var q={v:V,gen:(prev?((prev.gen||0)+1):1)," & _
+                      "repairs:(prev?((prev.repairs||0)+1):0)," & _
+                      "since:N(),lastMut:N(),lastNet:N()," & _
+                      "fetchN:0,xhrN:0,mutN:0,netN:0,skipMut:0,skipNet:0," & _
+                      "sdArmed:false,sdSel:'',sdHits:0,sdObs:null," & _
+                      "snArmed:false,snPat:'',snHits:0," & _
+                      "suArmed:false,suPat:''," & _
+                      "ifl:[],log:[],logOn:(prev&&prev.logOn?true:false)," & _
+                      "ignoreNet:(prev&&prev.ignoreNet?prev.ignoreNet:[])," & _
+                      "ignoreSel:(prev&&prev.ignoreSel?prev.ignoreSel:'')};"
+
+    ' --- 除外の判定 (毎回 q から読むので後から差し替えられる) ---
+    js = js & "var ig=function(u){var a=q.ignoreNet,i;" & _
+                      "for(i=0;i<a.length;i++){if(u.indexOf(a[i])>=0){return true;}}return false;};"
+    js = js & "var sk=function(t){if(!q.ignoreSel){return false;}" & _
+                      "try{var e=(t&&t.nodeType===1)?t:(t?t.parentElement:null);" & _
+                      "return !!(e&&e.closest(q.ignoreSel));}catch(x){return false;}};"
+
+    ' --- D-4e: in-flight の台帳と診断ログ ---
+    '   ifl は「今飛んでいる要求」の一覧。★居座る要求の正体を見るため★
+    '   log は最近の出来事のリングバッファ (既定は無効。logOn で入れる)。
+    js = js & "var lg=function(k,d){if(!q.logOn){return;}" & _
+                      "q.log.push(Math.round(N())+' '+k+' '+String(d).slice(0,120));" & _
+                      "if(q.log.length>200){q.log.shift();}};q.lg=lg;"
+    js = js & "var ifA=function(u,w){var o={u:String(u).slice(0,150),t:N(),w:w};" & _
+                      "q.ifl.push(o);lg('NET+',w+' '+o.u);return o;};"
+    js = js & "var ifD=function(o){var i=q.ifl.indexOf(o);" & _
+                      "if(i>=0){q.ifl.splice(i,1);}" & _
+                      "lg('NET-',Math.round(N()-o.t)+'ms '+o.u);};"
+
+    ' --- D-4c: 明示シグナルの当たり判定と arm 系 ---
+    '   ★当たったら lastMut を今にする★ = 証拠の後にもう一度まるごと静穏窓を取る
+    '   (参考プロダクトと同じ考え方。1 ポーリング分で満足しない)。
+    js = js & "var sn=function(u){if(q.snArmed&&q.snPat&&" & _
+                      "String(u).indexOf(q.snPat)>=0){q.snHits++;q.lastMut=N();" & _
+                      "lg('SIG','net hit '+String(u).slice(0,80));}};q.sn=sn;"
+    js = js & "q.armUrl=function(pat){q.suPat=pat;q.suArmed=true;return 0;};"
+    js = js & "q.armDom=function(sel){var n;" & _
+                      "try{n=document.querySelector(sel);}catch(e){return -2;}" & _
+                      "if(!n){return -1;}" & _
+                      "if(q.sdObs){try{q.sdObs.disconnect();}catch(e){}}" & _
+                      "q.sdSel=sel;q.sdHits=0;q.sdArmed=true;" & _
+                      "q.sdObs=new MutationObserver(function(ms){" & _
+                      "q.sdHits+=ms.length;q.lastMut=N();" & _
+                      "lg('SIG','dom hit x'+ms.length);});" & _
+                      "q.sdObs.observe(n," & _
+                      "{childList:true,characterData:true,subtree:true,attributes:true});" & _
+                      "return 0;};"
+    js = js & "q.armNet=function(pat){q.snPat=pat;q.snHits=0;q.snArmed=true;return 0;};"
+    js = js & "q.disarm=function(){if(q.sdObs){try{q.sdObs.disconnect();}catch(e){}}" & _
+                      "q.sdObs=null;q.sdArmed=false;q.snArmed=false;q.suArmed=false;" & _
+                      "return 0;};"
+
+    ' --- fetch のラップ (★現在の window.fetch を包む★) ---
+    js = js & "if(typeof window.fetch==='function'){"
+    js = js & "var of=(prev&&prev.of&&prev.fw===window.fetch)?prev.of:window.fetch;q.of=of;"
+    '   ★除外した要求でも明示シグナルの判定はする★
+    '   除外は「静穏判定から外す」だけの意味で、arm した目印は別扱いにする。
+    js = js & "q.fw=function(u,o){" & _
+                      "var r=(typeof u==='string')?u:((u&&u.url)?u.url:'');" & _
+                      "var sp=ig(r);if(sp){q.skipNet++;}else{q.netN++;q.fetchN++;}" & _
+                      "var en=sp?null:ifA(r,'fetch');" & _
+                      "var d=function(){if(!sp){q.fetchN--;q.lastNet=N();ifD(en);}sn(r);};" & _
+                      "return of.apply(this,arguments).then(" & _
+                      "function(v){d();return v;},function(e){d();throw e;});};"
+    js = js & "window.fetch=q.fw;}"
+
+    ' --- XHR のラップ ---
+    js = js & "if(XP){"
+    js = js & "var oo=(prev&&prev.oo&&prev.xo===XP.open)?prev.oo:XP.open;"
+    js = js & "var os=(prev&&prev.os&&prev.xs===XP.send)?prev.os:XP.send;q.oo=oo;q.os=os;"
+    js = js & "q.xo=function(m,u){try{this.__wv2u=String(u);}catch(e){}" & _
+                      "return oo.apply(this,arguments);};"
+    js = js & "q.xs=function(){var s=this;try{var u=s.__wv2u||'';" & _
+                      "var sp=ig(u);if(sp){q.skipNet++;}else{q.netN++;q.xhrN++;}" & _
+                      "var en=sp?null:ifA(u,'xhr');" & _
+                      "s.addEventListener('loadend',function(){" & _
+                      "if(!s.__wv2d){s.__wv2d=true;" & _
+                      "if(!sp){q.xhrN--;q.lastNet=N();ifD(en);}sn(u);}});}catch(e){}" & _
+                      "return os.apply(this,arguments);};"
+    js = js & "XP.open=q.xo;XP.send=q.xs;}"
+
+    ' --- DOM 変化の観測 ---
+    js = js & "try{q.ob=new MutationObserver(function(ms){" & _
+                      "var i,c=0,t;for(i=0;i<ms.length;i++){t=ms[i].target;" & _
+                      "if(ms[i].type==='characterData'){t=(t&&t.parentElement)?t.parentElement:t;}" & _
+                      "if(sk(t)){q.skipMut++;}else{c++;}}" & _
+                      "if(c>0){q.mutN+=c;q.lastMut=N();lg('DOM','x'+c);}});"
+    js = js & "q.ob.observe(document," & _
+                      "{childList:true,characterData:true,subtree:true,attributes:true});" & _
+                      "}catch(e){q.ob=null;}"
+
+    js = js & "window.__wv2p=q;P=q;}"
+
+    SpaProbeJs = js
+End Function
+
+' ============================================================
+' ★D-4b の本体: 静穏待ち★
+' ============================================================
+
+
+' ============================================================
+' WaitSettled (D-4b) - 通信と DOM の変化が落ち着くまで待つ
+'
+'   引数:
+'     timeoutSec : 上限 (秒)。既定 10。0 以下なら既定値に丸める
+'     stableMs   : 静穏窓 (ms)。既定 500。この時間 DOM が動かなければ静穏とみなす
+'   戻り値:
+'     True                     … 静穏に達した
+'     False + LastEvalOk=True  … 時間内に静まらなかった (正常)
+'     False + LastEvalOk=False … 失敗 (理由は LastEvalError)
+'
+'   ★★★ True は「アプリの処理が終わった」証明ではない ★★★
+'     静かなだけ。無視されて静かなのか終わって静かなのかは区別できない。
+'     重要な操作では D-4c の明示シグナルを併用すること。
+'
+'   ★待っている間はブレーク/ステップ実行しないこと★ (仕様事実20)
+'     10 秒待てば 10 秒間ずっと DoEvents 区間にいる。
+'
+'   使用例:
+'     el.Click
+'     If p.WaitSettled(10) Then
+'         Set r = p.QuerySelector("#result")
+'     Else
+'         Debug.Print "落ち着かなかった: " & p.LastSettleInfo
+'     End If
+' ============================================================
+Public Function WaitSettled(Optional ByVal timeoutSec As Single = WAIT_TIMEOUT_DEFAULT, _
+                            Optional ByVal stableMs As Long = SETTLE_STABLE_MS_DEFAULT) As Boolean
+    Dim t0 As Single
+    Dim st As String
+    Dim inflight As Long
+    Dim quietMs As Long
+    Dim quietEff As Long
+    Dim elapsedMs As Long
+    Dim polls As Long
+    Dim sigOk As Boolean
+    Dim inflightList As String
+    Dim stale As Long
+
+    WaitSettled = False
+    m_lastSettle = ""
+    If timeoutSec <= 0 Then timeoutSec = WAIT_TIMEOUT_DEFAULT
+    If stableMs < 0 Then stableMs = SETTLE_STABLE_MS_DEFAULT
+
+    t0 = Timer
+    Do
+        polls = polls + 1
+        st = SpaProbeState()
+
+        If Not m_lastEvalOk Then
+            ' 失敗は待っても直らない (設計原則104)。
+            m_lastSettle = "error " & m_lastEvalError
+            Wv2Log.LogW "Wv2Pane.WaitSettled: 失敗 err=" & m_lastEvalError
+            m_sigDom = False
+            m_sigNet = False
+            m_sigUrl = False
+            Exit Function
+        End If
+
+        ' ★居座っている要求は数えない★ (D-4f)
+        '   ifn = 飛んでいる要求のうち StaleInflightMs 以内に始まったものの数。
+        '   ロングポーリングやストリーミングを待ち続けないための現実的な妥協で、
+        '   ★「静かに見える」を判定しているのであって「全部終わった」ではない★
+        '   という WaitSettled の意味とは矛盾しない。正確さが要るなら
+        '   AddIgnoreNetwork か明示シグナルを使う。
+        inflight = Wv2Json.JsonGetNum(st, "ifn")
+        stale = Wv2Json.JsonGetNum(st, "ifo")
+        quietMs = Wv2Json.JsonGetNum(st, "q")
+
+        ' --- D-4c: arm したシグナルの状態を見る ---
+        '   ★arm したはずなのにページ側が arm していない = 遷移などで消えた★
+        '   黙って再 arm も無視もせず、失敗として返す (fail-visible)。
+        If m_sigDom Or m_sigNet Or m_sigUrl Then
+            If (m_sigDom And InStr(1, st, """sda"":true") = 0) Or _
+               (m_sigNet And InStr(1, st, """sna"":true") = 0) Or _
+               (m_sigUrl And InStr(1, st, """sua"":true") = 0) Then
+                m_lastSettle = "signal-lost (遷移などで arm が消えた)"
+                Wv2Log.LogW "Wv2Pane.WaitSettled: ★signal-lost★ " & _
+                            "arm したシグナルがページ側から消えている。" & _
+                            "遷移をまたいだ可能性がある (arm し直すこと)"
+                DisarmSignals
+                Exit Function
+            End If
+        End If
+
+        sigOk = True
+        If m_sigDom Then
+            If Wv2Json.JsonGetNum(st, "sdh") = 0 Then sigOk = False
+        End If
+        If m_sigNet Then
+            If Wv2Json.JsonGetNum(st, "snh") = 0 Then sigOk = False
+        End If
+        If m_sigUrl Then
+            If Wv2Json.JsonGetNum(st, "suh") = 0 Then sigOk = False
+        End If
+
+        ' --- ★静穏窓は「呼び出した時点」から測る★ (D-4b の事後報告) ---
+        '   ページ側の q は「最後の DOM 変化からの経過」なので、呼び出す前から
+        '   静かだった場合は最初の 1 往復でいきなり条件を満たしてしまう。それだと
+        '   ★「まだ始まっていない」と「もう終わった」を区別できない★
+        '   (操作の効果が数十 ms 遅れて始まるのは普通にある)。
+        '   そこで呼び出しからの経過で頭打ちにし、★最低でも stableMs は見張る★。
+        '   この間に何か動けば q が戻るので、始まりが遅れても捕まえられる。
+        '   ただし stableMs より後に始まる処理は原理的に取り逃す。
+        '   そこは D-4c の明示シグナル (arm) の担当。
+        elapsedMs = CLng(ElapsedSec(t0) * 1000)
+        quietEff = quietMs
+        If quietEff > elapsedMs Then quietEff = elapsedMs
+
+        If inflight = 0 And quietEff >= stableMs And sigOk Then
+            m_lastSettle = "stable q=" & quietMs & "ms(eff=" & quietEff & ") slack=" & _
+                           (quietEff - stableMs) & "ms polls=" & polls & _
+                           " elapsed=" & Format$(ElapsedSec(t0), "0.00") & "s" & _
+                           IIf(stale > 0, " (居座り " & stale & " 件は除外)", "") & _
+                           SigInfoOf(st)
+            WaitSettled = True
+            DisarmSignals
+            Exit Function
+        End If
+
+        If ElapsedSec(t0) >= timeoutSec Then
+            ' ★時間切れの原因が通信なら、何が飛んでいるかを見せる★ (D-4d の教訓)
+            '   Maps では終わらない XHR が 1 本居座って静穏が来なかった。
+            '   URL が分かれば AddIgnoreNetwork で外せる。
+            Wv2Json.JsonPickStr st, "il", inflightList
+
+            m_lastSettle = "timeout inflight=" & inflight & _
+                           IIf(stale > 0, "(居座り " & stale & " 件は除外)", "") & _
+                           " q=" & quietMs & _
+                           "ms (stableMs=" & stableMs & ") polls=" & polls & _
+                           SigInfoOf(st)
+            If Len(inflightList) > 0 Then
+                m_lastSettle = m_lastSettle & " | 実行中: " & inflightList
+            End If
+            Wv2Log.LogD "Wv2Pane.WaitSettled: 時間切れ " & m_lastSettle
+            DisarmSignals
+            Exit Function
+        End If
+
+        PollPause
+    Loop
+End Function
+
+
+' ============================================================
+' LastSettleInfo (D-4b) - 直前の待ちの内訳
+'
+'   成功時: stable q=<静穏 ms> slack=<余裕 ms> polls=<往復回数> elapsed=<秒>
+'   失敗時: timeout inflight=<実行中の通信> q=<静穏 ms> ... / error <理由>
+'
+'   ★slack が小さい (100ms 未満) 待ちは「際どい」★ 参考プロダクトの知見。
+'   たまたま静穏窓に滑り込んだだけかもしれないので、stableMs を上げるか
+'   明示シグナル (D-4c) を併用することを検討する。
+' ============================================================
+Public Property Get LastSettleInfo() As String
+    LastSettleInfo = m_lastSettle
+End Property
+
+
+' ============================================================
+' AutoWaitAfterAction (D-4b、論点7 案C の opt-in 部分)
+'
+'   True にすると、Wv2Element の ★.Value = / .Click / .SetAttribute が成功した後★
+'   自動で WaitSettled を呼ぶ。既定 False。
+'
+'   ★D-3 の契約は変えない★ 操作の戻り値は「JS が例外なく走った」のままで、
+'   待ちの成否は p.LastSettleInfo / p.WaitSettled を自分で見る。
+'   ImplicitWaitSec (D-3) と同じ「明示が第一級、自動は opt-in」の流儀。
+' ============================================================
+Public Property Get AutoWaitAfterAction() As Boolean
+    AutoWaitAfterAction = m_autoWait
+End Property
+
+Public Property Let AutoWaitAfterAction(ByVal onOff As Boolean)
+    m_autoWait = onOff
+    Wv2Log.LogD "Wv2Pane.AutoWaitAfterAction = " & onOff
+End Property
+
+
+' ============================================================
+' AddIgnoreNetwork / ClearIgnoreNetwork / IgnoreSelectors (D-4b、論点5)
+'
+'   静穏の判定から外すものを指定する。★遮断ではない★ 要求は普通に飛ぶ。
+'
+'   AddIgnoreNetwork : URL の★部分一致★パターン。常時鳴っている計測系に使う
+'                      例: p.AddIgnoreNetwork "google-analytics"
+'   IgnoreSelectors  : DOM 変化を無視する要素の CSS セレクタ (カンマ区切り)
+'                      例: p.IgnoreSelectors = ".clock, .ticker, #ads"
+'                      ★closest で判定する★ ので、指定要素の子孫の変化も外れる
+'
+'   ★リストは VBA 側が持つ★ ページ側に置くと遷移で消えるため。
+'   毎回の状態読み取りに相乗りして送り込むので往復は増えない。
+'
+'   ★★★ 広すぎる除外は「早すぎる静穏」を生む ★★★
+'     意味のある通信まで外すと、まだ処理中なのに静穏と判定してしまう。
+'     除外は「ログを見て、無関係だと確かめたものだけ」に留めること。
+' ============================================================
+Public Function AddIgnoreNetwork(ByVal urlPattern As String) As Boolean
+    Dim v As Variant
+
+    If Len(urlPattern) = 0 Then Exit Function
+    If m_ignoreNet Is Nothing Then Set m_ignoreNet = New Collection
+
+    For Each v In m_ignoreNet
+        If CStr(v) = urlPattern Then
+            AddIgnoreNetwork = True
+            Exit Function
+        End If
+    Next v
+
+    m_ignoreNet.Add urlPattern
+    Wv2Log.LogD "Wv2Pane.AddIgnoreNetwork: " & urlPattern & _
+                " (計 " & m_ignoreNet.Count & " 件)"
+    AddIgnoreNetwork = True
+End Function
+
+Public Sub ClearIgnoreNetwork()
+    Set m_ignoreNet = New Collection
+    Wv2Log.LogD "Wv2Pane.ClearIgnoreNetwork: 除外リストを空にした"
+End Sub
+
+Public Property Get IgnoreSelectors() As String
+    IgnoreSelectors = m_ignoreSel
+End Property
+
+Public Property Let IgnoreSelectors(ByVal cssSelectors As String)
+    m_ignoreSel = cssSelectors
+    Wv2Log.LogD "Wv2Pane.IgnoreSelectors = " & cssSelectors
+End Property
+
+
+' ============================================================
+' SpaProbeApplyJs (D-4b、Private) - 除外リストをページへ送り込む JS
+'
+'   状態の読み取りと同じ往復に相乗りさせる。変数 P (プローブ) が束縛済みである
+'   ことが前提。★空であっても必ず送る★ (送らないとページ側に前の設定が残る)。
+' ============================================================
+Private Function SpaProbeApplyJs() As String
+    Dim js As String
+    Dim arr As String
+    Dim v As Variant
+
+    If Not m_ignoreNet Is Nothing Then
+        For Each v In m_ignoreNet
+            If Len(arr) > 0 Then arr = arr & ","
+            arr = arr & JsQuote(CStr(v))
+        Next v
+    End If
+
+    ' ★空でも必ず送る★ (D-4b の実機検証で踏んだ)
+    '   「空だから送らない」にすると、★ページ側に前の設定が残り続ける★。
+    '   IgnoreSelectors = "" や ClearIgnoreNetwork が効かなくなり、
+    '   一度除外したものが二度と戻らない。毎回上書きすれば VBA 側が唯一の権威になる。
+    js = "P.ignoreNet=[" & arr & "];P.ignoreSel=" & _
+         JsQuote(m_ignoreSel) & ";"
+
+    SpaProbeApplyJs = js
+End Function
+
+' ============================================================
+' ★D-4c: 明示シグナル (arm してから操作する)★
+'
+'   ★静穏だけでは「アプリが終わった」と「アプリが無視した」を区別できない★
+'   どちらも静かだからである。重要な操作では、完了の目印を★操作の直前に arm★し、
+'   次の WaitSettled でそれが観測されるまで待つ。
+'
+'   ■ ワンショット
+'     arm したシグナルは★次の WaitSettled 1 回で消費される★。同じ操作を 2 回
+'     するなら 2 回 arm し直す。消費は成功でも時間切れでも起きる。
+'
+'   ■ 当たったら静穏窓を測り直す
+'     証拠が来た直後の 1 ポーリング分で満足せず、★その後もう一度まるごと
+'     静穏窓を取る★ (参考プロダクトと同じ考え方)。
+'
+'   ■ ★arm が消えたら黙って直さない (fail-visible)★
+'     ページ遷移でプローブごと消えると arm も消える。そのまま待つと
+'     「条件なしの待ち」に化けて、静かになった瞬間に成功を返してしまう。
+'     VBA 側でも arm 済みを覚えておき、食い違ったら signal-lost で失敗させる。
+'
+'   ■ 除外との関係
+'     ★除外した要求でも明示シグナルの判定はする★ 除外は「静穏判定から外す」
+'     だけの意味であって、「見なかったことにする」ではない。
+'
+'   使用例 (arm してから act する):
+'     p.ArmContentSignal "#result-table"     ' 既存の器が書き変わるのを待つ
+'     el.Click
+'     If Not p.WaitSettled(10) Then Debug.Print p.LastSettleInfo
+' ============================================================
+
+
+' ============================================================
+' ArmContentSignal (D-4c) - 既存の部分木が書き変わるのを待つ
+'
+'   ★arm した時点で対象が存在しなければ False★ (fail-fast)
+'   セレクタの綴り間違いや、まだ作られていない要素を指定した事故を、
+'   待ってから気づくのではなくその場で気づけるようにする。
+'   ★操作の後にできる要素は指定できない★ 既にある親を指定すること。
+'
+'   戻り値: True = arm できた / False = 対象が無い・不正なセレクタ・通信失敗
+'           理由は LastEvalError (not-found / bad-selector / その他)
+' ============================================================
+Public Function ArmContentSignal(ByVal selector As String) As Boolean
+    Dim js As String
+    Dim res As String
+
+    js = "(function(){" & SpaProbeJs() & SpaProbeApplyJs() & _
+         "return {r:P.armDom(" & JsQuote(selector) & ")};})()"
+
+    res = EvalSync(js)
+    If Not m_lastEvalOk Then
+        Wv2Log.LogW "Wv2Pane.ArmContentSignal: 失敗 err=" & m_lastEvalError
+        Exit Function
+    End If
+
+    ' ★JsonGetNum は負数を扱わない (設計原則64)★ ので、戻り値は文字列として読む。
+    If InStr(1, res, """r"":0") = 0 Then
+        If InStr(1, res, "-2") > 0 Then
+            m_lastEvalError = "bad-selector"
+        Else
+            m_lastEvalError = "not-found"
+        End If
+        m_lastEvalOk = False
+        Wv2Log.LogW "Wv2Pane.ArmContentSignal: arm できない (" & selector & _
+                    ") 理由=" & m_lastEvalError
+        Exit Function
+    End If
+
+    m_sigDom = True
+    Wv2Log.LogD "Wv2Pane.ArmContentSignal: arm した (" & selector & ")"
+    ArmContentSignal = True
+End Function
+
+
+' ============================================================
+' ArmNetworkSignal (D-4c) - 特定の要求の完了を待つ
+'
+'   urlPattern は URL の★部分一致★。応答が返った時点で当たりとする。
+'   ★存在確認はできない★ (これから飛ぶ要求なので)。綴りを間違えると
+'   当たらないまま時間切れになる。LastSettleInfo に net:miss と出るので、
+'   そのときは D-4d の診断ログで実際の URL を見て直すこと。
+' ============================================================
+Public Function ArmNetworkSignal(ByVal urlPattern As String) As Boolean
+    Dim js As String
+
+    If Len(urlPattern) = 0 Then Exit Function
+
+    js = "(function(){" & SpaProbeJs() & SpaProbeApplyJs() & _
+         "return {r:P.armNet(" & JsQuote(urlPattern) & ")};})()"
+
+    EvalSync js
+    If Not m_lastEvalOk Then
+        Wv2Log.LogW "Wv2Pane.ArmNetworkSignal: 失敗 err=" & m_lastEvalError
+        Exit Function
+    End If
+
+    m_sigNet = True
+    Wv2Log.LogD "Wv2Pane.ArmNetworkSignal: arm した (" & urlPattern & ")"
+    ArmNetworkSignal = True
+End Function
+
+
+' ============================================================
+' DisarmSignals (D-4c) - arm を解除する
+'   WaitSettled が終わるときに自動で呼ばれる (ワンショット)。
+'   arm したあと操作を取りやめたときは手で呼ぶ。
+' ============================================================
+Public Function DisarmSignals() As Boolean
+    m_sigDom = False
+    m_sigNet = False
+    m_sigUrl = False
+
+    EvalSync "(function(){var p=window.__wv2p;" & _
+             "if(p&&p.disarm){p.disarm();}return 1;})()"
+
+    DisarmSignals = m_lastEvalOk
+End Function
+
+
+' ============================================================
+' SigInfoOf (D-4c、Private) - 待ちの内訳に載せるシグナルの当たり外れ
+' ============================================================
+Private Function SigInfoOf(ByVal st As String) As String
+    Dim r As String
+
+    If m_sigDom Then
+        r = r & " dom:"
+        If Wv2Json.JsonGetNum(st, "sdh") > 0 Then r = r & "hit" Else r = r & "miss"
+    End If
+
+    If m_sigNet Then
+        r = r & " net:"
+        If Wv2Json.JsonGetNum(st, "snh") > 0 Then r = r & "hit" Else r = r & "miss"
+    End If
+
+    If m_sigUrl Then
+        r = r & " url:"
+        If Wv2Json.JsonGetNum(st, "suh") > 0 Then r = r & "hit" Else r = r & "miss"
+    End If
+
+    If Len(r) > 0 Then r = " signal=" & Trim$(r)
+    SigInfoOf = r
+End Function
+
+' ============================================================
+' ArmUrlSignal (D-4e) - URL が指定の文字列を含むまで待つ
+'
+'   ★D-4d の実測で必要と分かった★ SPA の完了が DOM でも通信でもなく
+'   ★URL に現れる★ ことがある。Google Maps の住所検索がまさにそれで、
+'   検索が通ると URL が /place/... と /@緯度,経度,ズーム に変わる。
+'   これは「完了の目印」であると同時に「欲しかった座標そのもの」でもある。
+'
+'   pushState による変化は DOM 変化として観測できないので、
+'   ★location.href を毎回の状態読み取りで見る★ 形にしてある。
+'
+'   ワンショット。次の WaitSettled 1 回で消費される。
+'   ★arm した時点で既に一致していても当たり扱いになる★ ので、
+'   遷移前の URL に含まれない文字列を指定すること。
+'
+'   使用例:
+'     p.ArmUrlSignal "/place/"
+'     el.Click
+'     If p.WaitSettled(15) Then Debug.Print p.View_GetSource()
+' ============================================================
+Public Function ArmUrlSignal(ByVal urlFragment As String) As Boolean
+    Dim js As String
+
+    If Len(urlFragment) = 0 Then Exit Function
+
+    js = "(function(){" & SpaProbeJs() & SpaProbeApplyJs() & _
+         "return {r:P.armUrl(" & JsQuote(urlFragment) & ")};})()"
+
+    EvalSync js
+    If Not m_lastEvalOk Then
+        Wv2Log.LogW "Wv2Pane.ArmUrlSignal: 失敗 err=" & m_lastEvalError
+        Exit Function
+    End If
+
+    m_sigUrl = True
+    Wv2Log.LogD "Wv2Pane.ArmUrlSignal: arm した (" & urlFragment & ")"
+    ArmUrlSignal = True
+End Function
+
+
+' ============================================================
+' SpaProbeLogging (D-4e) - 診断ログの ON / OFF
+'
+'   ★既定は False★ 有効にすると、ページ側が最近 200 件の出来事を溜める:
+'     NET+ <fetch|xhr> <URL>     要求が始まった
+'     NET- <経過ms> <URL>        要求が終わった
+'     DOM  x<件数>               DOM 変化のバースト
+'     SIG  <種別> hit ...        arm したシグナルが当たった
+'
+'   ★何を待つべきかを推測でなく観測で決めるための道具★
+'   参考プロダクト (WebDriver BiDi for SeleniumVBA) の Discovery Log に当たる。
+'   arm なしで 1 回流し、ログに出た URL や DOM の動きを見て、次に何を arm するか /
+'   何を除外するかを決める。
+'
+'   ★常時 ON にしない★ 溜め込みの分だけページ側が重くなる。
+' ============================================================
+Public Property Get SpaProbeLogging() As Boolean
+    Dim st As String
+
+    st = SpaProbeState()
+    If Not m_lastEvalOk Then Exit Property
+
+    SpaProbeLogging = (InStr(1, st, """lgOn"":true") > 0)
+End Property
+
+Public Property Let SpaProbeLogging(ByVal onOff As Boolean)
+    Dim js As String
+
+    js = "(function(){" & SpaProbeJs() & _
+         "P.logOn=" & IIf(onOff, "true", "false") & ";" & _
+         "if(!P.logOn){P.log=[];}return {r:1};})()"
+
+    EvalSync js
+    Wv2Log.LogD "Wv2Pane.SpaProbeLogging = " & onOff & _
+                IIf(m_lastEvalOk, "", " (失敗: " & m_lastEvalError & ")")
+End Property
+
+
+' ============================================================
+' SpaProbeDrainLog (D-4e) - 溜まった診断ログを取り出して Wv2Log へ流す
+'
+'   ★取り出したらページ側は空になる★ (溜め続けない)。
+'   戻り値: 流した件数。0 なら何も溜まっていなかった。
+'
+'   1 回の EvalSync で運べる量には限りがあるので、★1 回あたり 60 件まで★。
+'   残りは次の呼び出しで取れる (戻り値が 60 なら、まだ残っている可能性がある)。
+' ============================================================
+Public Function SpaProbeDrainLog() As Long
+    Dim js As String
+    Dim res As String
+    Dim txt As String
+    Dim lines As Variant
+    Dim i As Long
+
+    js = "(function(){" & SpaProbeJs() & _
+         "var a=P.log.splice(0,60);" & _
+         "return {n:a.length,s:a.join(String.fromCharCode(1))};})()"
+
+    res = EvalSync(js, 10)
+    If Not m_lastEvalOk Then
+        Wv2Log.LogW "Wv2Pane.SpaProbeDrainLog: 失敗 err=" & m_lastEvalError
+        Exit Function
+    End If
+
+    SpaProbeDrainLog = Wv2Json.JsonGetNum(res, "n")
+    If SpaProbeDrainLog = 0 Then Exit Function
+
+    Wv2Json.JsonPickStr res, "s", txt
+    lines = Split(txt, ChrW$(1))
+
+    Wv2Log.LogI "  --- 診断ログ (" & SpaProbeDrainLog & " 件) ---"
+    For i = LBound(lines) To UBound(lines)
+        Wv2Log.LogI "    " & lines(i)
+    Next i
+End Function
+
+' ============================================================
+' StaleInflightMs (D-4f) - 居座る要求を静穏判定から外す境目 (ms)
+'
+'   ★既定 10000 (10 秒)★ 0 にすると無効 (すべての要求を数える)。
+'
+'   ■ なぜ要るか (D-4d の実測)
+'     Google Maps の住所検索は /search?tbm=map を★開きっぱなし★にして結果を
+'     流し続ける。検索自体は 2 秒で終わって DOM も静まり URL も変わっているのに、
+'     この 1 本のせいで永久に inflight=0 にならず、静穏待ちが時間切れになった。
+'     ロングポーリングやストリーミングはどのサイトにもあるので、個別の除外
+'     (AddIgnoreNetwork) だけに頼ると、知らないサイトでは必ず一度は踏む。
+'
+'   ■ 何を捨てているか (正直に)
+'     ★本当に遅いだけの要求も、この時間を超えれば数えなくなる★
+'     ただしそのとき DOM も静穏窓のあいだ動いていないので、
+'     「見た目は落ち着いている」という WaitSettled の意味とは矛盾しない
+'     (True は「アプリの処理が終わった」証明ではない、という前提のまま)。
+'     正確さが要る場面では AddIgnoreNetwork で個別に外すか、
+'     D-4c の明示シグナルで「何を待つか」を書くこと。
+' ============================================================
+Public Property Get StaleInflightMs() As Long
+    StaleInflightMs = m_staleMs
+End Property
+
+Public Property Let StaleInflightMs(ByVal ms As Long)
+    If ms < 0 Then ms = 0
+    m_staleMs = ms
+    Wv2Log.LogD "Wv2Pane.StaleInflightMs = " & ms & _
+                IIf(ms = 0, " (無効: すべて数える)", "")
+End Property
+
+
+' ============================================================
+' StaleMsJs (D-4f、Private) - 居座り境目を JS の数値リテラルにする
+'   0 (無効) のときは巨大な値にして「すべて新しい」扱いにする。
+' ============================================================
+Private Function StaleMsJs() As String
+    If m_staleMs <= 0 Then
+        StaleMsJs = "1e15"
+    Else
+        StaleMsJs = CStr(m_staleMs)
+    End If
 End Function
 

@@ -785,17 +785,17 @@ Public Function AddTab() As Wv2Pane
 
     ' --- 6. Collection に追加 ---
     m_tabs.Add pane
-    Debug.Print "Wv2Browser.AddTab: タブ追加 OK (現在のタブ数=" & m_tabs.count & ")"
+    Debug.Print "Wv2Browser.AddTab: タブ追加 OK (現在のタブ数=" & m_tabs.Count & ")"
 
     ' --- 6.5 タブ追加を通知 (第9.11a、疎結合イベント) ---
     '   ActivateTab より前に出す。これにより聞き手は「まず追加、次に
     '   アクティブ変更」の順で受け取れる (AddTab は直後に ActivateTab を呼ぶ)。
-    RaiseEvent TabAdded(m_tabs.count)
+    RaiseEvent TabAdded(m_tabs.Count)
 
     ' --- 7. 追加したタブを自動でアクティブ化 (論点⑦ a) ---
     '   可視制御は自前で行わず ActivateTab に委譲する (責務分離)。
     '   これにより「可視制御のロジックは ActivateTab の 1 箇所だけ」を保つ。
-    ActivateTab m_tabs.count
+    ActivateTab m_tabs.Count
 
     ' --- 8. 予備タブが無ければ生成を予約し直す (第9.27) ---
     '   起動シーケンス中は再入ガードでプリウォームが見送られることがある。
@@ -1087,7 +1087,7 @@ End Function
 ' TabCount ? 現在のタブ数
 ' ============================================================
 Public Property Get TabCount() As Long
-    TabCount = m_tabs.count
+    TabCount = m_tabs.Count
 End Property
 
 
@@ -1097,9 +1097,9 @@ End Property
 '   m_activeIndex (1-based、0 = なし) が指すタブを返す。
 ' ============================================================
 Public Property Get ActivePane() As Wv2Pane
-    If m_activeIndex < 1 Or m_activeIndex > m_tabs.count Then
+    If m_activeIndex < 1 Or m_activeIndex > m_tabs.Count Then
         Debug.Print "Wv2Browser.ActivePane: アクティブタブなし (activeIndex=" & _
-                    m_activeIndex & ", tabCount=" & m_tabs.count & ")"
+                    m_activeIndex & ", tabCount=" & m_tabs.Count & ")"
         Set ActivePane = Nothing
         Exit Property
     End If
@@ -1141,16 +1141,16 @@ End Property
 '   可視制御ロジックを 1 箇所に集約する。
 ' ============================================================
 Public Function ActivateTab(ByVal index As Long) As Boolean
-    If index < 1 Or index > m_tabs.count Then
+    If index < 1 Or index > m_tabs.Count Then
         Debug.Print "Wv2Browser.ActivateTab: index 範囲外 (index=" & index & _
-                    ", tabCount=" & m_tabs.count & ")"
+                    ", tabCount=" & m_tabs.Count & ")"
         Exit Function
     End If
 
     Dim i As Long
     Dim pane As Wv2Pane
     Dim hr As Long
-    For i = 1 To m_tabs.count
+    For i = 1 To m_tabs.Count
         Set pane = m_tabs.Item(i)
         hr = pane.Ctrl_PutIsVisible(i = index)
         If hr <> 0 Then
@@ -1188,9 +1188,9 @@ End Function
 '   実装側) に委ねることで、タブバー不要な使い方でも余計な制約を持ち込まない。
 ' ============================================================
 Public Function CloseTab(ByVal index As Long) As Boolean
-    If index < 1 Or index > m_tabs.count Then
+    If index < 1 Or index > m_tabs.Count Then
         Debug.Print "Wv2Browser.CloseTab: index 範囲外 (index=" & index & _
-                    ", tabCount=" & m_tabs.count & ")"
+                    ", tabCount=" & m_tabs.Count & ")"
         Exit Function
     End If
 
@@ -1213,11 +1213,11 @@ Public Function CloseTab(ByVal index As Long) As Boolean
     ' --- 3. Collection から除去 (参照カウント 0 で Pane.Class_Terminate) ---
     Set pane = Nothing
     m_tabs.Remove index
-    Debug.Print "Wv2Browser.CloseTab: タブ" & index & " を閉じた (残りタブ数=" & m_tabs.count & ")"
+    Debug.Print "Wv2Browser.CloseTab: タブ" & index & " を閉じた (残りタブ数=" & m_tabs.Count & ")"
 
     ' --- 4. アクティブ補正 + 可視状態の修復 ---
     Dim newActive As Long
-    If m_tabs.count = 0 Then
+    If m_tabs.Count = 0 Then
         ' タブ 0 個: アクティブなし (タブ 0 許容)
         m_activeIndex = 0
         Debug.Print "Wv2Browser.CloseTab: 全タブが閉じられた (activeIndex=0)"
@@ -1230,10 +1230,10 @@ Public Function CloseTab(ByVal index As Long) As Boolean
         ' 閉じたのがアクティブ: 右隣優先、なければ左隣 (末尾)。
         '   Remove 後、元の右隣は今や同じ index にいる。index が残りタブ数を
         '   超えたら (末尾を閉じた場合) は末尾をアクティブ化する。
-        If index <= m_tabs.count Then
+        If index <= m_tabs.Count Then
             newActive = index
         Else
-            newActive = m_tabs.count
+            newActive = m_tabs.Count
         End If
         ActivateTab newActive
     Else
@@ -1270,7 +1270,7 @@ End Function
 ' ============================================================
 Public Function MoveTab(ByVal fromIndex As Long, ByVal toIndex As Long) As Boolean
     Dim n As Long
-    n = m_tabs.count
+    n = m_tabs.Count
 
     ' --- 範囲チェック / 無変化チェック ---
     If fromIndex < 1 Or fromIndex > n Then
@@ -1313,12 +1313,12 @@ Public Function MoveTab(ByVal fromIndex As Long, ByVal toIndex As Long) As Boole
         m_tabs.Add moving, , , toIndex - 1
     End If
 
-    Debug.Print "Wv2Browser.MoveTab: タブを " & fromIndex & " → " & toIndex & " へ移動 (tabCount=" & m_tabs.count & ")"
+    Debug.Print "Wv2Browser.MoveTab: タブを " & fromIndex & " → " & toIndex & " へ移動 (tabCount=" & m_tabs.Count & ")"
 
     ' --- 3. アクティブ Pane の新しい index を逆引き ---
     If Not activePaneRef Is Nothing Then
         Dim i As Long
-        For i = 1 To m_tabs.count
+        For i = 1 To m_tabs.Count
             If m_tabs.Item(i) Is activePaneRef Then
                 m_activeIndex = i
                 Exit For
@@ -1329,7 +1329,7 @@ Public Function MoveTab(ByVal fromIndex As Long, ByVal toIndex As Long) As Boole
     ' --- 4. 可視状態を正す → ActiveChanged → 全体同期 (案A-2b) ---
     '   可視状態自体は変わらないが、ActivateTab を通すことで PushSyncToJs を
     '   促し、並べ替え結果を TabBar/NavBar に反映させる。
-    If m_activeIndex >= 1 And m_activeIndex <= m_tabs.count Then
+    If m_activeIndex >= 1 And m_activeIndex <= m_tabs.Count Then
         ActivateTab m_activeIndex
     End If
 
@@ -1351,7 +1351,7 @@ Public Function Debug_TabOrderTitles() As String
     Dim i As Long
     Dim parts As String
     Dim tag As String
-    For i = 1 To m_tabs.count
+    For i = 1 To m_tabs.Count
         tag = ""
         ' 検証用タグマップがあれば ObjPtr で引く (並べ替えに強い安定識別)
         If Not m_dbgTagMap Is Nothing Then
@@ -1427,7 +1427,7 @@ End Function
 ' ============================================================
 Public Sub NotifyTitleChanged(ByVal senderPane As Wv2Pane, ByVal title As String)
     Dim i As Long
-    For i = 1 To m_tabs.count
+    For i = 1 To m_tabs.Count
         If m_tabs.Item(i) Is senderPane Then
             RaiseEvent TabTitleChanged(i, title)
             Exit Sub
@@ -1451,7 +1451,7 @@ End Sub
 Public Sub NotifyUrlChanged(ByVal senderPane As Wv2Pane, ByVal url As String, _
                             ByVal canGoBack As Boolean, ByVal canGoForward As Boolean)
     Dim i As Long
-    For i = 1 To m_tabs.count
+    For i = 1 To m_tabs.Count
         If m_tabs.Item(i) Is senderPane Then
             RaiseEvent TabUrlChanged(i, url, canGoBack, canGoForward)
             Exit Sub
@@ -1843,7 +1843,7 @@ Public Sub ResizeAll(ByRef rc As RECT)
     Dim i As Long
     Dim pane As Wv2Pane
     Dim hr As Long
-    For i = 1 To m_tabs.count
+    For i = 1 To m_tabs.Count
         Set pane = m_tabs.Item(i)
         If pane.IsReady Then
             hr = pane.Ctrl_PutBounds(rc)
@@ -1859,7 +1859,7 @@ End Sub
 ' PaneAt ? index (1-based) でタブを取得する (検証用)
 ' ============================================================
 Public Property Get PaneAt(ByVal index As Long) As Wv2Pane
-    If index < 1 Or index > m_tabs.count Then
+    If index < 1 Or index > m_tabs.Count Then
         Set PaneAt = Nothing
         Exit Property
     End If
@@ -1918,7 +1918,7 @@ Public Sub RequestNewTabAsync(ByVal url As String)
     m_newTabTimer.StartTimer 1             ' 1ms 後 (ハンドラ完了後) に TimerCall
 
     Debug.Print "Wv2Browser.RequestNewTabAsync: 保留 URL 追加 (" & url & _
-                ")。キュー数=" & m_pendingUrls.count & "、ワンショット Timer 起動"
+                ")。キュー数=" & m_pendingUrls.Count & "、ワンショット Timer 起動"
 End Sub
 
 
@@ -2043,7 +2043,7 @@ End Sub
 ' ============================================================
 Private Sub SyncSettingsViewsNow()
     If m_tabs Is Nothing Then Exit Sub
-    If m_tabs.count = 0 Then Exit Sub
+    If m_tabs.Count = 0 Then Exit Sub
 
     ' ブリッジが無いなら設定画面は一度も開かれていない
     If m_settingsBridge Is Nothing Then Exit Sub
@@ -2058,7 +2058,7 @@ Private Sub SyncSettingsViewsNow()
     Dim res As String
     Dim hit As Long
 
-    For syncIdx = 1 To m_tabs.count
+    For syncIdx = 1 To m_tabs.Count
         Set syncPane = m_tabs.Item(syncIdx)
         If IsSettingsView(syncPane) Then
             syncJs = "(function(){try{return {r:applyFromHost(" & _
@@ -2112,7 +2112,7 @@ Public Sub OpenSettingsTab()
     '   EvalSync で window.__wv2Settings を尋ねれば、遷移経路によらず
     '   「今そのタブが設定画面か」が分かる (戻るで復帰したタブも拾える)。
     Dim j As Long
-    For j = 1 To m_tabs.count
+    For j = 1 To m_tabs.Count
         If IsSettingsView(m_tabs.Item(j)) Then
             Wv2Log.LogD "Wv2Browser.OpenSettingsTab: 設定画面を表示中のタブ(index " & j & _
                         ")を見つけたのでアクティブ化"
@@ -2153,7 +2153,7 @@ Public Sub OpenSettingsTab()
 
     ' 生成したタブをアクティブにする (新 index を逆引き)
     Dim i As Long
-    For i = 1 To m_tabs.count
+    For i = 1 To m_tabs.Count
         If m_tabs.Item(i) Is pane Then
             ActivateTab i
             Exit For
@@ -2561,7 +2561,7 @@ Private Sub CreatePrewarmPaneNow()
     Set m_prewarmPane = pane
     m_prewarmClaimed = False
     Debug.Print "Wv2Browser.Prewarm: 予備タブを温めた (ViewPtr=" & pane.ViewPtr & _
-                ", 表示中のタブ数=" & m_tabs.count & " ← 予備は含まない)"
+                ", 表示中のタブ数=" & m_tabs.Count & " ← 予備は含まない)"
 End Sub
 
 
@@ -2624,11 +2624,11 @@ Private Sub AdoptPrewarmedNow()
     m_prewarmClaimed = False
 
     m_tabs.Add pane
-    Debug.Print "Wv2Browser.Adopt: 予備タブをタブとして採用 (現在のタブ数=" & m_tabs.count & _
+    Debug.Print "Wv2Browser.Adopt: 予備タブをタブとして採用 (現在のタブ数=" & m_tabs.Count & _
                 ", 要求 URL=" & m_adoptUrl & ")"
 
-    RaiseEvent TabAdded(m_tabs.count)
-    ActivateTab m_tabs.count
+    RaiseEvent TabAdded(m_tabs.Count)
+    ActivateTab m_tabs.Count
 End Sub
 
 
@@ -2659,9 +2659,9 @@ Private Sub m_newTabTimer_TimerCall(ByVal wTime As Long, ByRef varData As Varian
     If Not m_newTabTimer Is Nothing Then m_newTabTimer.StartTimer 0
 
     If m_pendingUrls Is Nothing Then Exit Sub
-    Debug.Print "Wv2Browser.TimerCall: 保留 URL を処理 (キュー数=" & m_pendingUrls.count & ")"
+    Debug.Print "Wv2Browser.TimerCall: 保留 URL を処理 (キュー数=" & m_pendingUrls.Count & ")"
 
-    Do While m_pendingUrls.count > 0
+    Do While m_pendingUrls.Count > 0
         Dim url As String
         url = m_pendingUrls(1)
         m_pendingUrls.Remove 1
@@ -2734,7 +2734,7 @@ Public Sub Shutdown()
     For Each pane In m_tabs
         If Not pane Is Nothing Then pane.ClearBrowserRef
     Next pane
-    Debug.Print "Wv2Browser.Shutdown: 全 " & m_tabs.count & " タブの後方参照を切断"
+    Debug.Print "Wv2Browser.Shutdown: 全 " & m_tabs.Count & " タブの後方参照を切断"
 End Sub
 
 
@@ -2742,7 +2742,7 @@ End Sub
 ' Class_Terminate ? 全タブ解放 → Environment 解放 (設計原則 43: 子から親へ)
 ' ============================================================
 Private Sub Class_Terminate()
-    Debug.Print "Wv2Browser.Terminate 開始 (タブ数=" & m_tabs.count & ")"
+    Debug.Print "Wv2Browser.Terminate 開始 (タブ数=" & m_tabs.Count & ")"
 
     ' --- 0. 第9.27: 予備タブの保険解放 ---
     '   通常は Shutdown が先に片付けている。Shutdown を通らずここへ来た場合の保険。
@@ -2756,7 +2756,7 @@ Private Sub Class_Terminate()
     '   Collection から取り除くと参照が切れ、参照カウント 0 で
     '   Wv2Pane.Class_Terminate が走る。末尾から順に取り除く。
     Dim i As Long
-    For i = m_tabs.count To 1 Step -1
+    For i = m_tabs.Count To 1 Step -1
         m_tabs.Remove i
     Next i
     Set m_tabs = Nothing

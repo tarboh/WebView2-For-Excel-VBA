@@ -474,6 +474,12 @@ Private Function ExecAction(ByVal actionStmts As String, _
         m_lastOk = True
         m_lastInfo = v
         ExecAction = True
+
+        ' --- D-4b: opt-in の自動待ち (既定 False なので通常は素通り) ---
+        '   ★戻り値には影響させない★ 操作が走ったかどうかと、
+        '   その後ページが落ち着いたかどうかは別の話 (D-3 の契約を保つ)。
+        '   待ちの結果は m_pane.LastSettleInfo で見る。
+        If m_pane.AutoWaitAfterAction Then m_pane.WaitSettled
     Else
         m_lastError = st
         Wv2Log.LogW "Wv2Element." & apiName & ": 失敗 (handle=" & m_handle & _

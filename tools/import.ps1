@@ -249,6 +249,20 @@ try {
     }
     if ($null -eq $wb) { throw "Workbooks.Open に 10 回失敗した。Excel を一度終了してから再実行すること。" }
 
+    # ★書き戻すつもりなのに読み取り専用で開けてしまった場合は中止する★
+    #   ブックが Excel で開かれている / 取り残された ~$ ロックファイルがあると、
+    #   Open は成功するが読み取り専用になる。そのまま進めると差し替えも照合も
+    #   「メモリ上の複製」に対して成功し、★ディスクには何も届かないのに OK と出る★。
+    #   (D-4b の書き戻しで実際に踏んだ)
+    if ($Apply -and $wb.ReadOnly) {
+        $wb.Close($false)
+        $excel.Quit()
+        throw ("ブックが読み取り専用で開かれた。ディスクに書き戻せないので中止する。" +
+               "`n  ・Excel でこのブックを開いていないか確認すること" +
+               "`n  ・Excel を閉じても book\~`$" + [System.IO.Path]::GetFileName($Book) +
+               " が残っていたら、それを削除すること")
+    }
+
     $vbp = $null
     try { $vbp = $wb.VBProject } catch { }
     if ($null -eq $vbp) { throw "VBProject にアクセスできない。トラスト センターの設定を確認すること。" }

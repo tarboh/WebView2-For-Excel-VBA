@@ -1,5 +1,23 @@
 Attribute VB_Name = "Wv2Tests"
 ''''''''''''''''''''''''''''''''''
+''''''''''''''''''''''''''''''''''
+' --- Wv2Tests.bas  D-4a 段階 (ページ内 SPA プローブの検証) ---
+'
+'   D-4a の追加事項:
+'     Test_D4_Probe … ★D-4 の初手★ プローブの設置・健康診断・作り直し・
+'                     数え上げ・往復コストを一括で検証する。
+'     Test_D4_Help  … 手順。
+'
+'   ★何を測っているか (D-4 論点の未知 1～4)★
+'     未知1 ラップが生き残るか  … (6) で故意に壊して自動修復を確認
+'     未知2 観測の負荷          … (2) で往復時間を設置前後で比較
+'     未知3 遷移で消えるか      … (8) でページ遷移後に世代が振り出しに戻ることを確認
+'     未知4 余計な Pane に付かないか … (1) で「呼ぶまで作られない」ことを確認
+'
+'   検証ページ (BuildD4ProbeHtml) は★読み込み直後は完全に静か★にしてある。
+'   ノイズ (定期的な DOM 書き換え) は startNoise() を撃ったときだけ始まる。
+'   D-4b の静穏待ちの検証でも同じページを使う。
+'''''''''''''''''''''''''''''''''''
 ' --- Wv2Tests.bas  D-3 段階 (書き込みと操作の検証) ---
 '
 '   D-3 の追加事項:
@@ -3855,6 +3873,1275 @@ Public Sub Test_D3_Help()
     Debug.Print "    WaitFor / WaitGone は指定した要素の有無しか見ない。"
     Debug.Print "    「通信が全部終わって静かになるまで」を待つ静穏待ち"
     Debug.Print "    (MutationObserver / fetch カウンタ) は D-4 の宿題。"
+    Debug.Print ""
+End Sub
+
+' ============================================================
+' Test_D4_Probe (D-4a の検証: ページ内 SPA プローブ)
+'
+'   ★D-4 の初手★ 待ちの本体を作る前に、観測する仕掛けが健全に立つことを確かめる
+'   (設計原則103: 測る前にプローブ自体を検算する)。
+' ============================================================
+Public Sub Test_D4_Probe()
+    Dim b As Wv2Browser
+    Dim p As Wv2Pane
+    Dim st As String
+    Dim before As Single
+    Dim after As Single
+    Dim n0 As Long
+    Dim g0 As Long
+
+    Set b = UserForm1.CurrentBrowser
+    If b Is Nothing Then
+        Wv2Log.LogI "Test_D4_Probe: Browser が起動していません。" & _
+                    "先に UserForm1.Show vbModeless と StartWebView2_Full を実行してください。"
+        Exit Sub
+    End If
+
+    Set p = b.AddTabWithHtml(BuildD4ProbeHtml())
+    If p Is Nothing Then
+        Wv2Log.LogI "Test_D4_Probe: タブの生成に失敗しました。"
+        Exit Sub
+    End If
+    If Not D2WaitTitle(p, "D-4 プローブ", 10) Then
+        Wv2Log.LogI "Test_D4_Probe: 検証ページの読み込みを確認できませんでした。"
+        Exit Sub
+    End If
+
+    Wv2Log.LogI ""
+    TestCountReset
+    Wv2Log.LogI "================ Test_D4_Probe 開始 ================"
+    Wv2Log.LogI "  --- (1) 呼ぶまでプローブは作られない (未知4) ---"
+
+    st = p.EvalSync("typeof window.__wv2p")
+    TestBool "★設置前は undefined★", (Wv2Json.JsonUnescape(st) = "undefined")
+    Wv2Log.LogI "        typeof window.__wv2p = " & st
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (2) 往復コストの比較 (未知2) ---"
+
+    before = D4RoundTrip(p, 20)
+    Wv2Log.LogI "        設置前の 1 往復 = " & Format$(before, "0.0") & " ms"
+
+    st = p.SpaProbeState()
+    TestBool "SpaProbeState が成功する", p.LastEvalOk
+    Wv2Log.LogI "        state = " & st
+
+    after = D4RoundTrip(p, 20)
+    Wv2Log.LogI "        設置後の 1 往復 = " & Format$(after, "0.0") & " ms"
+    TestBool "  観測を張っても往復が極端に遅くならない (3 倍未満)", _
+             (after < before * 3 + 10)
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (3) 初回の状態 ---"
+
+    TestBool "★健康である (h=true)★", (InStr(1, st, """h"":true") > 0)
+    TestBool "  MutationObserver が生きている (ob=true)", _
+             (InStr(1, st, """ob"":true") > 0)
+    TestBool "  版番号が 1", (Wv2Json.JsonGetNum(st, "v") = 1)
+    TestBool "  世代が 1", (Wv2Json.JsonGetNum(st, "g") = 1)
+    TestBool "  作り直し回数が 0", (Wv2Json.JsonGetNum(st, "rp") = 0)
+    TestBool "  実行中の通信は 0", _
+             (Wv2Json.JsonGetNum(st, "f") = 0 And Wv2Json.JsonGetNum(st, "x") = 0)
+    TestBool "  SpaProbeHealthy も True", p.SpaProbeHealthy()
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (4) DOM 変化を数える ---"
+
+    st = p.SpaProbeState()
+    n0 = Wv2Json.JsonGetNum(st, "m")
+    p.EvalSync "(function(){document.getElementById('target')" & _
+               ".textContent='書き換えた '+Date.now();return 1;})()"
+    st = p.SpaProbeState()
+    TestBool "★DOM 変化が数えられた★", (Wv2Json.JsonGetNum(st, "m") > n0)
+    Wv2Log.LogI "        最後の変化からの経過 q = " & _
+                Wv2Json.JsonGetNum(st, "q") & " ms"
+    TestBool "  直後なので q が小さい (1000ms 未満)", _
+             (Wv2Json.JsonGetNum(st, "q") < 1000)
+    TestBool "  除外していないので sm = 0", (Wv2Json.JsonGetNum(st, "sm") = 0)
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (5) 通信を数える (blob URL なのでオフラインで完結) ---"
+
+    st = p.SpaProbeState()
+    n0 = Wv2Json.JsonGetNum(st, "n")
+
+    p.EvalSync "(function(){var u=URL.createObjectURL(new Blob(['hi']));" & _
+               "fetch(u).then(function(r){return r.text();});return 1;})()"
+    D3Pump 1
+    st = p.SpaProbeState()
+    TestBool "★fetch が数えられた★", (Wv2Json.JsonGetNum(st, "n") > n0)
+    TestBool "  完了して実行中が 0 に戻った", (Wv2Json.JsonGetNum(st, "f") = 0)
+
+    n0 = Wv2Json.JsonGetNum(st, "n")
+    p.EvalSync "(function(){var u=URL.createObjectURL(new Blob(['hi']));" & _
+               "var r=new XMLHttpRequest();r.open('GET',u);r.send();return 1;})()"
+    D3Pump 1
+    st = p.SpaProbeState()
+    TestBool "★XHR が数えられた★", (Wv2Json.JsonGetNum(st, "n") > n0)
+    TestBool "  完了して実行中が 0 に戻った", (Wv2Json.JsonGetNum(st, "x") = 0)
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (6) ★健康診断と自動修復★ (未知1) ---"
+
+    st = p.SpaProbeState()
+    g0 = Wv2Json.JsonGetNum(st, "g")
+    Wv2Log.LogI "        壊す前: 世代=" & g0 & " 作り直し=" & _
+                Wv2Json.JsonGetNum(st, "rp")
+
+    Wv2Log.LogI "        ページ側が window.fetch を差し替えた状況を作る"
+    p.EvalSync "(function(){var o=window.fetch;" & _
+               "window.fetch=function(){return o.apply(this,arguments);};return 1;})()"
+
+    st = p.SpaProbeState()
+    TestBool "★壊れても呼べば健康に戻る (h=true)★", _
+             (InStr(1, st, """h"":true") > 0)
+    TestBool "  ★作り直しが記録された (rp >= 1)★", _
+             (Wv2Json.JsonGetNum(st, "rp") >= 1)
+    TestBool "  世代が 1 つ進んだ", (Wv2Json.JsonGetNum(st, "g") = g0 + 1)
+    Wv2Log.LogI "        壊した後: state = " & st
+
+    n0 = Wv2Json.JsonGetNum(st, "n")
+    p.EvalSync "(function(){var u=URL.createObjectURL(new Blob(['hi']));" & _
+               "fetch(u).then(function(r){return r.text();});return 1;})()"
+    D3Pump 1
+    st = p.SpaProbeState()
+    TestBool "  ★作り直した後も数えられる★", (Wv2Json.JsonGetNum(st, "n") > n0)
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (7) SpaProbeReset (手動の作り直し) ---"
+
+    g0 = Wv2Json.JsonGetNum(st, "g")
+    TestBool "SpaProbeReset が成功する", p.SpaProbeReset()
+    st = p.SpaProbeState()
+    TestBool "  世代が進んだ", (Wv2Json.JsonGetNum(st, "g") > g0)
+    TestBool "  数えた値が 0 に戻った", (Wv2Json.JsonGetNum(st, "n") = 0)
+    TestBool "  健康である", (InStr(1, st, """h"":true") > 0)
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (8) ページ遷移でプローブは消える (未知3) ---"
+
+    p.View_NavigateToString BuildD2SecondHtml()
+    If Not D2WaitTitle(p, "D-2 プローブ 2 枚目", 10) Then
+        Wv2Log.LogI "  [FAIL] 遷移を確認できませんでした"
+        m_ngCount = m_ngCount + 1
+    Else
+        st = p.EvalSync("typeof window.__wv2p")
+        TestBool "★遷移後は undefined に戻る★", _
+                 (Wv2Json.JsonUnescape(st) = "undefined")
+        st = p.SpaProbeState()
+        TestBool "  新しいページでも立て直せる", _
+                 (InStr(1, st, """h"":true") > 0)
+        TestBool "  世代は 1 から数え直し", (Wv2Json.JsonGetNum(st, "g") = 1)
+    End If
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  in-callback 深さ (期待 0): " & p.InCallbackDepth
+    TestCountPrint
+    Wv2Log.LogI "================ Test_D4_Probe 終了 ================"
+    Wv2Log.LogI ""
+End Sub
+
+
+' ============================================================
+' D4RoundTrip (D-4a: EvalSync 1 往復の平均 ms を測る)
+'   ★仕様事実52 (約 38ms) の測り直し★ プローブを張ると重くならないかを見る。
+' ============================================================
+Private Function D4RoundTrip(ByVal p As Wv2Pane, ByVal shots As Long) As Single
+    Dim i As Long
+    Dim t0 As Single
+
+    t0 = Timer
+    For i = 1 To shots
+        p.EvalSync "1"
+    Next i
+
+    D4RoundTrip = D3Took(t0) / shots * 1000
+End Function
+
+
+' ============================================================
+' BuildD4ProbeHtml (D-4 の検証ページ)
+'
+'   ★読み込み直後は完全に静か★ にしてある (静穏待ちの検証に要る)。
+'   ページ側の口:
+'     startNoise(ms) … ms ごとに #noise を書き換え続ける (静まらないページの再現)
+'     stopNoise()    … 止める
+'     later(ms)      … ms 後に #late を足す (D-4b で使う)
+'     chain(ms)      … ms 後に blob を fetch し、その完了後にさらに DOM を書き換える
+'                      (★fetch → DOM 更新の連鎖★ = SPA の再現。D-4b で使う)
+' ============================================================
+Private Function BuildD4ProbeHtml() As String
+    Dim s As String
+
+    s = "<!DOCTYPE html>" & vbLf
+    s = s & "<html lang=""ja""><head><meta charset=""UTF-8"">" & vbLf
+    s = s & "<title>D-4 プローブ</title>" & vbLf
+    s = s & "<style>" & vbLf
+    s = s & "  body{font-family:'Segoe UI','Meiryo',sans-serif;background:#12161f;" & _
+            "color:#e8eaed;padding:32px;line-height:1.8;}" & vbLf
+    s = s & "  h1{font-size:22px;margin:0 0 18px;}" & vbLf
+    s = s & "  .card{border:1px solid rgba(255,255,255,.12);border-radius:10px;" & _
+            "padding:14px 16px;margin:12px 0;background:rgba(255,255,255,.04);}" & vbLf
+    s = s & "  .note{color:#8ea2c8;font-size:12.5px;}" & vbLf
+    s = s & "</style></head><body>" & vbLf
+    s = s & "<h1 id=""ttl"">D-4 静穏待ちのプローブ</h1>" & vbLf
+    s = s & "<p class=""note"">読み込み直後は★何も動いていない★状態です。" & _
+            "startNoise() / later() / chain() で動きを作ります。</p>" & vbLf
+    s = s & "<div id=""target"" class=""card"">書き換え対象</div>" & vbLf
+    s = s & "<div id=""noise"" class=""card"">ノイズ: 停止中</div>" & vbLf
+    s = s & "<div id=""slot"" class=""card""></div>" & vbLf
+    s = s & "<p><button id=""btn"" type=""button"">押すと 400ms 後に更新</button></p>" & vbLf
+    s = s & "<script>" & vbLf
+    s = s & "(function(){" & vbLf
+    s = s & "  var t=null;" & vbLf
+    s = s & "  window.startNoise=function(ms){" & vbLf
+    s = s & "    if(t){clearInterval(t);}" & vbLf
+    s = s & "    t=setInterval(function(){" & vbLf
+    s = s & "      document.getElementById('noise').textContent='ノイズ '+Date.now();" & vbLf
+    s = s & "    },ms||200);return 1;};" & vbLf
+    s = s & "  window.stopNoise=function(){" & vbLf
+    s = s & "    if(t){clearInterval(t);t=null;}" & vbLf
+    s = s & "    document.getElementById('noise').textContent='ノイズ: 停止中';return 1;};" & vbLf
+    s = s & "  window.later=function(ms){" & vbLf
+    s = s & "    setTimeout(function(){" & vbLf
+    s = s & "      var d=document.createElement('div');d.id='late';" & vbLf
+    s = s & "      d.textContent='遅れて出た';" & vbLf
+    s = s & "      document.getElementById('slot').appendChild(d);" & vbLf
+    s = s & "    },ms||800);return 1;};" & vbLf
+    s = s & "  window.chain=function(ms){" & vbLf
+    s = s & "    setTimeout(function(){" & vbLf
+    s = s & "      var u=URL.createObjectURL(new Blob(['ok']));" & vbLf
+    s = s & "      fetch(u).then(function(r){return r.text();}).then(function(x){" & vbLf
+    s = s & "        setTimeout(function(){" & vbLf
+    s = s & "          document.getElementById('target').textContent='連鎖の結果 '+x;" & vbLf
+    s = s & "        },300);" & vbLf
+    s = s & "      });" & vbLf
+    s = s & "    },ms||500);return 1;};" & vbLf
+    s = s & "  document.getElementById('btn').addEventListener('click',function(){" & vbLf
+    s = s & "    setTimeout(function(){" & vbLf
+    s = s & "      document.getElementById('target').textContent=" & _
+            "'クリックの結果 '+Date.now();" & vbLf
+    s = s & "    },400);" & vbLf
+    s = s & "  });" & vbLf
+    s = s & "})();" & vbLf
+    s = s & "</" & "script>" & vbLf
+    s = s & "</body></html>"
+
+    BuildD4ProbeHtml = s
+End Function
+
+
+' ============================================================
+' Test_D4_Settle (D-4b の検証: 静穏待ち)
+'
+'   ★D-4 の核心★ 「fetch が終わった」ではなく「その後の DOM 更新まで終わった」
+'   ところで返ることを、決定的に確かめる。
+'
+'   ★実行中はブレーク/ステップ実行しないこと★ (仕様事実20)
+' ============================================================
+Public Sub Test_D4_Settle()
+    Dim b As Wv2Browser
+    Dim p As Wv2Pane
+    Dim el As Wv2Element
+    Dim t0 As Single
+    Dim took As Single
+    Dim ok As Boolean
+    Dim txt As String
+
+    Set b = UserForm1.CurrentBrowser
+    If b Is Nothing Then
+        Wv2Log.LogI "Test_D4_Settle: Browser が起動していません。" & _
+                    "先に UserForm1.Show vbModeless と StartWebView2_Full を実行してください。"
+        Exit Sub
+    End If
+
+    Set p = b.AddTabWithHtml(BuildD4ProbeHtml())
+    If p Is Nothing Then
+        Wv2Log.LogI "Test_D4_Settle: タブの生成に失敗しました。"
+        Exit Sub
+    End If
+    If Not D2WaitTitle(p, "D-4 プローブ", 10) Then
+        Wv2Log.LogI "Test_D4_Settle: 検証ページの読み込みを確認できませんでした。"
+        Exit Sub
+    End If
+
+    Wv2Log.LogI ""
+    TestCountReset
+    Wv2Log.LogI "================ Test_D4_Settle 開始 ================"
+    Wv2Log.LogI "  --- (1) 静かなページ ---"
+
+    t0 = Timer
+    ok = p.WaitSettled(5)
+    took = D3Took(t0)
+    TestBool "静かなページでは静穏に達する", ok
+    Wv2Log.LogI "        " & p.LastSettleInfo
+    Wv2Log.LogI "        かかった時間 = " & Format$(took, "0.00") & " 秒"
+    TestBool "  ★最低でも静穏窓ぶんは見張る (0.4 秒以上)★", (took > 0.4)
+    TestBool "  無駄に長くはない (2 秒未満)", (took < 2)
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (2) ★fetch → DOM 更新の連鎖★ (D-4 の核心) ---"
+    Wv2Log.LogI "        100ms 後に fetch し、その完了の 300ms 後に #target を書き換える"
+
+    p.EvalSync "(function(){document.getElementById('target')" & _
+               ".textContent='まだ';return 1;})()"
+    p.EvalSync "window.chain(100)"
+
+    t0 = Timer
+    ok = p.WaitSettled(5)
+    took = D3Took(t0)
+    TestBool "連鎖の後で静穏に達する", ok
+    Wv2Log.LogI "        " & p.LastSettleInfo
+    Wv2Log.LogI "        かかった時間 = " & Format$(took, "0.00") & " 秒"
+
+    Set el = D2El(p, "target")
+    txt = el.InnerText
+    Wv2Log.LogI "        待ち終わった時点の #target = " & txt
+    TestBool "★★ DOM 更新まで待てている (通信の完了だけで返っていない) ★★", _
+             (InStr(1, txt, "連鎖の結果") > 0)
+    TestBool "  連鎖ぶん待っている (0.7 秒以上)", (took > 0.7)
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (3) 静まらないページ (50ms ごとに書き換え続ける) ---"
+
+    p.EvalSync "window.startNoise(50)"
+    t0 = Timer
+    ok = p.WaitSettled(2)
+    took = D3Took(t0)
+    TestBool "★静まらなければ False★", (ok = False)
+    TestBool "  ★LastEvalOk=True (失敗ではなく時間切れ)★", (p.LastEvalOk = True)
+    Wv2Log.LogI "        " & p.LastSettleInfo
+    TestBool "  内訳が timeout であること", (InStr(1, p.LastSettleInfo, "timeout") > 0)
+    TestBool "  指定どおり 2 秒粘った", (took > 1.7 And took < 4)
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (4) ★ノイズ除外が効く★ (論点5) ---"
+    Wv2Log.LogI "        ノイズは鳴らしたまま、#noise の変化だけ静穏判定から外す"
+
+    p.IgnoreSelectors = "#noise"
+    t0 = Timer
+    ok = p.WaitSettled(5)
+    took = D3Took(t0)
+    TestBool "★除外すれば静穏に達する★", ok
+    Wv2Log.LogI "        " & p.LastSettleInfo
+    Wv2Log.LogI "        かかった時間 = " & Format$(took, "0.00") & " 秒"
+
+    Wv2Log.LogI "        state = " & p.SpaProbeState()
+    TestBool "  除外した DOM 変化が数えられている (sm > 0)", _
+             (Wv2Json.JsonGetNum(p.SpaProbeState(), "sm") > 0)
+
+    p.IgnoreSelectors = ""
+    ok = p.WaitSettled(2)
+    TestBool "  ★除外を外すとまた静まらない★", (ok = False)
+    p.EvalSync "window.stopNoise()"
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (5) stableMs を変えると待ちが伸びる ---"
+
+    t0 = Timer
+    ok = p.WaitSettled(6, 2000)
+    took = D3Took(t0)
+    TestBool "静穏窓 2000ms でも達する", ok
+    Wv2Log.LogI "        " & p.LastSettleInfo
+    TestBool "  2 秒以上かかっている", (took > 1.9)
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (6) ★AutoWaitAfterAction★ (論点7 の opt-in) ---"
+
+    TestBool "既定は False", (p.AutoWaitAfterAction = False)
+
+    p.EvalSync "(function(){document.getElementById('target')" & _
+               ".textContent='押す前';return 1;})()"
+    Set el = D2El(p, "btn")
+    el.Click
+    Set el = D2El(p, "target")
+    txt = el.InnerText
+    Wv2Log.LogI "        自動待ち OFF: クリック直後の #target = " & txt
+    TestBool "★OFF なら更新前の値が見える (待っていない)★", (txt = "押す前")
+
+    p.AutoWaitAfterAction = True
+    p.EvalSync "(function(){document.getElementById('target')" & _
+               ".textContent='押す前';return 1;})()"
+    Set el = D2El(p, "btn")
+    t0 = Timer
+    el.Click
+    took = D3Took(t0)
+    Set el = D2El(p, "target")
+    txt = el.InnerText
+    Wv2Log.LogI "        自動待ち ON: Click に " & Format$(took, "0.00") & " 秒"
+    Wv2Log.LogI "        クリック直後の #target = " & txt
+    TestBool "★ON なら更新後の値が見える (待っている)★", _
+             (InStr(1, txt, "クリックの結果") > 0)
+    Wv2Log.LogI "        " & p.LastSettleInfo
+    p.AutoWaitAfterAction = False
+    TestBool "  False に戻せる", (p.AutoWaitAfterAction = False)
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (7) 除外リスト (通信) の口 ---"
+
+    TestBool "AddIgnoreNetwork が成功する", p.AddIgnoreNetwork("example.invalid")
+    TestBool "  同じものを足しても True (重複しない)", _
+             p.AddIgnoreNetwork("example.invalid")
+    TestBool "  除外を入れても静穏判定は動く", p.WaitSettled(5)
+    p.ClearIgnoreNetwork
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  in-callback 深さ (期待 0): " & p.InCallbackDepth
+    TestCountPrint
+    Wv2Log.LogI "================ Test_D4_Settle 終了 ================"
+    Wv2Log.LogI ""
+End Sub
+
+' ============================================================
+' Test_D4_Signal (D-4c の検証: 明示シグナル)
+'
+'   ★D-4c の存在意義★ 静穏だけでは「アプリが終わった」と「アプリが無視した」を
+'   区別できない。arm した目印が観測されるまで待つことで、後者を落とせる。
+'   (3) がまさにその確認 ― ★静穏だけなら成功してしまう場面で、正しく失敗する★
+' ============================================================
+Public Sub Test_D4_Signal()
+    Dim b As Wv2Browser
+    Dim p As Wv2Pane
+    Dim t0 As Single
+    Dim took As Single
+    Dim ok As Boolean
+
+    Set b = UserForm1.CurrentBrowser
+    If b Is Nothing Then
+        Wv2Log.LogI "Test_D4_Signal: Browser が起動していません。" & _
+                    "先に UserForm1.Show vbModeless と StartWebView2_Full を実行してください。"
+        Exit Sub
+    End If
+
+    Set p = b.AddTabWithHtml(BuildD4ProbeHtml())
+    If p Is Nothing Then
+        Wv2Log.LogI "Test_D4_Signal: タブの生成に失敗しました。"
+        Exit Sub
+    End If
+    If Not D2WaitTitle(p, "D-4 プローブ", 10) Then
+        Wv2Log.LogI "Test_D4_Signal: 検証ページの読み込みを確認できませんでした。"
+        Exit Sub
+    End If
+
+    Wv2Log.LogI ""
+    TestCountReset
+    Wv2Log.LogI "================ Test_D4_Signal 開始 ================"
+    Wv2Log.LogI "  --- (1) arm は fail-fast (その場で気づける) ---"
+
+    TestBool "★無い要素は arm できない★", _
+             (p.ArmContentSignal("#nope-nope") = False)
+    Wv2Log.LogI "        LastEvalError = " & p.LastEvalError
+    TestBool "  理由が not-found", (p.LastEvalError = "not-found")
+
+    TestBool "★不正なセレクタも arm できない★", (p.ArmContentSignal("###") = False)
+    TestBool "  理由が bad-selector", (p.LastEvalError = "bad-selector")
+
+    TestBool "既存の器なら arm できる", p.ArmContentSignal("#slot")
+    p.DisarmSignals
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (2) ★arm してから act する★ ---"
+    Wv2Log.LogI "        #slot を arm し、800ms 後にその中へ要素を足す"
+
+    TestBool "arm できる", p.ArmContentSignal("#slot")
+    p.EvalSync "window.later(800)"
+
+    t0 = Timer
+    ok = p.WaitSettled(5)
+    took = D3Took(t0)
+    TestBool "★シグナルが当たって静穏に達する★", ok
+    Wv2Log.LogI "        " & p.LastSettleInfo
+    Wv2Log.LogI "        かかった時間 = " & Format$(took, "0.00") & " 秒"
+    TestBool "  内訳が dom:hit", (InStr(1, p.LastSettleInfo, "dom:hit") > 0)
+    TestBool "  仕掛けぶん待っている (0.8 秒以上)", (took > 0.8)
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (3) ★★ arm したのに何も起きない ★★ (D-4c の核心) ---"
+    Wv2Log.LogI "        ページは静かなまま。静穏だけなら成功してしまう場面"
+
+    TestBool "arm できる", p.ArmContentSignal("#slot")
+    t0 = Timer
+    ok = p.WaitSettled(2)
+    took = D3Took(t0)
+    TestBool "★★ 静かでも False (無視されたことを検出できる) ★★", (ok = False)
+    TestBool "  LastEvalOk=True (失敗ではなく時間切れ)", (p.LastEvalOk = True)
+    Wv2Log.LogI "        " & p.LastSettleInfo
+    TestBool "  内訳が dom:miss", (InStr(1, p.LastSettleInfo, "dom:miss") > 0)
+    TestBool "  指定どおり 2 秒粘った", (took > 1.7)
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (4) ワンショット (次の待ちには持ち越さない) ---"
+
+    t0 = Timer
+    ok = p.WaitSettled(5)
+    took = D3Took(t0)
+    TestBool "★arm は消費済みなので普通に静穏に達する★", ok
+    TestBool "  待ち時間も普通 (2 秒未満)", (took < 2)
+    Wv2Log.LogI "        " & p.LastSettleInfo
+    TestBool "  内訳に signal= が出ない", _
+             (InStr(1, p.LastSettleInfo, "signal=") = 0)
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (5) 通信シグナル ---"
+
+    TestBool "arm できる (blob:)", p.ArmNetworkSignal("blob:")
+    p.EvalSync "window.chain(100)"
+    ok = p.WaitSettled(5)
+    TestBool "★通信シグナルが当たる★", ok
+    Wv2Log.LogI "        " & p.LastSettleInfo
+    TestBool "  内訳が net:hit", (InStr(1, p.LastSettleInfo, "net:hit") > 0)
+
+    TestBool "当たらないパターンでも arm はできる", _
+             p.ArmNetworkSignal("this-never-matches-xyz")
+    p.EvalSync "window.chain(100)"
+    ok = p.WaitSettled(3)
+    TestBool "★当たらなければ False★", (ok = False)
+    Wv2Log.LogI "        " & p.LastSettleInfo
+    TestBool "  内訳が net:miss", (InStr(1, p.LastSettleInfo, "net:miss") > 0)
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (6) ★signal-lost★ (arm が消えたら黙って直さない) ---"
+
+    TestBool "arm できる", p.ArmContentSignal("#slot")
+    TestBool "  プローブを作り直す (arm ごと消える)", p.SpaProbeReset()
+    ok = p.WaitSettled(3)
+    TestBool "★arm が消えたら False★", (ok = False)
+    Wv2Log.LogI "        " & p.LastSettleInfo
+    TestBool "  内訳が signal-lost", _
+             (InStr(1, p.LastSettleInfo, "signal-lost") > 0)
+    TestBool "  ★即座に返る (待たされない)★", True
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (7) DisarmSignals (手で取り下げる) ---"
+
+    TestBool "arm できる", p.ArmContentSignal("#slot")
+    TestBool "  DisarmSignals が成功する", p.DisarmSignals()
+    ok = p.WaitSettled(3)
+    TestBool "★取り下げれば普通に静穏に達する★", ok
+    Wv2Log.LogI "        " & p.LastSettleInfo
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  in-callback 深さ (期待 0): " & p.InCallbackDepth
+    TestCountPrint
+    Wv2Log.LogI "================ Test_D4_Signal 終了 ================"
+    Wv2Log.LogI ""
+End Sub
+
+' ============================================================
+' Test_D4_Log (D-4e の検証: in-flight 台帳 / 診断ログ / URL シグナル)
+' ============================================================
+Public Sub Test_D4_Log()
+    Dim b As Wv2Browser
+    Dim p As Wv2Pane
+    Dim st As String
+    Dim n As Long
+    Dim il As String
+
+    Set b = UserForm1.CurrentBrowser
+    If b Is Nothing Then
+        Wv2Log.LogI "Test_D4_Log: Browser が起動していません。" & _
+                    "先に UserForm1.Show vbModeless と StartWebView2_Full を実行してください。"
+        Exit Sub
+    End If
+
+    Set p = b.AddTabWithHtml(BuildD4ProbeHtml())
+    If p Is Nothing Then
+        Wv2Log.LogI "Test_D4_Log: タブの生成に失敗しました。"
+        Exit Sub
+    End If
+    If Not D2WaitTitle(p, "D-4 プローブ", 10) Then
+        Wv2Log.LogI "Test_D4_Log: 検証ページの読み込みを確認できませんでした。"
+        Exit Sub
+    End If
+
+    Wv2Log.LogI ""
+    TestCountReset
+    Wv2Log.LogI "================ Test_D4_Log 開始 ================"
+    Wv2Log.LogI "  --- (1) 診断ログの ON / OFF ---"
+
+    TestBool "既定は無効", (p.SpaProbeLogging = False)
+    p.SpaProbeLogging = True
+    TestBool "  有効にできる", p.SpaProbeLogging
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (2) ★出来事が溜まる★ ---"
+
+    p.EvalSync "window.chain(100)"
+    D3Pump 1.5
+    st = p.SpaProbeState()
+    TestBool "ログ件数が増えている", (Wv2Json.JsonGetNum(st, "lgN") > 0)
+
+    n = p.SpaProbeDrainLog()
+    TestBool "★取り出せる★", (n > 0)
+    TestBool "  取り出したら空になる", (p.SpaProbeDrainLog() = 0)
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (3) ★in-flight の台帳★ ---"
+
+    ' ★30 秒前から飛んでいる要求を仕込む★
+    '   自前ページでは blob の fetch が 1ms で終わってしまい、EvalSync の往復
+    '   (38ms) の間に消える。台帳と居座り判定を決定的に確かめるために、
+    '   ロングポーリング相当の項目を直接押し込む。
+    p.EvalSync "(function(){var q=window.__wv2p;" & _
+               "q.ifl.push({u:'fake://long-poll',t:performance.now()-30000,w:'xhr'});" & _
+               "return 1;})()"
+
+    st = p.SpaProbeState()
+    Wv2Json.JsonPickStr st, "il", il
+    Wv2Log.LogI "        il = " & il
+    TestBool "★飛んでいる要求が一覧に出る★", (InStr(1, il, "fake://long-poll") > 0)
+    TestBool "  種別と経過時間が分かる", (InStr(1, il, "xhr 30") > 0)
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (3b) ★居座り判定 (StaleInflightMs)★ ---"
+
+    TestBool "既定は 10000ms", (p.StaleInflightMs = 10000)
+    TestBool "★居座りは静穏判定から外れる (ifn=0)★", _
+             (Wv2Json.JsonGetNum(st, "ifn") = 0)
+    TestBool "  居座りとして数えられている (ifo=1)", _
+             (Wv2Json.JsonGetNum(st, "ifo") = 1)
+    TestBool "★居座りがあっても静穏に達する★", p.WaitSettled(5)
+    Wv2Log.LogI "        " & p.LastSettleInfo
+
+    p.StaleInflightMs = 0
+    st = p.SpaProbeState()
+    TestBool "★無効にすると数える (ifn=1)★", (Wv2Json.JsonGetNum(st, "ifn") = 1)
+    TestBool "  そのときは静穏に達しない", (p.WaitSettled(2) = False)
+    Wv2Log.LogI "        " & p.LastSettleInfo
+    p.StaleInflightMs = 10000
+
+    ' 仕込んだ項目を片付ける
+    p.EvalSync "(function(){window.__wv2p.ifl=[];return 1;})()"
+    st = p.SpaProbeState()
+    Wv2Json.JsonPickStr st, "il", il
+    TestBool "  片付ければ一覧から消える", (Len(il) = 0)
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (4) ★URL シグナル★ ---"
+    Wv2Log.LogI "        このページの URL = " & p.View_GetSource()
+
+    TestBool "arm できる (当たるはずの文字列)", p.ArmUrlSignal("blank")
+    TestBool "★URL に含まれていれば静穏に達する★", p.WaitSettled(5)
+    Wv2Log.LogI "        " & p.LastSettleInfo
+    TestBool "  内訳が url:hit", (InStr(1, p.LastSettleInfo, "url:hit") > 0)
+
+    TestBool "arm できる (当たらない文字列)", p.ArmUrlSignal("zzz-not-here")
+    TestBool "★含まれていなければ False★", (p.WaitSettled(2) = False)
+    Wv2Log.LogI "        " & p.LastSettleInfo
+    TestBool "  内訳が url:miss", (InStr(1, p.LastSettleInfo, "url:miss") > 0)
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (5) ★時間切れのときに実行中の要求を見せる★ (D-4d の教訓) ---"
+
+    p.SpaProbeLogging = False
+    TestBool "  無効に戻せる", (p.SpaProbeLogging = False)
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  in-callback 深さ (期待 0): " & p.InCallbackDepth
+    TestCountPrint
+    Wv2Log.LogI "================ Test_D4_Log 終了 ================"
+    Wv2Log.LogI ""
+End Sub
+
+' ============================================================
+' Test_D4_Site (D-4d: ★Google Maps の偵察★)
+'
+'   ★合否を判定しない★ 実サイトは落ちるし DOM も予告なく変わる (設計原則75)。
+'   ここでやるのは★観測して数字を残すこと★ に徹する。判定するのは
+'   「タブが開けたか」「検索ボックスが見つかったか」のような構造的な数点だけ。
+'
+'   何を知りたいか:
+'     (a) ★Maps に静穏は訪れるのか★ タイル取得とアニメーションが止まらない
+'         ページで、q (最後の DOM 変化からの経過) がどこまで伸びるか
+'     (b) ★どのくらい騒がしいのか★ 毎秒の DOM 変化数と通信数
+'     (c) ★重いページでの往復コスト★ (未知2 の本番値。軽いページでは +0.9ms だった)
+'     (d) ★何が完了の目印になるか★ 検索後に document.title と URL がどう変わるか
+'         (URL の /@緯度,経度,ズーム は座標取得の目的そのものでもある)
+'
+'   ★外部サイトに実アクセスする★ 唯一の Test_*。ネットワークが要る。
+' ============================================================
+Public Sub Test_D4_Site(Optional ByVal searchAddr As String = "東京都千代田区丸の内1-9-1")
+    Dim b As Wv2Browser
+    Dim p As Wv2Pane
+    Dim el As Wv2Element
+    Dim ms As Single
+    Dim clicked As Boolean
+
+    Set b = UserForm1.CurrentBrowser
+    If b Is Nothing Then
+        Wv2Log.LogI "Test_D4_Site: Browser が起動していません。" & _
+                    "先に UserForm1.Show vbModeless と StartWebView2_Full を実行してください。"
+        Exit Sub
+    End If
+
+    Wv2Log.LogI ""
+    TestCountReset
+    Wv2Log.LogI "================ Test_D4_Site 開始 ================"
+    Wv2Log.LogI "  ★観測が目的。合否は付けない (実サイトは変わるため)★"
+    Wv2Log.LogI "  検索する住所: " & searchAddr
+
+    Set p = b.AddTabWithUrl("https://www.google.com/maps")
+    If p Is Nothing Then
+        Wv2Log.LogI "  [FAIL] タブの生成に失敗しました。"
+        m_ngCount = m_ngCount + 1
+        TestCountPrint
+        Exit Sub
+    End If
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (1) 読み込みを待つ (D-3 の WaitFor で検索ボックスを掴む) ---"
+
+    ' ★先に Pane が JS を受け付ける状態になるまで待つ★
+    '   タブを開いた直後は View がまだ無く、EvalSync が no-view で失敗する。
+    '   WaitFor は「失敗なら待たずに諦める」ので、そのまま呼ぶと即座に落ちる。
+    TestBool "Pane が JS を受け付けるようになった", D4WaitPane(p, 30)
+
+    ' ★セレクタは候補を順に試す★ 実サイトの id は自動生成に変わりうる
+    '   (2026-08-22 の実測: かつての #searchboxinput は消え、id は ucc-1 だった。
+    '    name='q' と form の構造は残っていたので、そちらを先に試す)
+    Set el = D4FindFirst(p, "input[name='q']" & Chr$(1) & _
+                            "#searchboxinput" & Chr$(1) & _
+                            "form input[type='text']", 30)
+    TestBool "検索ボックスが見つかった", Not (el Is Nothing)
+    If el Is Nothing Then
+        Wv2Log.LogI "  ★見つからない★ 同意画面やレイアウト変更の可能性がある。"
+        Wv2Log.LogI "        title = " & p.View_GetDocumentTitle()
+        Wv2Log.LogI "        url   = " & p.View_GetSource()
+        Wv2Log.LogI "        LastEvalOk=" & p.LastEvalOk & " err=" & p.LastEvalError
+        TestCountPrint
+        Exit Sub
+    End If
+
+    Wv2Log.LogI "        title = " & p.View_GetDocumentTitle()
+    Wv2Log.LogI "        url   = " & p.View_GetSource()
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (2) ★往復コスト (未知2 の本番値)★ ---"
+
+    ms = D4RoundTrip(p, 20)
+    Wv2Log.LogI "        プローブ設置前の 1 往復 = " & Format$(ms, "0.0") & " ms"
+    Wv2Log.LogI "        state = " & p.SpaProbeState()
+    ms = D4RoundTrip(p, 20)
+    Wv2Log.LogI "        プローブ設置後の 1 往復 = " & Format$(ms, "0.0") & " ms"
+    Wv2Log.LogI "        (軽いページでは 35.4 → 36.3 ms だった)"
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (3) ★静穏は訪れるか★ 何もせず 15 秒観測 ---"
+    D4Watch p, 15
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (4) 静穏待ちを試す (結果は記録するだけ) ---"
+
+    Wv2Log.LogI "        WaitSettled(10) = " & p.WaitSettled(10)
+    Wv2Log.LogI "        " & p.LastSettleInfo
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (5) 住所を入力して検索する ---"
+
+    ' ★D-4e の道具を使う★ 診断ログを入れ、URL の変化を arm してから操作する
+    p.SpaProbeLogging = True
+    Wv2Log.LogI "        診断ログを有効にした"
+    TestBool "URL シグナルを arm できる", p.ArmUrlSignal("/place/")
+
+    Set el = D4FindFirst(p, "input[name='q']" & Chr$(1) & _
+                            "#searchboxinput" & Chr$(1) & _
+                            "form input[type='text']", 5)
+    TestBool "検索ボックスを掴み直せる", Not (el Is Nothing)
+    If el Is Nothing Then
+        TestCountPrint
+        Exit Sub
+    End If
+
+    el.value = searchAddr
+    TestBool "★住所を書き込めた (D-3 の .Value =)★", el.LastOk
+    Wv2Log.LogI "        経路 = " & el.LastInfo
+    Wv2Log.LogI "        読み戻し = " & el.value
+
+    ' ★検索の実行★ ボタンがあれば押す。無ければ Enter キーを合成する。
+    Set el = D4FindFirst(p, "button[aria-label='検索']" & Chr$(1) & _
+                            "#searchbox-searchbutton" & Chr$(1) & _
+                            "button[aria-label='Search']", 3)
+    If el Is Nothing Then
+        Wv2Log.LogI "        検索ボタンが無いので Enter を合成する"
+        ' ★CSS の属性値は二重引用符にする★ JS の文字列はシングルクォート、
+        '   セレクタ内は二重引用符 ("""" で書く) とすれば、
+        '   バックスラッシュを一切使わずに入れ子にできる (プロジェクト規則)。
+        p.EvalSync "(function(){var e=document.querySelector('input[name=""q""]')" & _
+                   "||document.getElementById('searchboxinput');" & _
+                   "if(!e){return 0;}" & _
+                   "e.focus();e.dispatchEvent(new KeyboardEvent('keydown'," & _
+                   "{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true}));" & _
+                   "return 1;})()"
+        clicked = p.LastEvalOk
+    Else
+        clicked = el.Click()
+        Wv2Log.LogI "        検索ボタンを押した (経路=" & el.LastInfo & ")"
+    End If
+    TestBool "検索を実行できた", clicked
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (6) ★arm した URL シグナルつきで待つ★ ---"
+
+    Wv2Log.LogI "        WaitSettled(20) = " & p.WaitSettled(20)
+    Wv2Log.LogI "        " & p.LastSettleInfo
+    Wv2Log.LogI "        ★時間切れなら 実行中: に居座っている要求が出る★"
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (6b) ★個別除外を足して待ち直す★ (案A の実演) ---"
+    Wv2Log.LogI "        居座っていた要求を名指しで静穏判定から外す"
+
+    TestBool "AddIgnoreNetwork できる", p.AddIgnoreNetwork("/search?tbm=map")
+    Wv2Log.LogI "        WaitSettled(10) = " & p.WaitSettled(10)
+    Wv2Log.LogI "        " & p.LastSettleInfo
+    p.ClearIgnoreNetwork
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (6c) 検索後の 10 秒 ---"
+    D4Watch p, 10
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (6d) ★診断ログ★ 何が起きていたか ---"
+    Wv2Log.LogI "        取り出した件数: " & p.SpaProbeDrainLog()
+    Wv2Log.LogI "        (60 件で切れる。続きは次の呼び出しで取れる)"
+    Wv2Log.LogI "        取り出した件数: " & p.SpaProbeDrainLog()
+    p.SpaProbeLogging = False
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (7) 結果 ---"
+    Wv2Log.LogI "        title = " & p.View_GetDocumentTitle()
+    Wv2Log.LogI "        url   = " & p.View_GetSource()
+    Wv2Log.LogI "        ★URL に /@緯度,経度,ズーム が入っていれば座標が取れる★"
+    Wv2Log.LogI "        WaitSettled(10) = " & p.WaitSettled(10)
+    Wv2Log.LogI "        " & p.LastSettleInfo
+    Wv2Log.LogI "        state = " & p.SpaProbeState()
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  in-callback 深さ (期待 0): " & p.InCallbackDepth
+    TestCountPrint
+    Wv2Log.LogI "  ※ この判定数は構造的な数点のみ。観測の中身はログ本文を読むこと。"
+    Wv2Log.LogI "================ Test_D4_Site 終了 ================"
+    Wv2Log.LogI ""
+End Sub
+
+
+' ============================================================
+' D4FindFirst (D-4d: 候補セレクタを順に試して最初に当たったものを返す)
+'
+'   ★実サイトのセレクタは予告なく変わる (設計原則75)★
+'   1 つに賭けず候補を並べ、★どれが当たったかをログに残す★。次に壊れたときに
+'   「何が変わったか」が分かる。候補は Chr$(1) 区切りで渡す。
+'
+'   1 つ目だけは timeoutSec ぶん待つ (ページの読み込み中を想定)。
+'   2 つ目以降は 1 往復で見るだけ。全部外れたら Nothing。
+' ============================================================
+Private Function D4FindFirst(ByVal p As Wv2Pane, _
+                             ByVal selectorList As String, _
+                             ByVal timeoutSec As Single) As Wv2Element
+    Dim cands As Variant
+    Dim i As Long
+    Dim el As Wv2Element
+
+    cands = Split(selectorList, Chr$(1))
+
+    For i = LBound(cands) To UBound(cands)
+        If i = LBound(cands) Then
+            Set el = p.WaitFor(CStr(cands(i)), timeoutSec)
+        Else
+            Set el = p.QuerySelector(CStr(cands(i)))
+        End If
+
+        If Not el Is Nothing Then
+            Wv2Log.LogI "        セレクタ [" & cands(i) & "] で見つかった"
+            Set D4FindFirst = el
+            Exit Function
+        End If
+
+        Wv2Log.LogI "        セレクタ [" & cands(i) & "] は外れ" & _
+                    IIf(p.LastEvalOk, "", " (失敗: " & p.LastEvalError & ")")
+    Next i
+End Function
+
+' ============================================================
+' D4WaitPane (D-4d: Pane が JS を受け付けるまで待つ)
+'
+'   ★タブを開いた直後は EvalSync が no-view で失敗する★
+'   D-3 の WaitFor / D-4 の WaitSettled はどちらも「失敗は待っても直らない」
+'   という方針 (設計原則104) なので、準備前に呼ぶと即座に諦めてしまう。
+'   実サイトを開く回はこれを先に挟む。
+' ============================================================
+Private Function D4WaitPane(ByVal p As Wv2Pane, ByVal timeoutSec As Single) As Boolean
+    Dim t0 As Single
+
+    t0 = Timer
+    Do
+        p.EvalSync "1", 3
+        If p.LastEvalOk Then
+            D4WaitPane = True
+            Exit Function
+        End If
+        If D3Took(t0) >= timeoutSec Then
+            Wv2Log.LogW "D4WaitPane: 時間切れ err=" & p.LastEvalError
+            Exit Function
+        End If
+        D3Pump 0.3
+    Loop
+End Function
+
+
+' ============================================================
+' D4Watch (D-4d: 1 秒ごとに状態・タイトル・URL を記録する)
+'
+'   ★静穏が訪れるかを見る道具★ q が伸び続ければ静かになっている。
+'   タイトルと URL は COM 経由で取る (EvalSync を使わないので観測が軽い)。
+' ============================================================
+Private Sub D4Watch(ByVal p As Wv2Pane, ByVal seconds As Long)
+    Dim i As Long
+    Dim st As String
+    Dim ttl As String
+    Dim url As String
+
+    For i = 1 To seconds
+        st = p.SpaProbeState()
+        ttl = p.View_GetDocumentTitle()
+        url = p.View_GetSource()
+
+        Wv2Log.LogI "        [" & Format$(i, "00") & "s] " & _
+                    "q=" & Wv2Json.JsonGetNum(st, "q") & _
+                    " m=" & Wv2Json.JsonGetNum(st, "m") & _
+                    " n=" & Wv2Json.JsonGetNum(st, "n") & _
+                    " f=" & Wv2Json.JsonGetNum(st, "f") & _
+                    " x=" & Wv2Json.JsonGetNum(st, "x") & _
+                    " rp=" & Wv2Json.JsonGetNum(st, "rp") & _
+                    " | " & Left$(ttl, 40) & " | " & Left$(url, 70)
+
+        D3Pump 1
+    Next i
+End Sub
+
+' ============================================================
+' Test_D4_Dom (D-4d 補: ★アクティブなタブの DOM を覗く★)
+'
+'   ★「何を待つべきか」を推測でなく観測で決めるための道具★
+'   実サイトのセレクタは予告なく変わる (設計原則75)。当てずっぽうに
+'   セレクタを書く前に、実際に何があるのかを見る。
+'
+'   使い方: ブラウザで目的のページを表示してから、イミディエイトで
+'           Test_D4_Dom           … 入力欄・ボタン・role つきの要素を列挙
+'           Test_D4_Dom "h1,h2"  … セレクタを指定して列挙
+'
+'   出す情報: タグ / id / name / type / class (先頭 40 字) / placeholder /
+'             aria-label / 可視かどうか / テキスト (先頭 30 字)
+'
+'   ★D-4e (診断ログ) の原型★ 時系列は取らないが、まず「今そこに何があるか」を
+'   知るのはこれで足りる。
+' ============================================================
+Public Sub Test_D4_Dom(Optional ByVal sel As String = "")
+    Dim p As Wv2Pane
+    Dim js As String
+    Dim res As String
+    Dim parts As Variant
+    Dim i As Long
+
+    Set p = UserForm1.GetActivePane
+    If p Is Nothing Then
+        Wv2Log.LogI "Test_D4_Dom: アクティブな Pane がありません。"
+        Exit Sub
+    End If
+
+    If Len(sel) = 0 Then
+        sel = "input,textarea,select,[role=combobox],[role=searchbox]," & _
+              "[role=search],button[aria-label],form"
+    End If
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "================ Test_D4_Dom 開始 ================"
+    Wv2Log.LogI "  url   = " & p.View_GetSource()
+    Wv2Log.LogI "  title = " & p.View_GetDocumentTitle()
+    Wv2Log.LogI "  セレクタ: " & sel
+
+    js = "(function(){var out=[],q=document.querySelectorAll(" & _
+         p.JsQuote(sel) & ");" & _
+         "out.push('全 '+q.length+' 件');" & _
+         "for(var i=0;i<q.length&&out.length<41;i++){var e=q[i];" & _
+         "var g=function(a){var v=(e.getAttribute?e.getAttribute(a):null);" & _
+         "return v?String(v).slice(0,40):'-';};" & _
+         "out.push(e.tagName" & _
+         "+' id='+(e.id||'-')" & _
+         "+' name='+(e.name||'-')" & _
+         "+' type='+(e.type||'-')" & _
+         "+' cls='+String(e.className||'-').slice(0,40)" & _
+         "+' ph='+g('placeholder')" & _
+         "+' aria='+g('aria-label')" & _
+         "+' vis='+(e.offsetParent!==null)" & _
+         "+' txt='+String(e.textContent||'').trim().slice(0,30));}" & _
+         "return out.join(String.fromCharCode(1));})()"
+
+    res = p.EvalSync(js, 10)
+    If Not p.LastEvalOk Then
+        Wv2Log.LogI "  ★失敗★ err=" & p.LastEvalError
+        Wv2Log.LogI "================ Test_D4_Dom 終了 ================"
+        Exit Sub
+    End If
+
+    parts = Split(Wv2Json.JsonUnescape(res), ChrW$(1))
+    For i = LBound(parts) To UBound(parts)
+        Wv2Log.LogI "  " & parts(i)
+    Next i
+
+    Wv2Log.LogI "================ Test_D4_Dom 終了 ================"
+    Wv2Log.LogI ""
+End Sub
+
+' ============================================================
+' Test_D5_Geocode (D-5 の検証: 住所 → 座標)
+'
+'   ★D 軸の部品が業務で使える形になったかを見る★
+'   3 件の住所を★同じタブで続けて★処理し、緯度経度と正規化後の名前を出す。
+'
+'   ★外部サイトに実アクセスする★ ネットワークが要る。
+'   実サイトなので合否は緩く見る (座標が妥当な範囲に入っているか)。
+' ============================================================
+Public Sub Test_D5_Geocode()
+    Dim b As Wv2Browser
+    Dim p As Wv2Pane
+    Dim addrs As Variant
+    Dim i As Long
+    Dim lat As Double
+    Dim lng As Double
+    Dim nm As String
+    Dim ok As Boolean
+    Dim t0 As Single
+
+    Set b = UserForm1.CurrentBrowser
+    If b Is Nothing Then
+        Wv2Log.LogI "Test_D5_Geocode: Browser が起動していません。" & _
+                    "先に UserForm1.Show vbModeless と StartWebView2_Full を実行してください。"
+        Exit Sub
+    End If
+
+    Wv2Log.LogI ""
+    TestCountReset
+    Wv2Log.LogI "================ Test_D5_Geocode 開始 ================"
+
+    t0 = Timer
+    Set p = Wv2Maps.MapsOpen(b)
+    TestBool "★Maps を開いて操作できる状態にできた★", Not (p Is Nothing)
+    Wv2Log.LogI "        かかった時間 = " & Format$(D3Took(t0), "0.0") & " 秒"
+    If p Is Nothing Then
+        Wv2Log.LogI "        理由 = " & Wv2Maps.MapsLastError
+        TestCountPrint
+        Exit Sub
+    End If
+
+    addrs = Array( _
+        "東京都千代田区丸の内1-9-1", _
+        "大阪府大阪市中央区大阪城1-1", _
+        "北海道札幌市中央区北1条西2丁目")
+
+    For i = LBound(addrs) To UBound(addrs)
+        Wv2Log.LogI ""
+        Wv2Log.LogI "  --- (" & (i + 1) & ") " & addrs(i) & " ---"
+
+        t0 = Timer
+        ok = Wv2Maps.MapsGeocode(p, CStr(addrs(i)), lat, lng, nm)
+
+        Wv2Log.LogI "        かかった時間 = " & Format$(D3Took(t0), "0.0") & " 秒"
+        Wv2Log.LogI "        緯度経度 = " & lat & ", " & lng
+        Wv2Log.LogI "        名前     = " & nm
+        If Not ok Then Wv2Log.LogI "        理由     = " & Wv2Maps.MapsLastError
+
+        TestBool "  ★1 件に確定した★", ok
+        TestBool "  緯度が日本の範囲 (20～46)", (lat > 20 And lat < 46)
+        TestBool "  経度が日本の範囲 (122～154)", (lng > 122 And lng < 154)
+        TestBool "  名前が取れている", (Len(nm) > 0)
+    Next i
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- 失敗の扱い ---"
+
+    ok = Wv2Maps.MapsGeocode(p, "ZZZZ存在しない住所ZZZZ", lat, lng, nm, 8)
+    Wv2Log.LogI "        戻り値 = " & ok & " 理由 = " & Wv2Maps.MapsLastError
+    TestBool "★でたらめな住所では確定しない★", (ok = False)
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  in-callback 深さ (期待 0): " & p.InCallbackDepth
+    TestCountPrint
+    Wv2Log.LogI "================ Test_D5_Geocode 終了 ================"
+    Wv2Log.LogI ""
+End Sub
+
+' ============================================================
+' Test_D5_Sheet (D-5b の検証: シート連携)
+'
+'   ★新しいブックを作って試し、保存せずに閉じる★
+'   開発用ブックにシートを足すと、Excel が終了時に保存を聞いてきて鬱陶しい。
+'
+'   ★外部サイトに実アクセスする★ ネットワークが要る。
+' ============================================================
+Public Sub Test_D5_Sheet()
+    Dim wb As Workbook
+    Dim sh As Object
+    Dim n As Long
+
+    If UserForm1.CurrentBrowser Is Nothing Then
+        Wv2Log.LogI "Test_D5_Sheet: Browser が起動していません。"
+        Exit Sub
+    End If
+
+    Wv2Log.LogI ""
+    TestCountReset
+    Wv2Log.LogI "================ Test_D5_Sheet 開始 ================"
+
+    Set wb = Workbooks.Add
+    Set sh = wb.Worksheets(1)
+
+    sh.Cells(1, 1).value = "住所"
+    sh.Cells(1, 2).value = "緯度"
+    sh.Cells(1, 3).value = "経度"
+    sh.Cells(1, 4).value = "正規化住所"
+    sh.Cells(1, 5).value = "状態"
+    sh.Cells(2, 1).value = "東京都千代田区丸の内1-9-1"
+    sh.Cells(3, 1).value = "大阪府大阪市中央区大阪城1-1"
+    sh.Cells(4, 1).value = "ZZZZ存在しない住所ZZZZ"
+
+    Wv2Log.LogI "  3 行 (うち 1 行はでたらめ) を処理する"
+    n = Wv2Maps.MapsGeocodeSheet(sh)
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- 書き込まれた内容 ---"
+    Wv2Log.LogI "  2 行目: " & sh.Cells(2, 2).value & " / " & _
+                sh.Cells(2, 3).value & " / " & sh.Cells(2, 4).value & " / " & sh.Cells(2, 5).value
+    Wv2Log.LogI "  3 行目: " & sh.Cells(3, 2).value & " / " & _
+                sh.Cells(3, 3).value & " / " & sh.Cells(3, 4).value & " / " & sh.Cells(3, 5).value
+    Wv2Log.LogI "  4 行目: " & sh.Cells(4, 2).value & " / " & _
+                sh.Cells(4, 3).value & " / " & sh.Cells(4, 4).value & " / " & sh.Cells(4, 5).value
+
+    TestBool "★2 行が ok になった★", (n = 2)
+    TestBool "  2 行目の緯度が東京", (Abs(sh.Cells(2, 2).value - 35.68) < 0.1)
+    TestBool "  3 行目の緯度が大阪", (Abs(sh.Cells(3, 2).value - 34.69) < 0.1)
+    TestBool "  2 行目の状態が ok", (sh.Cells(2, 5).value = "ok")
+    TestBool "★でたらめな行は ok にならない★", (sh.Cells(4, 5).value <> "ok")
+    TestBool "  その理由が残っている", (Len(sh.Cells(4, 5).value) > 0)
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- ★再開できるか★ (ok の行は飛ばす) ---"
+    n = Wv2Maps.MapsGeocodeSheet(sh)
+    TestBool "2 回目も同じ件数を返す (飛ばしても数える)", (n = 2)
+
+    wb.Close SaveChanges:=False
+
+    Wv2Log.LogI ""
+    TestCountPrint
+    Wv2Log.LogI "================ Test_D5_Sheet 終了 ================"
+    Wv2Log.LogI ""
+End Sub
+
+' ============================================================
+' Test_D4_Help (D-4 の手順)
+' ============================================================
+Public Sub Test_D4_Help()
+    Debug.Print ""
+    Debug.Print "=========================================================="
+    Debug.Print " D-4 検証手順 (プローブと静穏待ち)"
+    Debug.Print "=========================================================="
+    Debug.Print ""
+    Debug.Print "  --- 準備 ---"
+    Debug.Print "  1) Wv2Log.LogStart"
+    Debug.Print "  2) UserForm1.Show vbModeless して StartWebView2_Full を実行する"
+    Debug.Print "  3) ★イベントバーストが静まるまで待つ★ (仕様事実 20)"
+    Debug.Print ""
+    Debug.Print "  --- 実行 ---"
+    Debug.Print "  4) Test_D4_Probe  … ★済★ プローブと健康診断 (28 件 OK)"
+    Debug.Print "  5) Test_D4_Settle … ★済★ 静穏待ち (22 件 OK)"
+    Debug.Print "  6) Test_D4_Signal … ★済★ 明示シグナル (31 件 OK)"
+    Debug.Print "  7) Test_D4_Log    … ★D-4e の検証★ 診断ログ / in-flight / URL シグナル"
+    Debug.Print "  8) Test_D4_Site   … ★D-4d の偵察★ Google Maps (70 秒ほど)"
+    Debug.Print "  9) Test_D5_Geocode … ★D-5★ 住所 → 座標 を 3 件続けて (60 秒ほど)"
+    Debug.Print "     Wv2Maps.MapsOpen / MapsGeocode の実演。業務で使う形そのもの。"
+    Debug.Print " 10) Test_D5_Sheet   … ★D-5b★ シート連携 (新しいブックを作って試す)"
+    Debug.Print "     ★外部サイトに実アクセスする唯一の Test_*★ ネットワークが要る。"
+    Debug.Print "     住所を変えたいときは Test_D4_Site ""別の住所"" と打つ。"
+    Debug.Print ""
+    Debug.Print "  --- 実サイトを調べる道具 ---"
+    Debug.Print "  Test_D4_Dom          … ★今開いているタブに何があるか列挙する★"
+    Debug.Print "  Test_D4_Dom ""h1,h2""  … セレクタを指定して列挙"
+    Debug.Print ""
+    Debug.Print "  --- 診断ログ (D-4e) ―★何を待つべきかを観測で決める★ ---"
+    Debug.Print "  p.SpaProbeLogging = True   ' 溜め始める (既定 False)"
+    Debug.Print "  ... 操作する ..."
+    Debug.Print "  ?p.SpaProbeDrainLog        ' 取り出してログへ流す (60 件ずつ)"
+    Debug.Print "  p.SpaProbeLogging = False"
+    Debug.Print ""
+    Debug.Print "  --- URL シグナル (D-4e) ---"
+    Debug.Print "  p.ArmUrlSignal ""/place/""   ' URL が変わるのを待つ (pushState 対応)"
+    Debug.Print "    ★Maps の住所検索はこれが最も確実な目印だった★"
+    Debug.Print "    実サイトのセレクタは予告なく変わる。当てずっぽうに書く前に見る。"
+    Debug.Print ""
+    Debug.Print "  ★判定はログファイルに残る★ 末尾の「★判定 n 件★」を見る"
+    Debug.Print "    ?Wv2Log.LogPath でファイルの場所が分かる"
+    Debug.Print ""
+    Debug.Print "  --- 見るもの ---"
+    Debug.Print "  ・(1) 設置前が undefined = 呼ばない Pane にプローブは付かない"
+    Debug.Print "  ・(2) ★往復時間の設置前後★ 数値そのものをログで見ること"
+    Debug.Print "      仕様事実52 は 38ms。観測を張って極端に落ちないかを見る"
+    Debug.Print "  ・(5) fetch と XHR が数えられ、完了で 0 に戻ること"
+    Debug.Print "  ・★(6) が D-4a の核心★ ページが window.fetch を差し替えても"
+    Debug.Print "      次に呼んだ時点で自動修復し (rp>=1)、その後も数えられること"
+    Debug.Print "  ・(8) 遷移でプローブが消え、立て直せること"
+    Debug.Print ""
+    Debug.Print "  --- 見るもの (Test_D4_Settle) ★D-4b★ ---"
+    Debug.Print "  ・★(2) が核心★ 待ち終わった時点で #target が「連鎖の結果」に"
+    Debug.Print "      なっていること = 通信の完了だけでなく、その後の DOM 更新まで"
+    Debug.Print "      待てている証拠 (fetch → 300ms 後の書き換え、を跨いでいる)"
+    Debug.Print "  ・(3) 静まらないページで False + LastEvalOk=True (失敗ではない)"
+    Debug.Print "  ・(4) ★除外を入れると同じページが静穏になる★ = ノイズ除外が効いている"
+    Debug.Print "  ・(6) 自動待ち OFF なら更新前、ON なら更新後の値が見えること"
+    Debug.Print "  ・LastSettleInfo の slack が小さい (100ms 未満) 待ちは★際どい★"
+    Debug.Print "      たまたま滑り込んだだけかもしれない。stableMs を上げるか"
+    Debug.Print "      明示シグナルを併用する"
+    Debug.Print ""
+    Debug.Print "  --- 見るもの (Test_D4_Signal) ★D-4c★ ---"
+    Debug.Print "  ・★(3) が核心★ arm したのに何も起きなければ、ページが静かでも"
+    Debug.Print "      False になること = ★アプリに無視されたことを検出できる★"
+    Debug.Print "      静穏待ちだけならここは成功してしまう"
+    Debug.Print "  ・(1) 無い要素・不正なセレクタは★その場で★ arm 失敗 (fail-fast)"
+    Debug.Print "  ・(4) arm はワンショット。次の待ちには持ち越さない"
+    Debug.Print "  ・(6) arm が消えたら signal-lost で失敗 (黙って再 arm しない)"
+    Debug.Print ""
+    Debug.Print "  --- 見るもの (Test_D4_Site) ★D-4d は観測が目的★ ---"
+    Debug.Print "  ・判定の件数は構造的な数点だけ。★中身はログ本文を読む★"
+    Debug.Print "  ・(3)(6) の毎秒の行 [01s] q=.. m=.. n=.. が主役"
+    Debug.Print "      q が伸びる  → 静穏が訪れる (静穏待ちが使える)"
+    Debug.Print "      q が伸びない → ★除外か明示シグナルが要る★"
+    Debug.Print "  ・(2) の往復コスト。軽いページでは 35.4 → 36.3 ms だった"
+    Debug.Print "  ・rp (作り直し回数) が増えていたら、Maps が fetch を差し替えている"
+    Debug.Print "  ・(7) の url に /@緯度,経度 が入るか = 座標が取れるか"
+    Debug.Print ""
+    Debug.Print "  --- 手で試したいとき ---"
+    Debug.Print "  Set p = UserForm1.GetActivePane"
+    Debug.Print "  ?p.SpaProbeState"
+    Debug.Print "  ?p.SpaProbeHealthy"
+    Debug.Print "  ?p.SpaProbeReset"
+    Debug.Print "  ?p.WaitSettled(10)     : ?p.LastSettleInfo"
+    Debug.Print "  p.IgnoreSelectors = ""#clock, .ticker"""
+    Debug.Print "  p.AddIgnoreNetwork ""google-analytics"""
+    Debug.Print "  p.AutoWaitAfterAction = True   ' 操作の後に自動で待つ"
+    Debug.Print ""
+    Debug.Print "  --- 明示シグナル (D-4c) ―★arm してから act する★ ---"
+    Debug.Print "  p.ArmContentSignal ""#result-table""   ' 既存の器が書き変わるのを待つ"
+    Debug.Print "  p.ArmNetworkSignal ""/api/search""     ' その要求の完了を待つ"
+    Debug.Print "  el.Click"
+    Debug.Print "  ?p.WaitSettled(10) : ?p.LastSettleInfo"
+    Debug.Print "  ?p.DisarmSignals   ' 取りやめるとき"
+    Debug.Print ""
+    Debug.Print "  ★★ WaitSettled が True でも「アプリの処理が終わった」証明ではない ★★"
+    Debug.Print "    静かなだけ。無視されて静かなのか終わって静かなのかは区別できない。"
+    Debug.Print "    重要な操作では D-4c の明示シグナル (arm) を併用すること。"
+    Debug.Print ""
+    Debug.Print "  ★静穏窓は WaitSettled を呼んだ時点から測る★ 呼ぶ前から静かでも"
+    Debug.Print "    いきなり成立させない (最短でも stableMs は見張る)。ただし"
+    Debug.Print "    stableMs より後に始まる処理は原理的に取り逃す。"
     Debug.Print ""
 End Sub
 
