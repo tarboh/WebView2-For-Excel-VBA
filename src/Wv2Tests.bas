@@ -5137,6 +5137,80 @@ Public Sub Test_D6_All()
 End Sub
 
 ' ============================================================
+' Test_D6_Pick (D-6b の検証: 候補一覧から 1 番目を採る)
+'
+'   ★D-6 の QuerySelectorAll が実サイトで効くかを見る出口★
+'   カテゴリ検索 (「コンビニ 東京駅」) は候補一覧になるので、
+'   pickFirst の有無で結果が変わることを確かめる。
+'
+'   ★外部サイトに実アクセスする★ 実サイトなので合否は緩く見る。
+' ============================================================
+Public Sub Test_D6_Pick()
+    Dim p As Wv2Pane
+    Dim lat As Double
+    Dim lng As Double
+    Dim nm As String
+    Dim ok As Boolean
+
+    If UserForm1.CurrentBrowser Is Nothing Then
+        Wv2Log.LogI "Test_D6_Pick: Browser が起動していません。"
+        Exit Sub
+    End If
+
+    Wv2Log.LogI ""
+    TestCountReset
+    Wv2Log.LogI "================ Test_D6_Pick 開始 ================"
+
+    Set p = Wv2Maps.MapsOpen(UserForm1.CurrentBrowser)
+    TestBool "Maps を開けた", Not (p Is Nothing)
+    If p Is Nothing Then
+        TestCountPrint
+        Exit Sub
+    End If
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (1) 候補が複数になる検索 (選ばない) ---"
+
+    ok = Wv2Maps.MapsGeocode(p, "コンビニ 東京駅", lat, lng, nm, 15)
+    Wv2Log.LogI "        戻り値=" & ok & " 理由=" & Wv2Maps.MapsLastError
+    Wv2Log.LogI "        座標=" & lat & "," & lng & "  名前=" & nm
+    TestBool "★選ばなければ確定しない★", (ok = False)
+    TestBool "  候補から選んでいない", (Wv2Maps.MapsLastPicked = False)
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (2) ★候補の 1 件目を採る★ ---"
+
+    ok = Wv2Maps.MapsGeocode(p, "コンビニ 東京駅", lat, lng, nm, 15, True)
+    Wv2Log.LogI "        戻り値=" & ok & " 理由=" & Wv2Maps.MapsLastError
+    Wv2Log.LogI "        座標=" & lat & "," & lng
+    Wv2Log.LogI "        名前=" & nm
+    Wv2Log.LogI "        候補から選んだか=" & Wv2Maps.MapsLastPicked
+
+    TestBool "★候補を採れば確定する★", ok
+    If ok Then
+        TestBool "  ★候補から選んだ印が付く★", Wv2Maps.MapsLastPicked
+        TestBool "  緯度が日本の範囲", (lat > 20 And lat < 46)
+        TestBool "  経度が日本の範囲", (lng > 122 And lng < 154)
+        TestBool "  名前が取れている", (Len(nm) > 0)
+    End If
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (3) 確定する住所では印が付かない ---"
+
+    ok = Wv2Maps.MapsGeocode(p, "東京都千代田区丸の内1-9-1", lat, lng, nm, 15, True)
+    TestBool "確定する", ok
+    TestBool "★候補から選んだ印は付かない★", (Wv2Maps.MapsLastPicked = False)
+    Wv2Log.LogI "        座標=" & lat & "," & lng & "  名前=" & nm
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  レジストリに積まれた数: " & p.ElementCount
+    Wv2Log.LogI "  in-callback 深さ (期待 0): " & p.InCallbackDepth
+    TestCountPrint
+    Wv2Log.LogI "================ Test_D6_Pick 終了 ================"
+    Wv2Log.LogI ""
+End Sub
+
+' ============================================================
 ' Test_D4_Help (D-4 の手順)
 ' ============================================================
 Public Sub Test_D4_Help()
@@ -5160,6 +5234,7 @@ Public Sub Test_D4_Help()
     Debug.Print "     Wv2Maps.MapsOpen / MapsGeocode の実演。業務で使う形そのもの。"
     Debug.Print " 10) Test_D5_Sheet   … ★D-5b★ シート連携 (新しいブックを作って試す)"
     Debug.Print " 11) Test_D6_All     … ★D-6★ QuerySelectorAll と寿命管理"
+    Debug.Print " 12) Test_D6_Pick    … ★D-6b★ 候補一覧から 1 番目を採る (実サイト)"
     Debug.Print "     ★外部サイトに実アクセスする唯一の Test_*★ ネットワークが要る。"
     Debug.Print "     住所を変えたいときは Test_D4_Site ""別の住所"" と打つ。"
     Debug.Print ""

@@ -46,6 +46,8 @@ Attribute VB_Name = "Wv2Maps"
 '       not-found                … 見つからなかった (★検索しても地図が動かない★)。
 '                                  ★このとき座標は返さない★ 前の検索の残りかすなので
 '       ambiguous                … ★候補が複数★ (/search/ に着いたが地図は動いた)。
+'                                  ★pickFirstIfAmbiguous:=True なら候補の 1 件目に
+'                                  入って確定させる (MapsLastPicked = True になる)★
 '                                  このとき outLat / outLng には地図の中心が入る
 '       no-coords                … URL から座標を読めなかった
 ''''''''''''''''''''''''''''''''''
@@ -54,6 +56,15 @@ Option Explicit
 
 ' --- 直前の失敗理由 ---
 Private m_lastError As String
+
+' --- D-6b: 直前の結果が★候補一覧から選んだもの★かどうか ---
+'   ★確定と「候補から選んだ」を同じ顔で並べない★ (設計原則111 と同じ筋)。
+'   精度が違うものが同じ ok として混ざると、後から見分けられなくなる。
+Private m_lastPicked As Boolean
+
+' 候補一覧のリンクの候補 (D-6b)。★href で拾うのを先に★ class は変わりやすい。
+Private Const MAPS_CAND_SELECTORS As String = _
+    "a[href*='/maps/place/']" & vbLf & "div[role='feed'] a[href*='/place/']" & vbLf & "a.hfpxzc"
 
 ' 検索ボックスの候補。★id は自動生成に変わりうる (仕様事実59)★ ので name / 構造を先に。
 '   ★区切りは vbLf★ Const では Chr$() が使えない (定数式でないため)。
@@ -157,16 +168,15 @@ Public Function MapsGeocode(ByVal p As Wv2Pane, _
                             ByRef outLat As Double, _
                             ByRef outLng As Double, _
                             ByRef outName As String, _
-                            Optional ByVal timeoutSec As Single = 20) As Boolean
+                            Optional ByVal timeoutSec As Single = 20, _
+                            Optional ByVal pickFirstIfAmbiguous As Boolean = False) As Boolean
     Dim el As Wv2Element
     Dim prevUrl As String
     Dim newUrl As String
-    Dim prevLat As Double
-    Dim prevLng As Double
-    Dim tmpLat As Double
-    Dim tmpLng As Double
+    Dim cands As Collection
 
     m_lastError = ""
+    m_lastPicked = False
     outLat = 0
     outLng = 0
     outName = ""
@@ -177,7 +187,6 @@ Public Function MapsGeocode(ByVal p As Wv2Pane, _
     End If
 
     prevUrl = p.View_GetSource()
-    MapsExtractLatLng prevUrl, prevLat, prevLng
 
     ' --- 住所を書き込む (D-3。★ネイティブ setter 経由なので SPA に伝わる★) ---
     Set el = MapsFindFirst(p, MAPS_BOX_SELECTORS, 10)
@@ -214,40 +223,50 @@ Public Function MapsGeocode(ByVal p As Wv2Pane, _
 
     ' --- ★場所が確定するまで待つ★ (arm を使わない理由はヘッダー参照) ---
     If Not MapsWaitPlace(p, prevUrl, timeoutSec, newUrl) Then
-        ' --- 確定しなかった。★地図が動いたかで意味が変わる★ ---
-        '   動いた   … 候補が複数 (広域が指定された等)。中心座標には意味がある
-        '   動かない … 何も見つからなかった。★中心座標は前の検索の残りかす★ なので
-        '              書き残してはいけない (D-5b の実機検証で踏んだ。でたらめな住所に
-        '              1 つ前の行の座標が付いた)
+        ' --- 確定しなかった ---
+        '   ★候補一覧が出ているかを直接数える★ (D-6 の QuerySelectorAll)
+        '     0 件      … 何も見つからなかった。座標は返さない
+        '     1 件以上  … 候補が複数。中心座標には意味がある
+        '   ★以前は「検索して地図が動いたか」で見ていたが、同じ検索語を続けて
+        '     引くと地図が動かず、候補が出ているのに not-found になった★
+        '     (D-6b の実機検証で発覚)。間接的な推測をやめて直接数える。
         If InStr(1, newUrl, "/@") = 0 Then
             m_lastError = "timeout-url"
             Exit Function
         End If
 
-        MapsExtractLatLng newUrl, tmpLat, tmpLng
+        Set cands = MapsFindCandidates(p)
+        Wv2Log.LogI "Wv2Maps.MapsGeocode: 候補リンク " & cands.Count & " 件"
 
-        If prevLat = 0 And prevLng = 0 Then
-            ' ★比較の基準が無い★ 動いたのか元からそこだったのか判定できないので、
-            '   保守的に座標を返さない。★怪しい座標を書き残す方が害が大きい★
-            m_lastError = "not-found"
-            Wv2Log.LogW "Wv2Maps.MapsGeocode: 確定せず、比較の基準も無い (" & _
-                        addressText & ") 座標は返さない"
-
-        ElseIf MapsSameSpot(tmpLat, tmpLng, prevLat, prevLng) Then
+        If cands.Count = 0 Then
             m_lastError = "not-found"
             Wv2Log.LogW "Wv2Maps.MapsGeocode: 見つからない (" & addressText & _
-                        ") 地図が動いていないので座標は返さない"
-
-        Else
-            outLat = tmpLat
-            outLng = tmpLng
-            outName = MapsTitleOf(p)
-            m_lastError = "ambiguous"
-            Wv2Log.LogW "Wv2Maps.MapsGeocode: 候補が複数 (" & addressText & _
-                        ") 中心座標を返す url=" & Left$(newUrl, 70)
+                        ") 候補一覧も出ていないので座標は返さない"
+            Exit Function
         End If
+
+        If pickFirstIfAmbiguous Then
+            If MapsPickFirst(p, cands, timeoutSec, newUrl) Then
+                m_lastPicked = True
+                m_lastError = ""
+                Wv2Log.LogI "Wv2Maps.MapsGeocode: ★候補の 1 件目を採った★ (" & _
+                            addressText & ")"
+                GoTo Resolved
+            End If
+            Wv2Log.LogW "Wv2Maps.MapsGeocode: 候補を選べなかった (" & addressText & ")"
+        End If
+
+        MapsExtractLatLng newUrl, outLat, outLng
+        outName = MapsTitleOf(p)
+        m_lastError = "ambiguous"
+        Wv2Log.LogW "Wv2Maps.MapsGeocode: 候補が複数 (" & addressText & _
+                    ") 中心座標を返す"
         Exit Function
     End If
+
+' ★確定した★ ここから先は「最初から確定していた場合」と
+' 「候補の 1 件目に入った場合」で同じ処理をする。
+Resolved:
 
     ' --- DOM が落ち着くのを待つ (D-4。居座る要求は既定で足切りされる) ---
     p.WaitSettled 10
@@ -277,6 +296,75 @@ Private Function MapsTitleOf(ByVal p As Wv2Pane) As String
     End If
 
     MapsTitleOf = t
+End Function
+
+
+' ============================================================
+' MapsLastPicked (D-6b) - 直前の結果が候補一覧から選んだものか
+'
+'   ★True なら「その住所そのもの」ではなく「候補の 1 件目」★
+'   確定 (True + MapsLastPicked = False) と精度が違うので、記録に残すときは
+'   区別できるようにすること。MapsGeocodeSheet は状態欄に ok(候補1) と書く。
+' ============================================================
+Public Property Get MapsLastPicked() As Boolean
+    MapsLastPicked = m_lastPicked
+End Property
+
+
+' ============================================================
+' MapsFindCandidates (D-6b、Private) - 候補一覧のリンクを掴む
+'
+'   ★候補が「出ているかどうか」を直接数えるための口★
+'   0 件なら「何も見つからなかった」、1 件以上なら「候補が複数」。
+'   セレクタは候補方式 (設計原則107)。href で拾うものを先に置く。
+' ============================================================
+Private Function MapsFindCandidates(ByVal p As Wv2Pane) As Collection
+    Dim sels As Variant
+    Dim i As Long
+    Dim els As Collection
+
+    Set MapsFindCandidates = New Collection
+    sels = Split(MAPS_CAND_SELECTORS, vbLf)
+
+    For i = LBound(sels) To UBound(sels)
+        Set els = p.QuerySelectorAll(CStr(sels(i)), 20)
+        If els.Count > 0 Then
+            Wv2Log.LogD "Wv2Maps.MapsFindCandidates: " & els.Count & _
+                        " 件 [" & sels(i) & "]"
+            Set MapsFindCandidates = els
+            Exit Function
+        End If
+    Next i
+End Function
+
+
+' ============================================================
+' MapsPickFirst (D-6b、Private) - 候補一覧の 1 件目に入る
+'
+'   ★D-6 の QuerySelectorAll がここで効く★ 候補のリンクをまとめて掴み、
+'   文書順の 1 件目をクリックして、場所が確定するまで待つ。
+'
+'   戻り値: True = 確定した (outUrl に確定後の URL)
+' ============================================================
+Private Function MapsPickFirst(ByVal p As Wv2Pane, _
+                               ByVal cands As Collection, _
+                               ByVal timeoutSec As Single, _
+                               ByRef outUrl As String) As Boolean
+    Dim el As Wv2Element
+    Dim prevUrl As String
+
+    If cands Is Nothing Then Exit Function
+    If cands.Count = 0 Then Exit Function
+
+    prevUrl = p.View_GetSource()
+    Set el = cands(1)   ' ★文書順の 1 件目★ (D-6 で順序が保たれることを確認済み)
+
+    If Not el.Click() Then
+        Wv2Log.LogW "Wv2Maps.MapsPickFirst: クリックできない err=" & el.LastError
+        Exit Function
+    End If
+
+    MapsPickFirst = MapsWaitPlace(p, prevUrl, timeoutSec, outUrl)
 End Function
 
 
@@ -381,19 +469,6 @@ Private Function MapsExtractLatLng(ByVal url As String, _
     outLng = 0
 End Function
 
-' ============================================================
-' MapsSameSpot (Private) - 2 つの座標が同じ地点か
-'   ★検索して地図が動いたかの判定に使う★ 動いていなければ、その座標は
-'   「今回の検索の結果」ではなく「前の検索の残りかす」である。
-' ============================================================
-Private Function MapsSameSpot(ByVal la1 As Double, ByVal lo1 As Double, _
-                              ByVal la2 As Double, ByVal lo2 As Double) As Boolean
-    If la2 = 0 And lo2 = 0 Then Exit Function   ' 比較相手が無い
-    If Abs(la1 - la2) > 0.000001 Then Exit Function
-    If Abs(lo1 - lo2) > 0.000001 Then Exit Function
-    MapsSameSpot = True
-End Function
-
 Private Function MapsLatLngOk(ByVal la As Double, ByVal lo As Double) As Boolean
     If la = 0 And lo = 0 Then Exit Function
     If la < -90 Or la > 90 Then Exit Function
@@ -464,13 +539,15 @@ End Function
 '     firstRow    : 開始行 (既定 2。1 行目は見出しの想定)
 '     addrCol     : 住所の列番号 (既定 1 = A 列)
 '     outCol      : 書き出す先頭列 (既定 2 = B 列)
-'     skipDone    : 状態が ok の行を飛ばすか (既定 True)
+'     skipDone    : 状態が ok で始まる行を飛ばすか (既定 True)
+'     pickFirst   : 候補が複数のとき 1 件目を採るか (既定 False)
 '
 '   書き出す並び (outCol から 4 列):
 '     outCol   : 緯度
 '     outCol+1 : 経度
 '     outCol+2 : 正規化後の住所 (Maps が返した名前)
-'     outCol+3 : 状態 (ok / ambiguous / no-searchbox / timeout-url ...)
+'     outCol+3 : 状態 (ok / ★ok(候補1)★ / ambiguous / not-found / timeout-url ...)
+'                ★ok(候補1) は「候補一覧の 1 件目を採った」★ 確定より精度が落ちる
 '
 '   戻り値: ★ok になった行数★ (処理した行数ではない)
 '
@@ -495,7 +572,8 @@ Public Function MapsGeocodeSheet(ByVal targetSheet As Object, _
                                  Optional ByVal firstRow As Long = 2, _
                                  Optional ByVal addrCol As Long = 1, _
                                  Optional ByVal outCol As Long = 2, _
-                                 Optional ByVal skipDone As Boolean = True) As Long
+                                 Optional ByVal skipDone As Boolean = True, _
+                                 Optional ByVal pickFirst As Boolean = False) As Long
     Dim p As Wv2Pane
     Dim r As Long
     Dim addr As String
@@ -526,17 +604,23 @@ Public Function MapsGeocodeSheet(ByVal targetSheet As Object, _
 
         total = total + 1
 
-        If skipDone And CStr(targetSheet.Cells(r, outCol + 3).value) = "ok" Then
+        If skipDone And Left$(CStr(targetSheet.Cells(r, outCol + 3).value), 2) = "ok" Then
             Wv2Log.LogI "  [" & r & "] 済みなので飛ばす: " & addr
             doneCount = doneCount + 1
         Else
-            ok = MapsGeocode(p, addr, lat, lng, nm)
+            ok = MapsGeocode(p, addr, lat, lng, nm, 20, pickFirst)
 
             If ok Then
                 targetSheet.Cells(r, outCol).value = lat
                 targetSheet.Cells(r, outCol + 1).value = lng
                 targetSheet.Cells(r, outCol + 2).value = nm
-                targetSheet.Cells(r, outCol + 3).value = "ok"
+                ' ★確定と「候補から選んだ」を書き分ける★ (精度が違うものを同じ顔で
+                '   並べない)。再開時の判定は Left$(..., 2) = "ok" で見る。
+                If MapsLastPicked Then
+                    targetSheet.Cells(r, outCol + 3).value = "ok(候補1)"
+                Else
+                    targetSheet.Cells(r, outCol + 3).value = "ok"
+                End If
                 doneCount = doneCount + 1
             Else
                 ' ★候補が複数のときも座標 (地図の中心) は書き残す★
