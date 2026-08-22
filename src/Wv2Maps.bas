@@ -560,3 +560,4 @@ Public Function MapsGeocodeSheet(ByVal targetSheet As Object, _
                 doneCount & " 行が ok"
     MapsGeocodeSheet = doneCount
 End Function
+

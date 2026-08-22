@@ -5038,6 +5038,105 @@ Public Sub Test_D5_Sheet()
 End Sub
 
 ' ============================================================
+' Test_D6_All (D-6 の検証: QuerySelectorAll と寿命管理)
+' ============================================================
+Public Sub Test_D6_All()
+    Dim b As Wv2Browser
+    Dim p As Wv2Pane
+    Dim els As Collection
+    Dim el As Wv2Element
+    Dim ids As String
+    Dim n0 As Long
+
+    Set b = UserForm1.CurrentBrowser
+    If b Is Nothing Then
+        Wv2Log.LogI "Test_D6_All: Browser が起動していません。"
+        Exit Sub
+    End If
+
+    Set p = b.AddTabWithHtml(BuildD4ProbeHtml())
+    If p Is Nothing Then
+        Wv2Log.LogI "Test_D6_All: タブの生成に失敗しました。"
+        Exit Sub
+    End If
+    If Not D2WaitTitle(p, "D-4 プローブ", 10) Then
+        Wv2Log.LogI "Test_D6_All: 検証ページの読み込みを確認できませんでした。"
+        Exit Sub
+    End If
+
+    Wv2Log.LogI ""
+    TestCountReset
+    Wv2Log.LogI "================ Test_D6_All 開始 ================"
+    Wv2Log.LogI "  --- (1) まとめて掴む ---"
+
+    Set els = p.QuerySelectorAll("div")
+    TestBool "★Collection が返る★", Not (els Is Nothing)
+    TestBool "  3 件ある", (els.Count = 3)
+    TestBool "  打ち切っていない", (p.LastAllTruncated = False)
+
+    ' ★For Each で自然に回せることが論点2 の眼目★
+    For Each el In els
+        ids = ids & el.GetAttribute("id") & ","
+    Next el
+    Wv2Log.LogI "        文書順の id = " & ids
+    TestBool "★文書順で返る★", (ids = "target,noise,slot,")
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (2) 0 件と失敗の区別 (設計原則93) ---"
+
+    Set els = p.QuerySelectorAll("blockquote")
+    TestBool "0 件でも Collection が返る (Nothing ではない)", Not (els Is Nothing)
+    TestBool "  Count が 0", (els.Count = 0)
+    TestBool "  ★LastEvalOk=True (本当に無い)★", (p.LastEvalOk = True)
+
+    Set els = p.QuerySelectorAll("###")
+    TestBool "不正なセレクタでも Collection が返る", Not (els Is Nothing)
+    TestBool "  Count が 0", (els.Count = 0)
+    TestBool "  ★LastEvalOk=False (失敗)★", (p.LastEvalOk = False)
+    Wv2Log.LogI "        LastEvalError = " & p.LastEvalError
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (3) ★打ち切りは黙ってやらない★ ---"
+
+    Set els = p.QuerySelectorAll("div", 2)
+    TestBool "上限どおり 2 件", (els.Count = 2)
+    TestBool "★打ち切ったことが分かる★", p.LastAllTruncated
+
+    Set els = p.QuerySelectorAll("div", 200)
+    TestBool "  上限内なら False に戻る", (p.LastAllTruncated = False)
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (4) 掴んだ要素がそのまま使える ---"
+
+    Set els = p.QuerySelectorAll("div")
+    Set el = els(1)
+    TestEq "1 件目を読める", el, el.GetAttribute("id"), "target"
+    TestBool "  書き込める (D-3 の SetAttribute)", _
+             el.SetAttribute("data-mark", "1")
+    TestEq "  読み戻せる", el, el.GetAttribute("data-mark"), "1"
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (5) ★寿命管理は見せるだけ★ ---"
+
+    n0 = p.ElementCount
+    Wv2Log.LogI "        今レジストリに積まれている数 = " & n0
+    TestBool "ElementCount が読める", (n0 > 0)
+
+    Set els = p.QuerySelectorAll("div")
+    TestBool "★掴むたびに積み上がる (勝手に捨てない)★", (p.ElementCount > n0)
+
+    TestBool "ClearElementRegistry で作り直せる", p.ClearElementRegistry()
+    TestBool "  レジストリが空になる", (p.ElementCount = 0)
+    TestBool "  ★手元の要素は stale になる★", (el.IsStale = True)
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  in-callback 深さ (期待 0): " & p.InCallbackDepth
+    TestCountPrint
+    Wv2Log.LogI "================ Test_D6_All 終了 ================"
+    Wv2Log.LogI ""
+End Sub
+
+' ============================================================
 ' Test_D4_Help (D-4 の手順)
 ' ============================================================
 Public Sub Test_D4_Help()
@@ -5060,6 +5159,7 @@ Public Sub Test_D4_Help()
     Debug.Print "  9) Test_D5_Geocode … ★D-5★ 住所 → 座標 を 3 件続けて (60 秒ほど)"
     Debug.Print "     Wv2Maps.MapsOpen / MapsGeocode の実演。業務で使う形そのもの。"
     Debug.Print " 10) Test_D5_Sheet   … ★D-5b★ シート連携 (新しいブックを作って試す)"
+    Debug.Print " 11) Test_D6_All     … ★D-6★ QuerySelectorAll と寿命管理"
     Debug.Print "     ★外部サイトに実アクセスする唯一の Test_*★ ネットワークが要る。"
     Debug.Print "     住所を変えたいときは Test_D4_Site ""別の住所"" と打つ。"
     Debug.Print ""

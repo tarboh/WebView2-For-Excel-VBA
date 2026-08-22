@@ -8,6 +8,34 @@ Attribute VB_Creatable = False
 Attribute VB_PredeclaredId = False
 Attribute VB_Exposed = False
 ''''''''''''''''''''''''''''''''''
+' --- Wv2Pane.cls  D-6 段階 (QuerySelectorAll と寿命管理) ---
+'
+'   ■ 追加した Public メンバ
+'     QuerySelectorAll(selector, maxCount) As Collection
+'     LastAllTruncated  As Boolean  直前の QuerySelectorAll が打ち切られたか
+'     ElementCount      As Long     JS 側レジストリに積まれている要素の数
+'
+'   ■ ★複数は Collection で返す (論点2)★
+'     For Each el In els と書けて VBA に最も自然。0 件は Count = 0 で素直。
+'     ★配列にしなかった理由★ 空配列の UBound は実行時エラーになり、呼び出し側に
+'     毎回の防御を強いる。★独自クラスにしなかった理由★ For Each を効かせるには
+'     メンバー属性行 (Attribute Item.VB_UserMemId = 0) が要るが、import.ps1 は
+'     属性行を落とす仕様 (仕様事実47) なので往復と相性が悪い。
+'
+'   ■ ★打ち切りは黙ってやらない (論点3)★
+'     既定 200 件。超えたら LastAllTruncated = True にして警告ログも出す。
+'     「返ってきた件数がページの実数」と思い込ませない。
+'
+'   ■ ★寿命管理は「見せる」だけ。勝手に捨てない (論点4)★
+'     QuerySelectorAll は 1 回で 200 個積みうるので、レジストリは D-2 の想定より
+'     速く伸びる。だが古いものを勝手に捨てると★手元の Wv2Element が黙って
+'     stale になる★ (設計原則91 / D-2 論点3 の判断がそのまま効く)。
+'     そこで:
+'       ・ElementCount で今の数を見せる
+'       ・一定数を超えたら LogW で知らせる
+'       ・捨てるのは ClearElementRegistry を呼んだときだけ (D-2 から在る)
+'
+''''''''''''''''''''''''''''''''''
 ' --- Wv2Pane.cls  D-4b 段階 (静穏待ち) ---
 '
 '   D-4a で置いたプローブを使って★落ち着くまで待つ★。
@@ -861,6 +889,14 @@ Private Const WAIT_TIMEOUT_DEFAULT As Single = 10
 '   プローブの中身を変えたら★必ず上げる★。ページに古い版が残っていても、
 '   版が違えば健康診断が落ちて作り直される (参考プロダクトと同じ契約)。
 Private Const SPA_PROBE_VER As Long = 3
+
+
+' --- D-6: QuerySelectorAll ---
+'   ALL_MAX_DEFAULT    : 1 回に返す既定の上限。★黙って切らない★ (LastAllTruncated)
+'   ELEMENT_WARN_COUNT : レジストリがこれを超えたら警告する (捨てはしない)
+Private Const ALL_MAX_DEFAULT    As Long = 200
+Private Const ELEMENT_WARN_COUNT As Long = 5000
+Private m_allTruncated As Boolean
 
 
 ' --- D-4b: 静穏待ちの設定 ---
@@ -5288,4 +5324,150 @@ Private Function StaleMsJs() As String
         StaleMsJs = CStr(m_staleMs)
     End If
 End Function
+
+' ============================================================
+' ★D-6 の本体: QuerySelectorAll と寿命管理★
+' ============================================================
+
+
+' ============================================================
+' QuerySelectorAll (D-6) - 一致する要素をまとめて掴む
+'
+'   引数:
+'     selector : CSS セレクタ
+'     maxCount : 返す上限 (既定 200)。0 以下なら既定値に丸める
+'   戻り値:
+'     Wv2Element の Collection。★見つからなければ空の Collection★ (Nothing ではない)
+'     失敗したときも空の Collection を返す。区別は LastEvalOk で行う (設計原則93)。
+'
+'   ★件数が上限に達したら LastAllTruncated = True★
+'     「返ってきた件数 = ページにある数」と思い込ませないため。
+'
+'   ★文書順で返る★ querySelectorAll の順序そのまま。
+'
+'   使用例:
+'     Dim els As Collection, el As Wv2Element
+'     Set els = p.QuerySelectorAll("a[href]")
+'     Debug.Print els.Count & " 件"
+'     For Each el In els
+'         Debug.Print el.GetAttribute("href")
+'     Next el
+'
+'   ★1 プロパティにつき 1 往復する★ (D-2 の割り切り) ので、200 件から属性を
+'   全部読むと 200 往復 = 8 秒ほどかかる。まとめて取りたいときは EvalSync で
+'   JS 式を 1 本書く方が速い。
+' ============================================================
+Public Function QuerySelectorAll(ByVal selector As String, _
+                                 Optional ByVal maxCount As Long = ALL_MAX_DEFAULT) As Collection
+    Dim js As String
+    Dim res As String
+    Dim gen As String
+    Dim handles As String
+    Dim parts As Variant
+    Dim i As Long
+    Dim el As Wv2Element
+    Dim outCol As Collection
+
+    Set outCol = New Collection
+    Set QuerySelectorAll = outCol
+    m_allTruncated = False
+
+    If maxCount <= 0 Then maxCount = ALL_MAX_DEFAULT
+
+    ' ★D-2 の FindOne を push からループに変えただけ★
+    '   ハンドルはカンマ区切りの文字列で返す (Wv2Json は配列を扱えないため。
+    '   パーサを拡張するより Split の方が小さい ― 論点5)。
+    js = "(function(){" & JsRegistryPrologue() & _
+         "var q=document.querySelectorAll(" & JsQuote(selector) & ");" & _
+         "var mx=" & CStr(maxCount) & ",h=[],i;" & _
+         "for(i=0;i<q.length&&i<mx;i++){R.els.push(q[i]);h.push(R.els.length-1);}" & _
+         "return {g:R.gen,n:q.length,k:h.length,cut:(q.length>mx)," & _
+         "h:h.join(','),tot:R.els.length};})()"
+
+    res = EvalSync(js)
+
+    If Not m_lastEvalOk Then
+        Debug.Print "Wv2Pane.QuerySelectorAll: 失敗 (" & selector & ") err=" & m_lastEvalError
+        Exit Function
+    End If
+
+    If Wv2Json.JsonPickStr(res, "g", gen) Then
+        m_domGen = gen
+    End If
+
+    m_allTruncated = (InStr(1, res, """cut"":true") > 0)
+    If m_allTruncated Then
+        Wv2Log.LogW "Wv2Pane.QuerySelectorAll: ★打ち切った★ (" & selector & _
+                    ") ページには " & Wv2Json.JsonGetNum(res, "n") & _
+                    " 件あるが " & maxCount & " 件で止めた"
+    End If
+
+    Wv2Json.JsonPickStr res, "h", handles
+    If Len(handles) = 0 Then
+        Debug.Print "Wv2Pane.QuerySelectorAll: 0 件 (" & selector & ")"
+        WarnIfElementsPiled Wv2Json.JsonGetNum(res, "tot")
+        Exit Function
+    End If
+
+    parts = Split(handles, ",")
+    For i = LBound(parts) To UBound(parts)
+        Set el = New Wv2Element
+        el.InitElement Me, CLng(parts(i)), gen
+        outCol.Add el
+    Next i
+
+    WarnIfElementsPiled Wv2Json.JsonGetNum(res, "tot")
+
+    Debug.Print "Wv2Pane.QuerySelectorAll: " & outCol.Count & " 件 (" & _
+                selector & ") gen=" & gen
+End Function
+
+
+' ============================================================
+' LastAllTruncated (D-6) - 直前の QuerySelectorAll が上限で打ち切られたか
+'   ★True なら「返ってきた件数 = ページにある数」ではない★
+'   全部要るなら maxCount を上げるか、セレクタを絞ること。
+' ============================================================
+Public Property Get LastAllTruncated() As Boolean
+    LastAllTruncated = m_allTruncated
+End Property
+
+
+' ============================================================
+' ElementCount (D-6) - JS 側レジストリに積まれている要素の数
+'
+'   ★掴んだ要素は解放しない★ (D-2 論点3)。ページ遷移でレジストリごと消えるので
+'   実害は小さいが、QuerySelectorAll は 1 回で 200 個積みうるので伸びは速い。
+'   気になったらこれで数を見て、ClearElementRegistry で作り直す。
+'   ★作り直すと手元の Wv2Element はすべて stale になる★
+'
+'   戻り値: 積まれている数。失敗したら -1 (LastEvalError に理由)
+' ============================================================
+Public Property Get ElementCount() As Long
+    Dim res As String
+
+    res = EvalSync("(function(){" & JsRegistryPrologue() & _
+                  "return {n:R.els.length};})()")
+
+    If Not m_lastEvalOk Then
+        ElementCount = -1
+        Exit Property
+    End If
+
+    ElementCount = Wv2Json.JsonGetNum(res, "n")
+End Property
+
+
+' ============================================================
+' WarnIfElementsPiled (D-6、Private) - 積み上がりを知らせる
+'   ★捨てはしない★ 勝手に捨てると手元の Wv2Element が黙って stale になる。
+'   知らせるだけにして、捨てるかどうかは呼び出し側が決める。
+' ============================================================
+Private Sub WarnIfElementsPiled(ByVal total As Long)
+    If total < ELEMENT_WARN_COUNT Then Exit Sub
+
+    Wv2Log.LogW "Wv2Pane: ★要素レジストリに " & total & " 個積まれている★ " & _
+                "(掴んだ要素は解放しない設計)。要らなければ ClearElementRegistry で" & _
+                "作り直せる。ただし手元の Wv2Element はすべて stale になる。"
+End Sub
 
