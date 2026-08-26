@@ -1,5 +1,21 @@
 Attribute VB_Name = "Wv2Thunks"
 ''''''''''''''''''''''''''''''''''
+' --- Wv2Thunks.bas N-2 段階 (リクエストのヘッダとボディ) ---
+'
+'   N-2 の変更点:
+'     - `MultiByteToWideChar` の宣言を追加 (kernel32)
+'     - `Utf8BytesToString` を追加。★UTF-8 のバイト列を VBA String にする★
+'
+'   ★なぜ ADODB.Stream を使わないか★
+'     製品コードは外部 COM ライブラリ不使用が縛り。ADODB は検証コード
+'     (Wv2Tests の WriteUtf8NoBom) でしか使っていない。`MultiByteToWideChar` は
+'     Win32 API なので、既に使っている `lstrlenW` / `RtlMoveMemory` と同じ枠。
+'
+'   ★StrConv(b, vbUnicode) では駄目★
+'     あれはプロジェクトのコードページ (日本語環境では CP932) で解釈する。
+'     UTF-8 のバイト列を渡すと化ける。コードページを明示できる API が要る。
+''''''''''''''''''''''''''''''''''
+''''''''''''''''''''''''''''''''''
 ' --- Wv2Thunks.bas N-1 段階 (WebResourceRequested の配線) ---
 '
 '   N-1 の変更点:
@@ -360,6 +376,20 @@ Public Declare PtrSafe Sub RtlMoveMemory Lib "kernel32" ( _
     ByVal destination As LongPtr, _
     ByVal source As LongPtr, _
     ByVal length As LongPtr)
+
+' --- 文字コード変換 (N-2 で追加) ---
+'   UTF-8 のバイト列を UTF-16 (VBA の String) にする。
+'   ★コードページを明示できるのが肝★ StrConv(b, vbUnicode) は
+'   プロジェクトのコードページ (CP932) で解釈するので UTF-8 では化ける。
+Public Declare PtrSafe Function MultiByteToWideChar Lib "kernel32" ( _
+    ByVal codePage As Long, _
+    ByVal dwFlags As Long, _
+    ByVal lpMultiByteStr As LongPtr, _
+    ByVal cbMultiByte As Long, _
+    ByVal lpWideCharStr As LongPtr, _
+    ByVal cchWideChar As Long) As Long
+
+Public Const CP_UTF8 As Long = 65001
 
 ' --- 環境変数 API (第9.5 段階で追加、センチネル機構用) ---
 '   プロセス環境変数に「最後に Thunks_Init で確保した領域のベースアドレス」を
@@ -862,6 +892,42 @@ Public Function PtrToString(ByVal p As LongPtr) As String
     If cch = 0 Then Exit Function
     PtrToString = String$(cch, vbNullChar)
     RtlMoveMemory StrPtr(PtrToString), p, CLngPtr(cch * 2)
+End Function
+
+
+' ============================================================
+' Utf8BytesToString (N-2 段階で追加)
+'
+'   UTF-8 のバイト列を VBA の String に変換する。
+'   リクエストボディ (IStream から読んだ生バイト) を読める形にするために使う。
+'
+'   引数:
+'     b  : バイト配列 (0 起点)
+'     cb : 変換するバイト数 (配列の実長より短くてよい = 上限で切った分だけ渡せる)
+'
+'   戻り値: 変換した文字列。cb <= 0 なら空文字。
+'
+'   ★不正なバイト列でも落とさない★
+'     MB_ERR_INVALID_CHARS は付けない (dwFlags = 0)。上限で切ったせいで
+'     ★マルチバイト文字の途中で切れている★ことは普通に起きるので、
+'     そこで失敗させると「切れた本文が丸ごと読めない」になる。
+'     不正な並びは U+FFFD に置き換わって残りは読める。
+'
+'   ★32bit 化ポイント★ 特になし (LongPtr のみ)。
+' ============================================================
+Public Function Utf8BytesToString(ByRef b() As Byte, ByVal cb As Long) As String
+    If cb <= 0 Then Exit Function
+
+    Dim cch As Long
+    cch = MultiByteToWideChar(CP_UTF8, 0, VarPtr(b(LBound(b))), cb, 0, 0)
+    If cch <= 0 Then Exit Function
+
+    Dim outStr As String
+    outStr = String$(cch, vbNullChar)
+    cch = MultiByteToWideChar(CP_UTF8, 0, VarPtr(b(LBound(b))), cb, StrPtr(outStr), cch)
+    If cch <= 0 Then Exit Function
+
+    Utf8BytesToString = Left$(outStr, cch)
 End Function
 
 

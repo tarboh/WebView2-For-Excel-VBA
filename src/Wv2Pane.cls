@@ -8,6 +8,17 @@ Attribute VB_Creatable = False
 Attribute VB_PredeclaredId = False
 Attribute VB_Exposed = False
 ''''''''''''''''''''''''''''''''''
+' --- Wv2Pane.cls  N-2 段階 (リクエストのヘッダとボディ) ---
+'
+'   N-1 の一覧 (URL / メソッド / 種別) の上に、★1 本を再現するのに要るもの★を足す。
+'   詳細一式は N-2 の節 (このファイルの末尾) にまとめてある。要点だけ:
+'
+'     ・★詳細はまるごと既定 OFF★ (NetDetailOn = True で ON)
+'     ・★読んだ IStream は必ず Seek(0) で戻す★ さもないと空のボディが飛ぶ
+'     ・★Cookie / Authorization は既定で伏せる★ (リング上は生のまま)
+'     ・詳細は一覧とは別のリング (既定 50 件)。一覧は 500 件のまま
+''''''''''''''''''''''''''''''''''
+''''''''''''''''''''''''''''''''''
 ' --- Wv2Pane.cls  N-1b 段階 (実機で分かったことの反映) ---
 '
 '   ■ ★仕様事実: 仮想ホストの要求は WebResourceRequested に乗らない★
@@ -1023,6 +1034,59 @@ Private m_sigUrl As Boolean
 Private m_staleMs As Long
 
 
+' --- N-2: リクエストの詳細 (ヘッダとボディ) ---
+'   ★一覧とは別のリング★ (論点5 案S)。一覧は「順番と全体像」、
+'   詳細は「これを再現したい 1 本」で用途が違う。
+'
+'   m_detOn        : 詳細を取るか。★既定 False★ (論点8 案κ)
+'   m_detCap       : 詳細リングの容量 (既定 50)
+'   m_detHead      : 次に書く位置 (0 起点)
+'   m_detCount     : 今リングに入っている件数
+'   m_detDropped   : ★溢れて捨てた件数★ 一覧と同じく黙って切らない
+'   m_detBodyMax   : ボディを読む上限 (バイト。既定 65536)
+'   m_detRedact    : 秘密のヘッダを伏せるか。★既定 True★ (論点3 案M)
+'   m_detRedactList: 伏せる対象の名前を |小文字| で並べたもの
+'   m_detUriFilter : 詳細を取る URL の部分一致 (空なら全部)
+Private m_detOn         As Boolean
+Private m_detCap        As Long
+Private m_detHead       As Long
+Private m_detCount      As Long
+Private m_detDropped    As Long
+Private m_detBodyMax    As Long
+Private m_detRedact     As Boolean
+Private m_detRedactList As String
+Private m_detUriFilter  As String
+Private m_detSeq()     As Long
+Private m_detMethod()  As String
+Private m_detUri()     As String
+Private m_detHeaders() As String
+Private m_detCType()   As String
+Private m_detBytes()   As Long
+Private m_detTrunc()   As Boolean
+Private m_detIsText()  As Boolean
+Private m_detBody()    As String
+Private m_detHex()     As String
+
+' 詳細リングの既定容量と上限。★一覧より桁で小さい★ 1 件あたりの重さが違う。
+Private Const NET_DET_CAP_DEFAULT As Long = 50
+Private Const NET_DET_CAP_MAX     As Long = 2000
+
+' ボディの上限 (既定 64KB) と、その上限自体の上限 (8MB)。
+'   ★ハンドラの中で同期的に読む★ ので青天井にしない。
+Private Const NET_BODY_MAX_DEFAULT As Long = 65536
+Private Const NET_BODY_MAX_LIMIT   As Long = 8388608
+Private Const NET_BODY_CHUNK       As Long = 16384
+
+' ヘッダを読む個数の上限。1 要求で COM 呼び出しが 3 回 x 個数ぶん走る。
+Private Const NET_HDR_MAX As Long = 40
+
+' バイナリのボディを見せるときの先頭バイト数。
+Private Const NET_HEX_HEAD As Long = 32
+
+' IStream::Seek の dwOrigin (Windows SDK objidl.h の STREAM_SEEK_SET)。
+Private Const STREAM_SEEK_SET As Long = 0
+
+
 ' --- N-1: ネットワーク要求のキャプチャ (WebResourceRequested) ---
 '   m_netOn      : 捕捉中か (add_WebResourceRequested 済みか)
 '   m_netCap     : リングの容量 (件)。NetLogCapacity で変えられる。
@@ -1096,6 +1160,15 @@ Private Sub Class_Initialize()
     m_netCap = NET_CAP_DEFAULT
     Set m_netFilters = New Collection
     NetRingAlloc
+
+    ' --- N-2: 詳細 (ヘッダとボディ) ---
+    m_detOn = False                       ' ★既定 OFF★ (論点8 案κ)
+    m_detCap = NET_DET_CAP_DEFAULT
+    m_detBodyMax = NET_BODY_MAX_DEFAULT
+    m_detRedact = True                    ' ★既定は伏せる★ (論点3 案M)
+    m_detRedactList = NetRedactDefaults()
+    m_detUriFilter = ""
+    NetDetailRingAlloc
 End Sub
 
 Private Sub Class_Terminate()
@@ -6099,9 +6172,64 @@ Private Sub View_OnWebResourceRequested_Core(ByVal pSender As LongPtr, ByVal pAr
 
     uri = GetStringProperty(pReq, 3, "")
     mth = GetStringProperty(pReq, 5, "")
-    ComRelease pReq
 
     NetPush mth, ctx, uri
+
+    ' --- N-2: 詳細 (ヘッダとボディ) ---
+    '   ★既定 OFF★ なので、ここは NetDetailOn = True のときしか走らない。
+    '   pReq を Release する前に読む (args も pReq も Invoke の間しか有効でない)。
+    If m_detOn Then NetReadDetail pReq, mth, uri
+
+    ComRelease pReq
+End Sub
+
+
+' ============================================================
+' NetReadDetail (N-2、Private) - 1 要求ぶんの詳細を読んでリングに置く
+'
+'   ★ハンドラの中で走る★ (論点1 案A)。args は Invoke の間しか有効でないので、
+'   ここで同期的に読むしかない。だから上限で必ず切る。
+'
+'   ★ボディを読むのは GET 以外だけ (論点7 案α)★
+'     GET にボディはほぼ無い。既定でこれだけ外すと大半の無駄が消える。
+'     URL でさらに絞りたいときは NetDetailUriFilter。
+' ============================================================
+Private Sub NetReadDetail(ByVal pReq As LongPtr, _
+                          ByVal mth As String, _
+                          ByVal uri As String)
+    Dim headers  As String
+    Dim cType    As String
+    Dim nBytes   As Long
+    Dim trunc    As Boolean
+    Dim isText   As Boolean
+    Dim bodyText As String
+    Dim hexHead  As String
+    Dim buf()    As Byte
+
+    ' URL で絞る (空なら絞らない)
+    If LenB(m_detUriFilter) > 0 Then
+        If InStr(1, uri, m_detUriFilter, vbTextCompare) = 0 Then Exit Sub
+    End If
+
+    headers = NetReadHeaders(pReq)
+    cType = NetHeaderValue(headers, "content-type")
+
+    ' ★GET はボディを読まない★
+    If UCase$(mth) <> "GET" Then
+        If NetReadBody(pReq, nBytes, trunc, buf) Then
+            If nBytes > 0 Then
+                isText = NetIsTextType(cType)
+                If isText Then
+                    bodyText = Utf8BytesToString(buf, nBytes)
+                Else
+                    hexHead = NetHexHead(buf, nBytes)
+                End If
+            End If
+        End If
+    End If
+
+    NetDetailPush m_netTotal, mth, uri, headers, cType, _
+                  nBytes, trunc, isText, bodyText, hexHead
 End Sub
 
 
@@ -6282,3 +6410,634 @@ Private Function NetCtxFromName(ByVal ctxToken As String) As Long
     End Select
 End Function
 
+
+' ============================================================
+' ★N-2 : リクエストのヘッダとボディ★
+'
+'   N-1 の一覧 (URL / メソッド / 種別) の上に、★1 本を再現するのに要るもの★を足す。
+'
+'   ■ ★詳細はまるごと既定 OFF (論点8 案κ)★
+'     N-1 の一覧は「軽くて常に使える道具」として完成している。そこに
+'     ヘッダのイテレータ (1 要求あたり COM 呼び出し 60 回前後) とボディ読み出しを
+'     既定で足すと、その良さを壊す。`NetDetailOn = True` にしたときだけ働く。
+'
+'   ■ ★読むと通信が壊れうる (論点2)★
+'     `get_Content` が返す `IStream` は位置を持つ。読めば位置が進むので、
+'     そのあと WebView2 が同じストリームから送ると★空のボディが飛ぶ★。
+'     読み終わったら必ず `Seek(0, STREAM_SEEK_SET)` で先頭へ戻す。
+'     ★これは「たぶん大丈夫」で済ませない★ ―― 検証では POST 先が返す本文と
+'     突き合わせて、ボディが壊れずに届いたことを数える (設計原則112)。
+'
+'   ■ ★秘密は既定で伏せる (論点3 案M)★
+'     `Cookie` / `Authorization` などはログファイルに平文で残さない。
+'     ★リング上には生のまま持ち、出すときに伏せる★ ので、必要なら
+'     `NetRedact = False` で見られる。既定は安全側。
+'
+'   ■ 追加した Public メンバ
+'     NetDetailOn        As Boolean  ★既定 False★ 詳細を取るか
+'     NetDetailCapacity  As Long     詳細リングの容量 (既定 50)
+'     NetBodyMaxBytes    As Long     ボディの上限 (既定 65536)
+'     NetRedact          As Boolean  ★既定 True★ 秘密を伏せるか
+'     AddRedactHeader(name) / ClearRedactHeaders()
+'     NetDetailUriFilter As String   詳細を取る URL の部分一致 (空なら全部)
+'     NetDetailCount     As Long
+'     NetDetailDropped   As Long     ★溢れて捨てた件数★ (黙って切らない)
+'     NetDetailLine(i)   As String   seq/メソッド/URL/バイト数/切った/種類
+'     NetDetailHeaders(i) As String  ヘッダ (伏せ字を適用して返す)
+'     NetDetailBody(i)   As String   ボディ本文 (テキストのときだけ中身)
+'     NetDetail(i)       As Boolean  1 本を Wv2Log へ出す
+'     NetDetailAll()     As Long     全部出す
+'     NetDetailClear()
+'
+'   ■ vtable index (★tools/vtable.py で確定★、設計原則115)
+'       ICoreWebView2WebResourceRequest::get_Content  →IStream**   7
+'       ICoreWebView2WebResourceRequest::get_Headers                9
+'       ICoreWebView2HttpRequestHeaders::GetIterator                8
+'       ...HttpHeadersCollectionIterator::GetCurrentHeader          3
+'       ...::get_HasCurrentHeader / ::MoveNext                    4 / 5
+'       IStream::Read / Seek        (Windows SDK objidl.h より)   3 / 5
+' ============================================================
+
+
+' ============================================================
+' NetDetailOn (N-2) - 詳細 (ヘッダとボディ) を取るか
+'   ★既定 False★ 一覧だけなら N-1 のまま軽い。
+' ============================================================
+Public Property Get NetDetailOn() As Boolean
+    NetDetailOn = m_detOn
+End Property
+
+Public Property Let NetDetailOn(ByVal onOff As Boolean)
+    m_detOn = onOff
+    Wv2Log.LogD "Wv2Pane.NetDetailOn = " & onOff & _
+                IIf(onOff, " (ヘッダとボディも読む)", " (一覧だけ)")
+End Property
+
+
+' ============================================================
+' NetDetailCapacity (N-2) - 詳細リングの容量 (件)
+'   ★一覧とは別のリング (論点5 案S)★ 一覧は「順番と全体像」、詳細は
+'   「これを再現したい 1 本」で用途が違う。詳細のために一覧を削らない。
+'   ★変えると中身は捨てられる★
+' ============================================================
+Public Property Get NetDetailCapacity() As Long
+    NetDetailCapacity = m_detCap
+End Property
+
+Public Property Let NetDetailCapacity(ByVal n As Long)
+    If n < 1 Then n = 1
+    If n > NET_DET_CAP_MAX Then
+        Wv2Log.LogW "Wv2Pane.NetDetailCapacity: " & n & " は上限 " & _
+                    NET_DET_CAP_MAX & " を超えるので丸める"
+        n = NET_DET_CAP_MAX
+    End If
+    m_detCap = n
+    NetDetailRingAlloc
+    Wv2Log.LogD "Wv2Pane.NetDetailCapacity = " & m_detCap & " (中身は作り直したので空)"
+End Property
+
+
+' ============================================================
+' NetBodyMaxBytes (N-2) - ボディを読む上限 (バイト)
+'   ★ハンドラの中で同期的に読む★ ので、青天井にすると通信が詰まる。
+'   上限で切ったことは NetDetailLine の「切った」欄に出る (黙って切らない)。
+' ============================================================
+Public Property Get NetBodyMaxBytes() As Long
+    NetBodyMaxBytes = m_detBodyMax
+End Property
+
+Public Property Let NetBodyMaxBytes(ByVal n As Long)
+    If n < 0 Then n = 0
+    If n > NET_BODY_MAX_LIMIT Then n = NET_BODY_MAX_LIMIT
+    m_detBodyMax = n
+    Wv2Log.LogD "Wv2Pane.NetBodyMaxBytes = " & m_detBodyMax
+End Property
+
+
+' ============================================================
+' NetRedact (N-2) - 秘密のヘッダを伏せるか
+'   ★既定 True★ Cookie / Authorization などをログに平文で残さない。
+'   ★リング上には生のまま持っている★ ので、False にすればその場で見られる。
+' ============================================================
+Public Property Get NetRedact() As Boolean
+    NetRedact = m_detRedact
+End Property
+
+Public Property Let NetRedact(ByVal onOff As Boolean)
+    m_detRedact = onOff
+    If Not onOff Then
+        Wv2Log.LogW "Wv2Pane.NetRedact = False ★Cookie などがログに平文で残る★ " & _
+                    "ログを人に渡す前に必ず確かめること。"
+    Else
+        Wv2Log.LogD "Wv2Pane.NetRedact = True (秘密のヘッダは伏せる)"
+    End If
+End Property
+
+
+' ============================================================
+' AddRedactHeader / ClearRedactHeaders (N-2)
+'   伏せる対象を足す / 既定リストごと空にする。名前は大小を問わない。
+'   既定リストは NetRedactDefaults 参照。
+' ============================================================
+Public Sub AddRedactHeader(ByVal headerName As String)
+    Dim t As String
+    t = LCase$(Trim$(headerName))
+    If LenB(t) = 0 Then Exit Sub
+    If InStr(1, m_detRedactList, "|" & t & "|") > 0 Then Exit Sub
+    m_detRedactList = m_detRedactList & t & "|"
+    Wv2Log.LogD "Wv2Pane.AddRedactHeader: " & t
+End Sub
+
+Public Sub ClearRedactHeaders()
+    m_detRedactList = "|"
+    Wv2Log.LogW "Wv2Pane.ClearRedactHeaders: ★伏せる対象が 1 つも無くなった★ " & _
+                "Cookie も平文で出る。"
+End Sub
+
+
+' ============================================================
+' NetDetailUriFilter (N-2) - 詳細を取る URL の部分一致
+'   空なら全部。★ヘッダのイテレータは安くない★ ので、狙いが決まっているなら
+'   ここで絞ると軽い。
+' ============================================================
+Public Property Get NetDetailUriFilter() As String
+    NetDetailUriFilter = m_detUriFilter
+End Property
+
+Public Property Let NetDetailUriFilter(ByVal pattern As String)
+    m_detUriFilter = pattern
+    Wv2Log.LogD "Wv2Pane.NetDetailUriFilter = [" & pattern & "]" & _
+                IIf(LenB(pattern) = 0, " (絞らない)", "")
+End Property
+
+
+' ============================================================
+' NetDetailCount (N-2) - 今リングに入っている詳細の件数
+' ============================================================
+Public Property Get NetDetailCount() As Long
+    NetDetailCount = m_detCount
+End Property
+
+
+' ============================================================
+' NetDetailDropped (N-2) - 詳細リングから溢れて捨てた件数
+'   ★黙って切らない★ 一覧の NetLogDropped と同じ役目。
+'   NetDetailClear / NetDetailCapacity の変更で 0 に戻る。
+' ============================================================
+Public Property Get NetDetailDropped() As Long
+    NetDetailDropped = m_detDropped
+End Property
+
+
+' ============================================================
+' NetDetailLine (N-2) - 詳細 1 本の見出しを読む (古い順・1 起点)
+'   vbTab 区切りで 6 項目:
+'     通し番号 / メソッド / URL / ボディのバイト数 / 切ったか / Content-Type
+'   ★ヘッダとボディの中身は含まない★ (NetDetailHeaders / NetDetailBody で取る)
+' ============================================================
+Public Property Get NetDetailLine(ByVal idx As Long) As String
+    Dim k As Long
+    k = NetDetailRingIndex(idx)
+    If k < 0 Then Exit Property
+
+    NetDetailLine = m_detSeq(k) & vbTab & m_detMethod(k) & vbTab & m_detUri(k) & _
+                    vbTab & m_detBytes(k) & vbTab & CStr(m_detTrunc(k)) & _
+                    vbTab & m_detCType(k)
+End Property
+
+
+' ============================================================
+' NetDetailHeaders (N-2) - 詳細 1 本のヘッダを読む
+'   1 行 1 ヘッダで vbLf 区切り。★NetRedact = True なら秘密は伏せて返す★
+' ============================================================
+Public Property Get NetDetailHeaders(ByVal idx As Long) As String
+    Dim k As Long
+    k = NetDetailRingIndex(idx)
+    If k < 0 Then Exit Property
+
+    NetDetailHeaders = NetRedactApply(m_detHeaders(k))
+End Property
+
+
+' ============================================================
+' NetDetailBody (N-2) - 詳細 1 本のボディを読む
+'   ★テキストと判定できたときだけ中身が入る★ (論点4 案P)。
+'   バイナリなら空文字。バイト数は NetDetailLine の 4 項目目を見ること。
+' ============================================================
+Public Property Get NetDetailBody(ByVal idx As Long) As String
+    Dim k As Long
+    k = NetDetailRingIndex(idx)
+    If k < 0 Then Exit Property
+
+    NetDetailBody = m_detBody(k)
+End Property
+
+
+' ============================================================
+' NetDetail (N-2) - 詳細 1 本を Wv2Log へ出す
+'   ★一覧 (NetLogDrain) には混ぜない (論点6 案V)★ 1 要求で数十行になるので、
+'   混ぜると一覧が読めなくなる (設計原則105 の趣旨)。
+'   戻り値: True なら出した。
+' ============================================================
+Public Function NetDetail(ByVal idx As Long) As Boolean
+    Dim k As Long
+    Dim i As Long
+    Dim lines As Variant
+
+    k = NetDetailRingIndex(idx)
+    If k < 0 Then Exit Function
+
+    Wv2Log.LogI "  --- 詳細 #" & m_detSeq(k) & " ---"
+    Wv2Log.LogI "      " & m_detMethod(k) & " " & m_detUri(k)
+
+    If LenB(m_detHeaders(k)) > 0 Then
+        lines = Split(NetRedactApply(m_detHeaders(k)), vbLf)
+        Wv2Log.LogI "      [ヘッダ " & (UBound(lines) - LBound(lines) + 1) & " 個]"
+        For i = LBound(lines) To UBound(lines)
+            Wv2Log.LogI "        " & lines(i)
+        Next i
+    Else
+        Wv2Log.LogI "      [ヘッダ] 取れていない"
+    End If
+
+    If m_detBytes(k) = 0 Then
+        Wv2Log.LogI "      [ボディ] 無し"
+    ElseIf m_detIsText(k) Then
+        Wv2Log.LogI "      [ボディ] " & m_detBytes(k) & " バイト (テキスト" & _
+                    IIf(m_detTrunc(k), "・★上限で切った★", "") & ")"
+        lines = Split(Replace$(m_detBody(k), vbCrLf, vbLf), vbLf)
+        For i = LBound(lines) To UBound(lines)
+            Wv2Log.LogI "        " & lines(i)
+        Next i
+    Else
+        Wv2Log.LogI "      [ボディ] " & m_detBytes(k) & " バイト (バイナリ" & _
+                    IIf(m_detTrunc(k), "・★上限で切った★", "") & _
+                    ") 先頭: " & m_detHex(k)
+    End If
+
+    NetDetail = True
+End Function
+
+
+' ============================================================
+' NetDetailAll (N-2) - 溜まっている詳細を全部 Wv2Log へ出す
+'   ★明示的に呼んだときだけ★ 出る。戻り値は出した件数。
+'   ★出しても消えない★ (NetLogDrain と違う。判定に使いたいので残す)
+' ============================================================
+Public Function NetDetailAll() As Long
+    Dim i As Long
+
+    If m_detCount = 0 Then
+        Wv2Log.LogI "  --- 詳細: 溜まっていない ---"
+        Exit Function
+    End If
+
+    Wv2Log.LogI "  --- 詳細 " & m_detCount & " 件 ---"
+    If m_detDropped > 0 Then
+        Wv2Log.LogW "  ★詳細リングから溢れて捨てたものが " & m_detDropped & " 件ある★ " & _
+                    "NetDetailCapacity を増やすか、NetDetailUriFilter で絞ること。"
+    End If
+    For i = 1 To m_detCount
+        NetDetail i
+    Next i
+    NetDetailAll = m_detCount
+End Function
+
+
+' ============================================================
+' NetDetailClear (N-2) - 詳細リングを空にする
+' ============================================================
+Public Sub NetDetailClear()
+    NetDetailRingAlloc
+End Sub
+
+
+' ============================================================
+' NetReadHeaders (N-2、Private) - 要求のヘッダを 1 本の文字列にする
+'
+'   ICoreWebView2HttpRequestHeaders::GetIterator (8) でイテレータを取り、
+'   GetCurrentHeader (3) / get_HasCurrentHeader (4) / MoveNext (5) で回す。
+'
+'   ★ハンドラの中で走る★ ので上限 (NET_HDR_MAX) で切る。
+'   ★GetCurrentHeader は LPWSTR を 2 本返す★ ので、どちらも CoTaskMemFree する。
+'
+'   戻り値: "name: value" を vbLf で繋いだもの。取れなければ空文字。
+' ============================================================
+Private Function NetReadHeaders(ByVal pReq As LongPtr) As String
+    Dim pHeaders As LongPtr
+    Dim pIter    As LongPtr
+    Dim hr       As Long
+    Dim n        As Long
+    Dim pName    As LongPtr
+    Dim pValue   As LongPtr
+    Dim moreFlag As Long
+    Dim sb       As String
+
+    If pReq = 0 Then Exit Function
+
+    hr = dcf(pReq, 9, "", VarPtr(pHeaders))          ' get_Headers
+    If hr <> 0 Or pHeaders = 0 Then Exit Function
+
+    hr = dcf(pHeaders, 8, "", VarPtr(pIter))         ' GetIterator
+    If hr <> 0 Or pIter = 0 Then
+        ComRelease pHeaders
+        Exit Function
+    End If
+
+    Do While n < NET_HDR_MAX
+        If Not GetBoolProperty(pIter, 4, "") Then Exit Do   ' get_HasCurrentHeader
+
+        pName = 0
+        pValue = 0
+        hr = dcf(pIter, 3, "", VarPtr(pName), VarPtr(pValue))   ' GetCurrentHeader
+        If hr = 0 Then
+            If LenB(sb) > 0 Then sb = sb & vbLf
+            sb = sb & PtrToString(pName) & ": " & PtrToString(pValue)
+            n = n + 1
+        End If
+        If pName <> 0 Then CoTaskMemFree pName
+        If pValue <> 0 Then CoTaskMemFree pValue
+        If hr <> 0 Then Exit Do
+
+        moreFlag = 0
+        hr = dcf(pIter, 5, "", VarPtr(moreFlag))     ' MoveNext(BOOL*)
+        If hr <> 0 Or moreFlag = 0 Then Exit Do
+    Loop
+
+    If n >= NET_HDR_MAX Then
+        sb = sb & vbLf & "(★" & NET_HDR_MAX & " 個で打ち切った★)"
+    End If
+
+    ComRelease pIter
+    ComRelease pHeaders
+    NetReadHeaders = sb
+End Function
+
+
+' ============================================================
+' NetReadBody (N-2、Private) - 要求のボディを読む
+'
+'   ICoreWebView2WebResourceRequest::get_Content (7) が返す IStream を
+'   IStream::Read (3) で読み、★読み終わったら Seek (5) で先頭へ戻す★。
+'
+'   ★戻さないと通信が壊れる (論点2)★
+'     IStream は位置を持つ。読んだままにすると、そのあと WebView2 が
+'     同じストリームから送るときに★空のボディが飛ぶ★。
+'
+'   引数 (すべて出力):
+'     outBytes  : 読めたバイト数 (上限で切られていれば上限値)
+'     outTrunc  : 上限で切ったか
+'     outBuf()  : 読んだバイト列 (0 起点、outBytes 個が有効)
+'
+'   戻り値: True ならストリームがあって読み終えた (0 バイトでも True)。
+'           False は「ボディが無い」(GET など) か取得に失敗した。
+' ============================================================
+Private Function NetReadBody(ByVal pReq As LongPtr, _
+                             ByRef outBytes As Long, _
+                             ByRef outTrunc As Boolean, _
+                             ByRef outBuf() As Byte) As Boolean
+    Dim pStream As LongPtr
+    Dim hr      As Long
+    Dim cap     As Long
+    Dim got     As Long
+    Dim chunk   As Long
+    Dim cbRead  As Long
+
+    outBytes = 0
+    outTrunc = False
+
+    If pReq = 0 Then Exit Function
+
+    hr = dcf(pReq, 7, "", VarPtr(pStream))           ' get_Content
+    If hr <> 0 Or pStream = 0 Then Exit Function     ' ボディ無し (GET など)
+
+    cap = m_detBodyMax
+    If cap < 1 Then
+        ' 上限 0 = 読まない。それでも位置は動かしていないので戻す必要はない。
+        ComRelease pStream
+        NetReadBody = True
+        Exit Function
+    End If
+
+    ReDim outBuf(0 To cap - 1)
+
+    Do While got < cap
+        chunk = cap - got
+        If chunk > NET_BODY_CHUNK Then chunk = NET_BODY_CHUNK
+        cbRead = 0
+        hr = dcf(pStream, 3, "", VarPtr(outBuf(got)), chunk, VarPtr(cbRead))  ' Read
+        If hr <> 0 Then Exit Do
+        If cbRead <= 0 Then Exit Do
+        got = got + cbRead
+    Loop
+
+    ' ★まだ残っているか★ を 1 バイトだけ試して確かめる (黙って切らないため)
+    If got >= cap Then
+        Dim probe(0 To 0) As Byte
+        cbRead = 0
+        hr = dcf(pStream, 3, "", VarPtr(probe(0)), 1&, VarPtr(cbRead))
+        If hr = 0 And cbRead > 0 Then outTrunc = True
+    End If
+
+    ' ★★ 読んだぶんを必ず戻す ★★ (論点2 案X)
+    '   Seek(LARGE_INTEGER dlibMove, DWORD dwOrigin, ULARGE_INTEGER* plibNewPosition)
+    '   dlibMove は 8 バイトの値渡し、dwOrigin は 4 バイト、最後は NULL 可。
+    hr = dcf(pStream, 5, "", 0^, STREAM_SEEK_SET, 0^)
+    If hr <> 0 Then
+        ' ★戻せなかった★ これは通信を壊した可能性があるので黙って進まない。
+        ' ハンドラの中なのでログは撃たず、ボディの中身に印を残す。
+        outTrunc = True
+        outBytes = got
+        ComRelease pStream
+        NetReadBody = True
+        Exit Function
+    End If
+
+    ComRelease pStream
+    outBytes = got
+    NetReadBody = True
+End Function
+
+
+' ============================================================
+' NetDetailPush (N-2、Private) - 詳細を 1 件リングに置く
+'   ★溢れたら古いものを上書きする★ (一覧と同じ作法)。
+' ============================================================
+Private Sub NetDetailPush(ByVal seqNo As Long, _
+                          ByVal mth As String, _
+                          ByVal uri As String, _
+                          ByVal headers As String, _
+                          ByVal cType As String, _
+                          ByVal nBytes As Long, _
+                          ByVal trunc As Boolean, _
+                          ByVal isText As Boolean, _
+                          ByVal bodyText As String, _
+                          ByVal hexHead As String)
+    m_detSeq(m_detHead) = seqNo
+    m_detMethod(m_detHead) = mth
+    m_detUri(m_detHead) = uri
+    m_detHeaders(m_detHead) = headers
+    m_detCType(m_detHead) = cType
+    m_detBytes(m_detHead) = nBytes
+    m_detTrunc(m_detHead) = trunc
+    m_detIsText(m_detHead) = isText
+    m_detBody(m_detHead) = bodyText
+    m_detHex(m_detHead) = hexHead
+
+    m_detHead = m_detHead + 1
+    If m_detHead >= m_detCap Then m_detHead = 0
+    If m_detCount < m_detCap Then
+        m_detCount = m_detCount + 1
+    Else
+        m_detDropped = m_detDropped + 1
+    End If
+End Sub
+
+
+' ============================================================
+' NetDetailRingAlloc / NetDetailRingIndex (N-2、Private)
+' ============================================================
+Private Sub NetDetailRingAlloc()
+    If m_detCap < 1 Then m_detCap = NET_DET_CAP_DEFAULT
+
+    ReDim m_detSeq(0 To m_detCap - 1)
+    ReDim m_detMethod(0 To m_detCap - 1)
+    ReDim m_detUri(0 To m_detCap - 1)
+    ReDim m_detHeaders(0 To m_detCap - 1)
+    ReDim m_detCType(0 To m_detCap - 1)
+    ReDim m_detBytes(0 To m_detCap - 1)
+    ReDim m_detTrunc(0 To m_detCap - 1)
+    ReDim m_detIsText(0 To m_detCap - 1)
+    ReDim m_detBody(0 To m_detCap - 1)
+    ReDim m_detHex(0 To m_detCap - 1)
+
+    m_detHead = 0
+    m_detCount = 0
+    m_detDropped = 0
+End Sub
+
+Private Function NetDetailRingIndex(ByVal idx As Long) As Long
+    Dim k As Long
+
+    If idx < 1 Or idx > m_detCount Then
+        NetDetailRingIndex = -1
+        Exit Function
+    End If
+
+    k = m_detHead - m_detCount + (idx - 1)
+    Do While k < 0
+        k = k + m_detCap
+    Loop
+    NetDetailRingIndex = k Mod m_detCap
+End Function
+
+
+' ============================================================
+' NetRedactApply (N-2、Private) - 秘密のヘッダを伏せる
+'   ★出すときに伏せる★ リング上は生のまま持っているので、
+'   NetRedact = False にすればその場で見られる (論点3 案M)。
+' ============================================================
+Private Function NetRedactApply(ByVal headers As String) As String
+    Dim lines As Variant
+    Dim i     As Long
+    Dim p     As Long
+    Dim nm    As String
+    Dim out   As String
+
+    If LenB(headers) = 0 Then Exit Function
+    If Not m_detRedact Then
+        NetRedactApply = headers
+        Exit Function
+    End If
+
+    lines = Split(headers, vbLf)
+    For i = LBound(lines) To UBound(lines)
+        p = InStr(1, CStr(lines(i)), ":")
+        If p > 1 Then
+            nm = LCase$(Trim$(Left$(CStr(lines(i)), p - 1)))
+            If InStr(1, m_detRedactList, "|" & nm & "|") > 0 Then
+                lines(i) = Left$(CStr(lines(i)), p) & " <伏せた " & _
+                           (Len(CStr(lines(i))) - p - 1) & " 文字>"
+            End If
+        End If
+        If LenB(out) > 0 Then out = out & vbLf
+        out = out & CStr(lines(i))
+    Next i
+
+    NetRedactApply = out
+End Function
+
+
+' ============================================================
+' NetIsTextType (N-2、Private) - Content-Type がテキスト系か
+'   ★判定できないときは False (バイナリ扱い)★ 安全側。
+'   Content-Type が無いときは、フォーム送信の既定である
+'   application/x-www-form-urlencoded とみなさず False にする
+'   (それらしい値を書き残さない = 設計原則111)。
+' ============================================================
+Private Function NetIsTextType(ByVal cType As String) As Boolean
+    Dim t As String
+    t = LCase$(cType)
+    If LenB(t) = 0 Then Exit Function
+
+    If InStr(1, t, "text/") > 0 Then NetIsTextType = True: Exit Function
+    If InStr(1, t, "json") > 0 Then NetIsTextType = True: Exit Function
+    If InStr(1, t, "xml") > 0 Then NetIsTextType = True: Exit Function
+    If InStr(1, t, "x-www-form-urlencoded") > 0 Then NetIsTextType = True: Exit Function
+    If InStr(1, t, "javascript") > 0 Then NetIsTextType = True: Exit Function
+    If InStr(1, t, "charset=") > 0 Then NetIsTextType = True: Exit Function
+End Function
+
+
+' ============================================================
+' NetHexHead (N-2、Private) - バイナリの先頭を 16 進で見せる
+' ============================================================
+Private Function NetHexHead(ByRef b() As Byte, ByVal cb As Long) As String
+    Dim i As Long
+    Dim n As Long
+    Dim s As String
+
+    n = cb
+    If n > NET_HEX_HEAD Then n = NET_HEX_HEAD
+    For i = 0 To n - 1
+        s = s & Right$("0" & Hex$(b(i)), 2) & " "
+    Next i
+    If cb > n Then s = s & "..."
+    NetHexHead = RTrim$(s)
+End Function
+
+
+' ============================================================
+' NetHeaderValue (N-2、Private) - 読んだヘッダから 1 つ取り出す
+'   名前は大小を問わない。無ければ空文字。
+' ============================================================
+Private Function NetHeaderValue(ByVal headers As String, ByVal headerName As String) As String
+    Dim lines As Variant
+    Dim i     As Long
+    Dim p     As Long
+    Dim nm    As String
+
+    If LenB(headers) = 0 Then Exit Function
+
+    lines = Split(headers, vbLf)
+    For i = LBound(lines) To UBound(lines)
+        p = InStr(1, CStr(lines(i)), ":")
+        If p > 1 Then
+            nm = LCase$(Trim$(Left$(CStr(lines(i)), p - 1)))
+            If nm = LCase$(headerName) Then
+                NetHeaderValue = Trim$(Mid$(CStr(lines(i)), p + 1))
+                Exit Function
+            End If
+        End If
+    Next i
+End Function
+
+
+' ============================================================
+' NetRedactDefaults (N-2、Private) - 既定で伏せるヘッダ
+'   ★ここに無いものは平文で出る★ 足したいときは AddRedactHeader。
+' ============================================================
+Private Function NetRedactDefaults() As String
+    NetRedactDefaults = "|cookie|set-cookie|authorization|proxy-authorization|" & _
+                        "x-api-key|x-auth-token|x-csrf-token|api-key|"
+End Function

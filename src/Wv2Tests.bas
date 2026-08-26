@@ -1,5 +1,19 @@
 Attribute VB_Name = "Wv2Tests"
 ''''''''''''''''''''''''''''''''''
+' --- Wv2Tests.bas  N-2 段階 (リクエストのヘッダとボディ) ---
+'
+'   Test_N2_Detail … 回帰試験。的は N-1 と同じ 2 系統 (案F / 案D)
+'   Test_N2_Help   … 手順
+'
+'   ★本丸は「読んでも通信が壊れていない」★
+'     IStream を読むと位置が進むので、Seek(0) で戻し損ねると空のボディが飛ぶ。
+'     「POST が成功したっぽい」では証拠にならないので、★送り先 (httpbingo) が
+'     返す本文と突き合わせて数える★ (設計原則112)。この 1 件だけは外部が要る。
+'
+'   ★Cookie は的が到達不能だと作れない★ ので、伏せ字の機構そのものは
+'   「必ず在るヘッダ」= User-Agent を伏せる対象に足して確かめる。
+''''''''''''''''''''''''''''''''''
+''''''''''''''''''''''''''''''''''
 ' --- Wv2Tests.bas  N-1c 段階 (種別の決めつけをやめる) ---
 '
 '   ★N-1b の実機で分かったこと★
@@ -6975,3 +6989,397 @@ End Function
 
 
 
+
+
+' ============================================================
+' Test_N2_Detail (N-2 の回帰試験)
+'
+'   N-1 と同じ的を使う (案F = 到達不能なローカル / 案D = httpbingo.org)。
+'   ページは仮想ホスト配信のままでよい (乗らないのはイベントだけ = 仕様事実69)。
+'
+'   見ているもの:
+'     (0) ★詳細は既定 OFF★ (論点8 案κ)
+'     (1) ヘッダが読める / ★GET はボディを読まない★ (論点7 案α)
+'     (2) ボディが読める。★UTF-8 の日本語が往復する★
+'     (3) ★上限で切ったことが分かる★ (黙って切らない)
+'     (4) ★Cookie 相当のヘッダが伏せられる★ (論点3 案M)
+'     (5) ★★読んでも通信が壊れていない★★ (論点2 案X / 論点9 案D')
+'         ―― N-2 でいちばん確かめたいのはこれ
+'     (6) 詳細リングは一覧とは別 (論点5 案S)
+'     (7) OFF に戻すと詳細だけ増えなくなる
+' ============================================================
+Public Sub Test_N2_Detail()
+    Dim b   As Wv2Browser
+    Dim p   As Wv2Pane
+    Dim el  As Wv2Element
+    Dim folderPath As String
+    Dim hr  As Long
+    Dim k   As Long
+    Dim n0  As Long
+    Dim localOk As Boolean
+    Dim netOk   As Boolean
+    Dim hdr As String
+    Dim txt As String
+
+    Set b = UserForm1.CurrentBrowser
+    If b Is Nothing Then
+        Wv2Log.LogI "Test_N2_Detail: Browser が起動していません。"
+        Exit Sub
+    End If
+
+    folderPath = N1WriteFolder()
+    If LenB(folderPath) = 0 Then
+        Wv2Log.LogI "Test_N2_Detail: 検証ページの書き出しに失敗しました。中止します。"
+        Exit Sub
+    End If
+
+    Set p = b.AddTab()
+    If p Is Nothing Then
+        Wv2Log.LogI "Test_N2_Detail: タブの生成に失敗しました。"
+        Exit Sub
+    End If
+
+    Wv2Log.LogI ""
+    TestCountReset
+    Wv2Log.LogI "================ Test_N2_Detail 開始 ================"
+    Wv2Log.LogI "        案F の的 = " & N1_LOCAL & "  (到達不能なローカル)"
+    Wv2Log.LogI "        案D の的 = " & N1_NET & "  (外部サービス)"
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (0) ★詳細は既定 OFF★ (論点8 案κ) ---"
+
+    TestBool "★NetDetailOn の既定は False★", (p.NetDetailOn = False)
+    TestBool "  詳細リングの既定容量は 50", (p.NetDetailCapacity = 50)
+    TestBool "  ボディの上限の既定は 64KB", (p.NetBodyMaxBytes = 65536)
+    TestBool "  ★秘匿の既定は ON★", (p.NetRedact = True)
+
+    TestBool "NetCaptureStart が成功する", p.NetCaptureStart()
+    hr = p.View3_SetVirtualHostNameToFolderMapping(N1_HOST, folderPath, 1)   ' 1 = ALLOW
+    TestBool "  仮想ホストのマッピングができる", (hr = 0)
+    hr = p.View_Navigate("https://" & N1_HOST & "/netprobe.html")
+    TestBool "  Navigate が成功する", (hr = 0)
+
+    If Not D2WaitTitle(p, "N-1 プローブ", 10) Then
+        Wv2Log.LogI "Test_N2_Detail: 検証ページの読み込みを確認できませんでした。"
+        p.NetCaptureStop
+        TestCountPrint
+        Exit Sub
+    End If
+    D3Pump 2
+
+    ' ★ここから詳細を取る★
+    p.NetDetailOn = True
+    p.NetLogClear
+    p.NetDetailClear
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (1) ヘッダが読める / ★GET はボディを読まない★ ---"
+
+    N1Fire p, "(function(){" & _
+              "fetch('" & N1_LOCAL & "/n2h?k=hdr-local').catch(function(){});" & _
+              "fetch('" & N1_NET & "/get?k=hdr-net').catch(function(){});" & _
+              "return 1;})()"
+
+    localOk = N2Wait(p, "k=hdr-local", 6)
+    TestBool "★案F: 詳細が取れる★", localOk
+    netOk = N2Wait(p, "k=hdr-net", 8)
+    TestBool "★案D: 詳細が取れる★", netOk
+
+    If Not (localOk Or netOk) Then
+        Wv2Log.LogW "  ※ ★的が 1 つも届いていない★ 以降の判定は空振りとして読むこと。"
+    End If
+
+    k = N2Find(p, "k=hdr-local")
+    If k = 0 Then k = N2Find(p, "k=hdr-net")
+    If k > 0 Then
+        hdr = p.NetDetailHeaders(k)
+        Wv2Log.LogI "        ヘッダ (先頭 3 行):"
+        Wv2Log.LogI "        " & Replace$(Left$(hdr, 240), vbLf, " / ")
+        TestBool "★ヘッダが 1 個以上読めている★", (InStr(1, hdr, ":") > 0)
+        TestBool "★User-Agent が居る★", (InStr(1, hdr, "user-agent", vbTextCompare) > 0)
+        TestBool "★GET なのでボディは 0 バイト★ (論点7 案α)", _
+                 (Split(p.NetDetailLine(k), vbTab)(3) = "0")
+    End If
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (2) ボディが読める / ★UTF-8 の日本語が往復する★ ---"
+
+    p.NetLogClear
+    p.NetDetailClear
+    ' ★fetch に文字列ボディを渡すと Content-Type: text/plain になる★
+    '   これは CORS の「単純な要求」なのでプリフライトが挟まらない。
+    '   到達不能な的でも要求そのものは飛ぶ。
+    N1Fire p, "(function(){var o={method:'POST'," & _
+              "body:'probe=wv2-n2-local&nihongo=日本語'};" & _
+              "fetch('" & N1_LOCAL & "/n2b',o).catch(function(){});" & _
+              "return 1;})()"
+
+    TestBool "★POST の詳細が取れる★", N2Wait(p, "/n2b", 6)
+    k = N2Find(p, "/n2b")
+    If k > 0 Then
+        Wv2Log.LogI "        " & Replace$(p.NetDetailLine(k), vbTab, "  ")
+        Wv2Log.LogI "        ボディ = [" & p.NetDetailBody(k) & "]"
+        TestBool "★ボディの中身が読める★", _
+                 (InStr(1, p.NetDetailBody(k), "probe=wv2-n2-local") > 0)
+        TestBool "★UTF-8 の日本語が化けずに戻る★", _
+                 (InStr(1, p.NetDetailBody(k), "日本語") > 0)
+        TestBool "  バイト数が入っている", (CLng(Split(p.NetDetailLine(k), vbTab)(3)) > 0)
+        TestBool "  切っていない", (Split(p.NetDetailLine(k), vbTab)(4) = "False")
+    End If
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (3) ★上限で切ったことが分かる★ ---"
+
+    p.NetLogClear
+    p.NetDetailClear
+    p.NetBodyMaxBytes = 100
+    TestBool "上限を 100 バイトにできる", (p.NetBodyMaxBytes = 100)
+
+    N1Fire p, "(function(){var s='';for(var i=0;i<200;i++){s=s+'0123456789';}" & _
+              "fetch('" & N1_LOCAL & "/n2big',{method:'POST',body:s}).catch(function(){});" & _
+              "return 1;})()"
+
+    TestBool "★大きいボディの詳細が取れる★", N2Wait(p, "/n2big", 6)
+    k = N2Find(p, "/n2big")
+    If k > 0 Then
+        Wv2Log.LogI "        " & Replace$(p.NetDetailLine(k), vbTab, "  ")
+        TestBool "★100 バイトで止まっている★", (Split(p.NetDetailLine(k), vbTab)(3) = "100")
+        TestBool "★切ったことが分かる★", (Split(p.NetDetailLine(k), vbTab)(4) = "True")
+    End If
+    p.NetBodyMaxBytes = 65536
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (4) ★秘密のヘッダが伏せられる★ (論点3 案M) ---"
+    ' ★Cookie は的が到達不能だと作れない★ ので、機構そのものを
+    '   「必ず在るヘッダ」= User-Agent で確かめる。Cookie / Authorization は
+    '   既定リストに入っている (NetRedactDefaults)。
+
+    p.NetLogClear
+    p.NetDetailClear
+    p.AddRedactHeader "user-agent"
+
+    N1Fire p, "(function(){fetch('" & N1_LOCAL & "/n2r?k=redact').catch(function(){});" & _
+              "return 1;})()"
+    TestBool "詳細が取れる", N2Wait(p, "k=redact", 6)
+    k = N2Find(p, "k=redact")
+    If k > 0 Then
+        hdr = p.NetDetailHeaders(k)
+        TestBool "★伏せ字になっている★", (InStr(1, hdr, "<伏せた") > 0)
+        TestBool "★中身が漏れていない★", (InStr(1, hdr, "Mozilla") = 0)
+
+        p.NetRedact = False
+        hdr = p.NetDetailHeaders(k)
+        TestBool "★NetRedact = False なら生で見られる★", (InStr(1, hdr, "Mozilla") > 0)
+        p.NetRedact = True
+    End If
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (5) ★★読んでも通信が壊れていない★★ (論点2 案X / 論点9 案D') ---"
+    ' ★これが N-2 の本丸★
+    '   IStream を読むと位置が進む。Seek(0) で戻し損ねていると、
+    '   ★WebView2 が空のボディを送る★。それを「POST が成功したっぽい」で
+    '   済ませず、★送り先が返す本文と突き合わせて数える★ (設計原則112)。
+    '   httpbingo.org/post は受け取ったフォームの中身をそのまま JSON で返す。
+
+    If Not netOk Then
+        Wv2Log.LogW "  ※ 外部が届いていないのでこの節は飛ばす。★N-2 の本丸は未確認のまま★"
+    Else
+        p.NetLogClear
+        p.NetDetailClear
+        p.NetDetailUriFilter = "httpbingo.org/post"
+
+        Set el = p.QuerySelector("#postbtn-net")
+        TestBool "送信ボタンを掴める", Not (el Is Nothing)
+        If Not (el Is Nothing) Then
+            TestBool "  クリックできる", el.Click()
+
+            TestBool "★POST の詳細が取れる★", N2Wait(p, "httpbingo.org/post", 10)
+            k = N2Find(p, "httpbingo.org/post")
+            If k > 0 Then
+                Wv2Log.LogI "        " & Replace$(p.NetDetailLine(k), vbTab, "  ")
+                Wv2Log.LogI "        ボディ = [" & Left$(p.NetDetailBody(k), 200) & "]"
+                TestBool "★こちらが読んだボディに probe が入っている★", _
+                         (InStr(1, p.NetDetailBody(k), "wv2-n1-net") > 0)
+            End If
+
+            ' ★送り先が実際に受け取ったか★ を本文で確かめる
+            txt = N2PageText(p, 15)
+            Wv2Log.LogI "        送り先の応答 (先頭 200 字):"
+            Wv2Log.LogI "        " & Left$(Replace$(txt, vbLf, " "), 200)
+            TestBool "★★送り先にボディが壊れずに届いている★★", _
+                     (InStr(1, txt, "wv2-n1-net") > 0)
+            TestBool "  ★日本語も壊れずに届いている★", _
+                     (InStr(1, txt, "日本語") > 0)
+        End If
+
+        p.NetDetailUriFilter = ""
+    End If
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (6) 詳細リングは一覧とは別 (論点5 案S) ---"
+
+    p.NetLogClear
+    p.NetDetailClear
+    p.NetDetailCapacity = 2
+    TestBool "詳細の容量だけ 2 にできる", (p.NetDetailCapacity = 2)
+    TestBool "★一覧の容量は 500 のまま★", (p.NetLogCapacity = 500)
+
+    N1Fire p, "(function(){for(var i=0;i<5;i++){" & _
+              "fetch('" & N1_LOCAL & "/n2ring?n='+i).catch(function(){});}return 5;})()"
+    D3Pump 3
+
+    Wv2Log.LogI "        一覧 " & p.NetLogTotal & " 件 / 詳細 " & p.NetDetailCount & " 件"
+    TestBool "★一覧は 5 件以上たまる★", (p.NetLogTotal >= 5)
+    TestBool "★詳細は容量ぶんの 2 件だけ★", (p.NetDetailCount = 2)
+    TestBool "★詳細も溢れた数を数えている★ (黙って切らない)", _
+             (p.NetDetailDropped > 0)
+    p.NetDetailCapacity = 50
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (7) ★OFF に戻すと詳細だけ増えなくなる★ ---"
+
+    p.NetDetailOn = False
+    p.NetLogClear
+    p.NetDetailClear
+    N1Fire p, "(function(){fetch('" & N1_LOCAL & "/n2off?k=off').catch(function(){});" & _
+              "return 1;})()"
+    D3Pump 3
+
+    n0 = p.NetLogTotal
+    Wv2Log.LogI "        一覧 " & n0 & " 件 / 詳細 " & p.NetDetailCount & " 件"
+    TestBool "★一覧は増える (N-1 は生きている)★", (n0 > 0)
+    TestBool "★詳細は 1 件も増えない★", (p.NetDetailCount = 0)
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- 詳細を全部出す ---"
+    p.NetDetailOn = True
+    p.NetDetailClear
+    N1Fire p, "(function(){fetch('" & N1_LOCAL & "/n2last?k=last').catch(function(){});" & _
+              "return 1;})()"
+    N2Wait p, "k=last", 6
+    p.NetDetailAll
+
+    p.NetCaptureStop
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  in-callback 深さ (期待 0): " & p.InCallbackDepth
+    TestCountPrint
+    Wv2Log.LogI "================ Test_N2_Detail 終了 ================"
+    Wv2Log.LogI ""
+End Sub
+
+
+' ============================================================
+' Test_N2_Help (N-2 の手順)
+' ============================================================
+Public Sub Test_N2_Help()
+    Debug.Print "==== N-2 実機手順 (リクエストのヘッダとボディ) ===="
+    Debug.Print ""
+    Debug.Print "  【回帰試験】"
+    Debug.Print "    1) UserForm1.Show vbModeless      ' ★仕様事実54★"
+    Debug.Print "    2) UserForm1.StartWebView2_Full"
+    Debug.Print "    3) Wv2Log.LogStart"
+    Debug.Print "    4) Test_N2_Detail"
+    Debug.Print "    → 判定はログファイルで読む。★本丸は (5) の『送り先にボディが"
+    Debug.Print "       壊れずに届いている』★ (外部が要る)。"
+    Debug.Print ""
+    Debug.Print "  【実際のサイトで使う】"
+    Debug.Print "    1) 調べたいページをタブで開く"
+    Debug.Print "    2) Set p = UserForm1.CurrentBrowser.ActivePane"
+    Debug.Print "       p.NetDetailOn = True          ' ★詳細は既定 OFF★"
+    Debug.Print "       Test_N1_Watch"
+    Debug.Print "    3) ★ページを手で 1 回操作する★"
+    Debug.Print "    4) Test_N1_Drain                 ' まず一覧で当たりを付ける"
+    Debug.Print "       p.NetDetailAll                ' 詳細を全部出す"
+    Debug.Print "       p.NetDetail 3                 ' 3 番目だけ出す"
+    Debug.Print "    5) Test_N1_Stop"
+    Debug.Print ""
+    Debug.Print "  --- 絞り込み ---"
+    Debug.Print "    p.NetDetailUriFilter = ""/api/"" ' この URL だけ詳細を取る"
+    Debug.Print "    p.NetBodyMaxBytes = 200000       ' ボディの上限 (既定 64KB)"
+    Debug.Print "    p.NetDetailCapacity = 200        ' 詳細リングの容量 (既定 50)"
+    Debug.Print ""
+    Debug.Print "  --- ★秘密の扱い★ ---"
+    Debug.Print "    既定で Cookie / Authorization / X-Api-Key などは伏せて出る。"
+    Debug.Print "    p.AddRedactHeader ""x-my-token""   ' 伏せる対象を足す"
+    Debug.Print "    p.NetRedact = False              ' ★平文で出る。ログを人に渡す前に注意★"
+    Debug.Print "    ※ リング上は生のまま持っている。伏せているのは出すときだけ。"
+    Debug.Print ""
+    Debug.Print "  --- ★N-2 で気をつけたこと★ ---"
+    Debug.Print "  ・IStream は読むと位置が進む。★戻さないと空のボディが飛ぶ★ ので"
+    Debug.Print "    読んだ後に Seek(0) している。壊れていないことは (5) で数えている。"
+    Debug.Print "  ・ボディはハンドラの中で同期的に読むしかない (args は Invoke の間だけ"
+    Debug.Print "    有効)。だから★上限で必ず切る★。切ったことは詳細の行に出る。"
+    Debug.Print "  ・GET のボディは読まない (ほぼ無いので)。"
+    Debug.Print ""
+    Debug.Print "  --- N-2 でできないこと (後段) ---"
+    Debug.Print "    ・レスポンスのステータスとヘッダ      → N-3"
+    Debug.Print "    ・レスポンス本文                      → N-4"
+    Debug.Print "    ・PowerShell の Invoke-WebRequest 化  → N-5"
+End Sub
+
+
+' ============================================================
+' N2Find (N-2、Private) - URL の部分一致で詳細を探す
+'   戻り値は NetDetailLine 等に渡せる 1 起点の位置。無ければ 0。
+' ============================================================
+Private Function N2Find(ByVal p As Wv2Pane, ByVal uriPart As String) As Long
+    Dim i As Long
+    Dim f As Variant
+
+    For i = 1 To p.NetDetailCount
+        f = Split(p.NetDetailLine(i), vbTab)
+        If UBound(f) >= 2 Then
+            If InStr(1, CStr(f(2)), uriPart, vbTextCompare) > 0 Then
+                N2Find = i
+                Exit Function
+            End If
+        End If
+    Next i
+End Function
+
+
+' ============================================================
+' N2Wait (N-2、Private) - その詳細が来るまで待つ
+' ============================================================
+Private Function N2Wait(ByVal p As Wv2Pane, _
+                        ByVal uriPart As String, _
+                        ByVal timeoutSec As Single) As Boolean
+    Dim t0 As Single
+
+    t0 = Timer
+    Do
+        DoEvents
+        If N2Find(p, uriPart) > 0 Then
+            N2Wait = True
+            Exit Function
+        End If
+        If (Timer - t0) > timeoutSec Then Exit Do
+    Loop
+End Function
+
+
+' ============================================================
+' N2PageText (N-2、Private) - 今のページの本文を読む
+'   ★送り先が実際に何を受け取ったか★ を確かめるために使う。
+'   読めるようになるまで少し待つ (遷移直後は空のことがある)。
+' ============================================================
+Private Function N2PageText(ByVal p As Wv2Pane, ByVal timeoutSec As Single) As String
+    Dim t0  As Single
+    Dim res As String
+    Dim cur As String
+
+    t0 = Timer
+    Do
+        DoEvents
+        res = p.EvalSync("document.body.innerText", 5)
+        If p.LastEvalOk Then
+            cur = Wv2Json.JsonUnescape(res)
+            If Len(cur) > 20 Then
+                N2PageText = cur
+                Exit Function
+            End If
+        End If
+        If (Timer - t0) > timeoutSec Then Exit Do
+    Loop
+    N2PageText = cur
+End Function
