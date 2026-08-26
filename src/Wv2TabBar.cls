@@ -8,6 +8,19 @@ Attribute VB_Creatable = False
 Attribute VB_PredeclaredId = False
 Attribute VB_Exposed = False
 ''''''''''''''''''''''''''''''''''
+' --- Wv2TabBar.cls  K-4a 段階 (解放経路のログを Wv2Log へ移す) ---
+'
+'   ★目的は計測★ フォームを閉じたときの解放が遅い (1 件ごとに 0.5 秒ほどの間)
+'   という報告を受けたが、この経路は Debug.Print のままでログに何も残らず、
+'   どこで時間を食っているのか分からなかった。
+'
+'   Wv2Log はミリ秒のタイムスタンプを持つので、★置き換えるだけで所要が読める★。
+'   さらに Wv2Log.LogEcho = False / True で 2 回測れば、
+'   ★「COM の解放が遅い」のか「イミディエイトへの出力が遅い」のか★ が切り分く。
+'
+'   ★この段階では直さない。測るだけ。★ (D-7 で推測を 3 回続けて外したため)
+''''''''''''''''''''''''''''''''''
+''''''''''''''''''''''''''''''''''
 ' --- Wv2TabBar.cls  第9.32b 段階 (ホイール横スクロール + スクロール位置の維持) ---
 '
 '   第9.32b のスコープ (★JS のみ。CSS も VBA も 1 行も触らない★):
@@ -636,7 +649,7 @@ End Sub
 '   購読を解除するだけでよい。
 ' ============================================================
 Public Sub Shutdown()
-    Debug.Print "Wv2TabBar.Shutdown 開始"
+    Wv2Log.LogD "Wv2TabBar.Shutdown 開始"
     If Not m_barPane Is Nothing Then
         m_barPane.ClearWebMsgSink   ' 第9.11c: シンク登録を先に切る (設計原則 58)
         m_barPane.Ctrl_Close
@@ -644,7 +657,7 @@ Public Sub Shutdown()
     End If
     Set m_browser = Nothing   ' WithEvents 購読を解除
     m_ready = False
-    Debug.Print "Wv2TabBar.Shutdown 完了"
+    Wv2Log.LogD "Wv2TabBar.Shutdown 完了"
 End Sub
 
 

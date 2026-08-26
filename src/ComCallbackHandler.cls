@@ -8,6 +8,26 @@ Attribute VB_Creatable = False
 Attribute VB_PredeclaredId = False
 Attribute VB_Exposed = False
 ''''''''''''''''''''''''''''''''''
+' --- ComCallbackHandler.cls N-1 段階 (WebResourceRequested の配線) ---
+'
+'   N-1 の変更点:
+'     - Handler_Invoke に Case HK_WebResourceRequested を追加。
+'       2 引数イベント (sender, args) なので DocumentTitleChanged 分岐と同形。
+'       → m_owner.View_OnWebResourceRequested arg1, arg2
+'
+'   ★この分岐だけ Debug.Print を撃たない (N-1 論点5)★
+'     WebResourceRequested は 1 ページで数十～数百件発火し、
+'     ★ハンドラが遅いと通信そのものが詰まる★ (要求を止める / 書き換えるための
+'     イベントなので、ランタイムは Invoke の復帰を待って初めて通信を進める)。
+'     他の Case にある 4 行の Debug.Print は、この種別だけ意図的に外している。
+'     記録は Wv2Pane 側のリングバッファが持ち、取り出しは NetLogDrain で
+'     後からまとめて行う (論点6)。
+'
+'   ★ハンドラの中で EvalSync を呼んではいけない★ (仕様事実14 / 20 の領域)。
+'     Wv2Pane 側の in-callback ガードが働くので呼んでも固まりはしないが、
+'     そもそも呼ばない設計にしてある。
+''''''''''''''''''''''''''''''''''
+''''''''''''''''''''''''''''''''''
 ' --- ComCallbackHandler.cls 第9.9b段階 (旧称: Class7) ---
 '
 '   第9.9b の変更点 (SPA 対応):
@@ -50,6 +70,7 @@ Attribute VB_Exposed = False
 '     HK_ExecuteScriptCompleted  (1 ショット、案 a = 同時並行 OK、第9.8c で追加)
 '     HK_HistoryChanged          (永続、第9.9b で追加、基底 ICoreWebView2)
 '     HK_DOMContentLoaded        (永続、第9.9b で追加、ICoreWebView2_2)
+'     HK_WebResourceRequested    (永続、N-1 で追加、基底 ICoreWebView2)
 '
 '   引数解釈の法則 (設計原則 11):
 '     ComCallbackHandler の Handler_Invoke が受ける (this, arg1, arg2) は
@@ -381,6 +402,25 @@ Public Function Handler_Invoke( _
                 m_owner.View2_OnDOMContentLoaded arg1, arg2
             End If
 
+        Case HK_WebResourceRequested
+            ' N-1 で追加。永続、基底 ICoreWebView2 (vtable 55/56)。
+            '
+            ' ★ここでは Debug.Print を撃たない (N-1 論点5、ヘッダー参照)★
+            '   数十～数百件が連続で飛んでくるうえ、ハンドラが遅いと
+            '   通信そのものが詰まる。記録だけしてすぐ返す。
+            '
+            ' 2 引数イベント: Invoke(sender, args)
+            '   arg1 = sender (= m_pView)
+            '   arg2 = args   (= ICoreWebView2WebResourceRequestedEventArgs)
+            '
+            ' args の vtable レイアウト (★tools/vtable.py で WebView2.h から確定★):
+            '    3 : get_Request(ICoreWebView2WebResourceRequest**)
+            '    4 : get_Response      5 : put_Response      6 : GetDeferral
+            '    7 : get_ResourceContext(COREWEBVIEW2_WEB_RESOURCE_CONTEXT*)
+            If Not (m_owner Is Nothing) Then
+                m_owner.View_OnWebResourceRequested arg1, arg2
+            End If
+
         Case HK_ExecuteScriptCompleted
             ' 第9.8c で追加。1 ショット系、同時並行可 (案 a 採用)。
             '
@@ -457,7 +497,4 @@ Private Function LongPtrLowDword(ByVal v As LongPtr) As Long
         LongPtrLowDword = CLng(u)
     End If
 End Function
-
-
-
 

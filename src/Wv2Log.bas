@@ -1,5 +1,23 @@
 Attribute VB_Name = "Wv2Log"
 ''''''''''''''''''''''''''''''''''
+' --- Wv2Log.bas  K-4b 段階 (時刻を GetLocalTime 1 回で取る) ---
+'
+'   ★K-4a の実測で実害が出たので直した★
+'     000030  22:45:23.992
+'     000031  22:45:23.000   ← ★秒が繰り上がっていない★ (正しくは 24.000)
+'     000032  22:45:24.008
+'
+'   原因は ★Now と Timer という別々の時刻源を混ぜていたこと★。
+'   Timer が先に次の秒へ繰り上がると「秒は前のまま・ミリ秒は 000」になる。
+'   (逆向きのずれも起きうる。両者はソースも更新間隔も違う)
+'
+'   ★実害★ 解放処理の所要を測っていて「1008 ms かかったステップがある」と
+'   読み違えかけた。★計測の土台が壊れていると実測そのものが信じられなくなる。★
+'
+'   直し方は GetLocalTime を 1 回呼ぶだけ。年月日時分秒ミリ秒が同時に取れるので
+'   ★原理的にずれない★。
+''''''''''''''''''''''''''''''''''
+''''''''''''''''''''''''''''''''''
 ' --- Wv2Log.bas  K-1 段階 (デバッグログのファイル出力) ---
 '
 '   ★なぜ要るか★
@@ -52,6 +70,22 @@ Public Const LOG_ERROR As Long = 1
 Public Const LOG_WARN As Long = 2
 Public Const LOG_INFO As Long = 3
 Public Const LOG_DEBUG As Long = 4
+
+' --- K-4b: 時刻は GetLocalTime で 1 回に取る ---
+'   ★Now と Timer を混ぜない★ 別の時刻源なので秒境界でずれる (ヘッダー参照)。
+Private Type SYSTEMTIME
+    wYear As Integer
+    wMonth As Integer
+    wDayOfWeek As Integer
+    wDay As Integer
+    wHour As Integer
+    wMinute As Integer
+    wSecond As Integer
+    wMilliseconds As Integer
+End Type
+
+Private Declare PtrSafe Sub GetLocalTime Lib "kernel32" ( _
+    ByRef lpSystemTime As SYSTEMTIME)
 
 Private Const LOG_KEEP_FILES As Long = 20
 Private Const LOG_PREFIX As String = "wv2_"
@@ -302,18 +336,27 @@ End Function
 
 
 ' ============================================================
-' NowStamp
+' NowStamp (K-4b で作り直した)
 '
-'   yyyy-mm-dd hh:nn:ss.mmm。ミリ秒は Timer から取る
-'   (Now は秒までしか無いため。秒の境界で 1 桁ずれることがあるが、
-'    ログの前後関係を読むには十分)。
+'   yyyy-mm-dd hh:nn:ss.mmm
+'
+'   ★GetLocalTime を 1 回呼ぶ★ 年月日から ミリ秒までが同時に取れるので、
+'   秒とミリ秒が食い違うことが原理的に無い。
+'   従前は Now (秒まで) と Timer (ミリ秒) を別々に読んでいたため、
+'   ★秒境界で「秒は前のまま・ミリ秒は 000」という行が出ていた★ (K-4a で実害)。
 ' ============================================================
 Private Function NowStamp() As String
-    Dim logMs As Long
-    logMs = CLng((Timer - Int(Timer)) * 1000)
-    If logMs > 999 Then logMs = 999
-    If logMs < 0 Then logMs = 0
-    NowStamp = Format$(Now, "yyyy-mm-dd hh:nn:ss") & "." & Right$("00" & CStr(logMs), 3)
+    Dim st As SYSTEMTIME
+
+    GetLocalTime st
+
+    NowStamp = Format$(st.wYear, "0000") & "-" & _
+               Format$(st.wMonth, "00") & "-" & _
+               Format$(st.wDay, "00") & " " & _
+               Format$(st.wHour, "00") & ":" & _
+               Format$(st.wMinute, "00") & ":" & _
+               Format$(st.wSecond, "00") & "." & _
+               Format$(st.wMilliseconds, "000")
 End Function
 
 

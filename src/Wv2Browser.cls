@@ -8,6 +8,36 @@ Attribute VB_Creatable = False
 Attribute VB_PredeclaredId = False
 Attribute VB_Exposed = False
 ''''''''''''''''''''''''''''''''''
+' --- Wv2Browser.cls  K-4c 段階 (解放の前に全タブを静める) ---
+'
+'   ★実測 (K-4a/b)★ 動いているページがあると COM の応答が返ってこない。
+'
+'     何もしない                   … 解放 5.05 秒 (COM 往復 1 回が 300～500ms)
+'     about:blank へ飛ばす (待たない) … 解放 0.38 秒 (往復 8～16ms)
+'     about:blank へ飛ばす (3 秒待つ) … 解放 0.37 秒  ← ★待っても変わらない★
+'
+'   ★待つ必要はない★ 飛ばした時点で効く。合計でも 5.05 秒 → 1.98 秒。
+'   飛ばすのに 1.6 秒かかるのは、その時点ではまだ COM が遅いから。
+'
+'   ★TabBar / NavBar の Pane は対象外★ 自前 HTML で軽く、実測でも 23～31ms。
+'
+'   ★QuietOnShutdown = False で切れる★ 原因の切り分け (Test_K4_Step) では
+'   静穏化されると測定にならないので、逃げ道を残してある。
+''''''''''''''''''''''''''''''''''
+''''''''''''''''''''''''''''''''''
+' --- Wv2Browser.cls  K-4a 段階 (解放経路のログを Wv2Log へ移す) ---
+'
+'   ★目的は計測★ フォームを閉じたときの解放が遅い (1 件ごとに 0.5 秒ほどの間)
+'   という報告を受けたが、この経路は Debug.Print のままでログに何も残らず、
+'   どこで時間を食っているのか分からなかった。
+'
+'   Wv2Log はミリ秒のタイムスタンプを持つので、★置き換えるだけで所要が読める★。
+'   さらに Wv2Log.LogEcho = False / True で 2 回測れば、
+'   ★「COM の解放が遅い」のか「イミディエイトへの出力が遅い」のか★ が切り分く。
+'
+'   ★この段階では直さない。測るだけ。★ (D-7 で推測を 3 回続けて外したため)
+''''''''''''''''''''''''''''''''''
+''''''''''''''''''''''''''''''''''
 ' --- Wv2Browser.cls  K-2 段階 (設定タブが検索で潰れるバグの修正) ---
 '
 '   ★症状★ 設定タブがアクティブな状態でアドレスバーに検索語を入れると、
@@ -585,6 +615,9 @@ Private m_pendingUrls As Collection
 '     (種別を混ぜるより読みやすく、設計原則63 の一発撮りに素直)。
 '   ★m_settingsBridge★ 設定タブに attach する Wv2SettingsBridge を保持する。
 '     設定タブが生きている間 WebView2 から参照されるので Browser も 1 本持つ。
+' K-4c: 解放の前に全タブを about:blank へ飛ばすか (既定 True)
+Private m_quietOnShutdown As Boolean
+
 Private WithEvents m_settingsTimer As SafeTimer
 Attribute m_settingsTimer.VB_VarHelpID = -1
 
@@ -681,6 +714,7 @@ Public Event TabUrlChanged(ByVal index As Long, ByVal url As String, _
 ' Class_Initialize
 ' ============================================================
 Private Sub Class_Initialize()
+    m_quietOnShutdown = True             ' K-4c (解放の前に about:blank へ飛ばす)
     Set m_tabs = New Collection
     Set m_env = Nothing
     m_hwndHost = 0
@@ -2694,7 +2728,62 @@ End Sub
 '   ★UserForm 側の実装コストはこの Shutdown 呼び出し 1 行のみ★ (案Y の狙い)。
 '   冪等 (複数回呼んでも安全)。
 ' ============================================================
+' ============================================================
+' QuietOnShutdown (K-4c) - 解放の前に全タブを静めるか (既定 True)
+'
+'   ★False にすると遅い解放が再現する★ 原因の切り分けに使う。
+'   実運用で False にする理由は無い。
+' ============================================================
+Public Property Get QuietOnShutdown() As Boolean
+    QuietOnShutdown = m_quietOnShutdown
+End Property
+
+Public Property Let QuietOnShutdown(ByVal newValue As Boolean)
+    m_quietOnShutdown = newValue
+    Wv2Log.LogD "Wv2Browser.QuietOnShutdown = " & newValue
+End Property
+
+
+' ============================================================
+' QuietAllPanes (K-4c、Private) - 解放の前に全タブを about:blank へ
+'
+'   ★待たない★ 飛ばした時点で効く (0 秒と 3 秒で結果が同じだった)。
+'   ★失敗しても続行★ 解放は途中で止められない。View_Navigate は
+'   m_pView = 0 を自分で弾くのでエラーにはならない。
+' ============================================================
+Private Sub QuietAllPanes()
+    Dim pane As Wv2Pane
+    Dim n As Long
+    Dim t0 As Single
+
+    t0 = Timer
+
+    ' ★予備タブは m_tabs に入っていない★ (第9.27) ので別に撃つ
+    If Not m_prewarmPane Is Nothing Then
+        m_prewarmPane.View_Navigate "about:blank"
+        n = n + 1
+    End If
+
+    If Not m_tabs Is Nothing Then
+        For Each pane In m_tabs
+            If Not pane Is Nothing Then
+                pane.View_Navigate "about:blank"
+                n = n + 1
+            End If
+        Next pane
+    End If
+
+    Wv2Log.LogD "Wv2Browser.QuietAllPanes: " & n & " 枚を about:blank へ (" & _
+                Format$(Timer - t0, "0.00") & " 秒)"
+End Sub
+
+
 Public Sub Shutdown()
+    Wv2Log.LogD "Wv2Browser.Shutdown: ★開始★"   ' K-4a
+
+    ' --- K-4c: ★解放の前に全タブを静める★ ---
+    If m_quietOnShutdown Then QuietAllPanes
+
     ' 第9.10e (Timer): 保留タイマーを止めて解放する
     If Not m_newTabTimer Is Nothing Then
         m_newTabTimer.StartTimer 0
@@ -2726,7 +2815,7 @@ Public Sub Shutdown()
         m_prewarmPane.ClearBrowserRef
         Set m_prewarmPane = Nothing
         m_prewarmClaimed = False
-        Debug.Print "Wv2Browser.Shutdown: 予備タブ (プリウォーム) を解放"
+        Wv2Log.LogD "Wv2Browser.Shutdown: 予備タブ (プリウォーム) を解放"
     End If
 
     If m_tabs Is Nothing Then Exit Sub
@@ -2734,7 +2823,7 @@ Public Sub Shutdown()
     For Each pane In m_tabs
         If Not pane Is Nothing Then pane.ClearBrowserRef
     Next pane
-    Debug.Print "Wv2Browser.Shutdown: 全 " & m_tabs.Count & " タブの後方参照を切断"
+    Wv2Log.LogD "Wv2Browser.Shutdown: 全 " & m_tabs.Count & " タブの後方参照を切断"
 End Sub
 
 
@@ -2742,14 +2831,14 @@ End Sub
 ' Class_Terminate ? 全タブ解放 → Environment 解放 (設計原則 43: 子から親へ)
 ' ============================================================
 Private Sub Class_Terminate()
-    Debug.Print "Wv2Browser.Terminate 開始 (タブ数=" & m_tabs.Count & ")"
+    Wv2Log.LogD "Wv2Browser.Terminate 開始 (タブ数=" & m_tabs.Count & ")"
 
     ' --- 0. 第9.27: 予備タブの保険解放 ---
     '   通常は Shutdown が先に片付けている。Shutdown を通らずここへ来た場合の保険。
     If Not m_prewarmPane Is Nothing Then
         m_prewarmPane.ClearBrowserRef
         Set m_prewarmPane = Nothing
-        Debug.Print "Wv2Browser.Terminate: 予備タブ (プリウォーム) を解放"
+        Wv2Log.LogD "Wv2Browser.Terminate: 予備タブ (プリウォーム) を解放"
     End If
 
     ' --- 1. 全 Pane を解放 (各 Pane の Class_Terminate が View 系を順に解放) ---
@@ -2766,6 +2855,6 @@ Private Sub Class_Terminate()
 
     m_hwndHost = 0
     m_state = Bs_Created
-    Debug.Print "Wv2Browser.Terminate 完了"
+    Wv2Log.LogD "Wv2Browser.Terminate 完了"
 End Sub
 

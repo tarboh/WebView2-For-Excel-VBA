@@ -8,6 +8,19 @@ Attribute VB_Creatable = False
 Attribute VB_PredeclaredId = False
 Attribute VB_Exposed = False
 ''''''''''''''''''''''''''''''''''
+' --- Wv2NavBar.cls  K-4a 段階 (解放経路のログを Wv2Log へ移す) ---
+'
+'   ★目的は計測★ フォームを閉じたときの解放が遅い (1 件ごとに 0.5 秒ほどの間)
+'   という報告を受けたが、この経路は Debug.Print のままでログに何も残らず、
+'   どこで時間を食っているのか分からなかった。
+'
+'   Wv2Log はミリ秒のタイムスタンプを持つので、★置き換えるだけで所要が読める★。
+'   さらに Wv2Log.LogEcho = False / True で 2 回測れば、
+'   ★「COM の解放が遅い」のか「イミディエイトへの出力が遅い」のか★ が切り分く。
+'
+'   ★この段階では直さない。測るだけ。★ (D-7 で推測を 3 回続けて外したため)
+''''''''''''''''''''''''''''''''''
+''''''''''''''''''''''''''''''''''
 ' --- Wv2NavBar.cls  第9.25b 段階 (検証プローブの撤去 / 引数ゼロを恒久確定) ---
 '
 '   第9.25 の検証が「パターンA = 安全」で決着したので、一時コードを撤去した回。
@@ -510,7 +523,7 @@ End Sub
 '   WithEvents 参照と自前ペインを断つ。UserForm_Terminate から呼ぶ。
 ' ============================================================
 Public Sub Shutdown()
-    Debug.Print "Wv2NavBar.Shutdown 開始"
+    Wv2Log.LogD "Wv2NavBar.Shutdown 開始"
     If Not m_barPane Is Nothing Then
         m_barPane.ClearWebMsgSink   ' 9.12d でシンク登録するので先に切る作法を入れておく
         m_barPane.Ctrl_Close
@@ -518,7 +531,7 @@ Public Sub Shutdown()
     End If
     Set m_browser = Nothing   ' WithEvents 購読を解除
     m_ready = False
-    Debug.Print "Wv2NavBar.Shutdown 完了"
+    Wv2Log.LogD "Wv2NavBar.Shutdown 完了"
 End Sub
 
 

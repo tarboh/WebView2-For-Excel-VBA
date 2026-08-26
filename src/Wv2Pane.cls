@@ -8,6 +8,88 @@ Attribute VB_Creatable = False
 Attribute VB_PredeclaredId = False
 Attribute VB_Exposed = False
 ''''''''''''''''''''''''''''''''''
+' --- Wv2Pane.cls  N-1b 段階 (実機で分かったことの反映) ---
+'
+'   ■ ★仕様事実: 仮想ホストの要求は WebResourceRequested に乗らない★
+'     SetVirtualHostNameToFolderMapping で配信した要求 (DOCUMENT / fetch / XHR /
+'     画像 / CSS のすべて) はイベントに乗らない。ランタイムが内部の資材ハンドラで
+'     直接返しているため。★N-1 の初回検証が全滅した原因はこれ★ で、配線側は
+'     最初から正しかった (実サイトでは 10 件すべて捕まっていた)。
+'     検証ページの的は「到達不能なローカルアドレス」と「外部サービス」に置く。
+'
+'   ■ ★NetLogDrain は通算カウンタを 0 に戻さない (論点3 案Y)★
+'     NetLogTotal / NetLogDropped は「★捕捉開始からの★ 通算」と説明しているのに、
+'     Drain がリングごと作り直して 0 に戻していた。そのせいで実機ログの最後が
+'       NetCaptureStop: 捕捉終了 (総発火 0 件 ...)
+'     となり、★10 件来ていたのに「1 件も来なかった」と読める★ 行が残った。
+'     ・NetLogDrain … リングの中身だけ空にする (NetRingEmpty)。通算は保つ
+'     ・NetLogClear … 通算も含めて全部リセット (NetRingAlloc)
+'     ・NetCaptureStart … NetLogClear を通るので毎回 0 から数え直す
+''''''''''''''''''''''''''''''''''
+''''''''''''''''''''''''''''''''''
+' --- Wv2Pane.cls  N-1 段階 (WebResourceRequested の配線) ---
+'
+'   ★ブラウザが実際に何を叩いているかを Excel VBA だけで見る★
+'   F12 の Network タブに相当するものの第一段。N-1 は URL / メソッド / 種別だけ
+'   (ヘッダもボディもレスポンスも後段)。
+'
+'   ■ 追加した Public メンバ
+'     NetCaptureStart(contexts, uriFilter) As Boolean  捕捉を始める
+'     NetCaptureStop()  As Boolean                     捕捉をやめる
+'     NetCaptureOn      As Boolean                     捕捉中か
+'     NetLogDrain()     As Long     溜まった分を Wv2Log へ流して空にする
+'     NetLogLine(i)     As String   ★流さずに 1 件だけ読む★ (古い順、1 起点)
+'     NetLogCount / NetLogTotal / NetLogDropped As Long
+'     NetLogCapacity    As Long     リングの容量 (Get/Let)
+'     NetLogClear()                 リングを空にする
+'     View_AddWebResourceRequested / View_RemoveWebResourceRequested
+'     View_AddWebResourceRequestedFilter / View_RemoveWebResourceRequestedFilter
+'     View_OnWebResourceRequested   (ComCallbackHandler からの受け口)
+'
+'   ■ ★記録だけしてすぐ返す (論点5)★
+'     WebResourceRequested は「要求を止める / 書き換える」ためのイベントで、
+'     ★ハンドラが遅いと通信そのものが詰まる★。だからハンドラの中では
+'     ・Wv2Log も Debug.Print も撃たない
+'     ・EvalSync は当然呼ばない (仕様事実14 / 20)
+'     args から URL / メソッド / 種別を読んでリングに置くだけで戻る。
+'
+'   ■ ★記録はメモリ上のリングバッファ (論点6)★
+'     要求は 1 ページで数十～数百件出る。ログに直書きすると量で溢れるので、
+'     D-4 の SpaProbeDrainLog と同じ型にした (溜める ← まとめて取り出す)。
+'     ★溢れた分は黙って捨てない★ NetLogDropped で見える (D-6 論点3 と同じ判断)。
+'
+'   ■ ★フィルタを 1 つも登録しないとイベントは 1 件も来ない★
+'     AddWebResourceRequestedFilter(uri, ctx) を種別ごとに撃つ。既定は
+'     DOCUMENT(1) / XML_HTTP_REQUEST(7) / FETCH(8) の 3 つ (論点4)。
+'     ★登録したフィルタは覚えておいて NetCaptureStop で外す★ (設計原則106 の趣旨。
+'     相手側に前の設定を残すと、次の Start が知らないうちに広い網になる)。
+'
+'   ■ ★vtable index は SDK のヘッダで確定させた (設計原則115)★
+'     既存の配線からの逆算では add_WebResourceRequested を 54 と読み違えていた
+'     (正解 55、OpenDevToolsWindow を数え落としていた)。道具は tools/vtable.py。
+'       ICoreWebView2::add_WebResourceRequested              55
+'       ICoreWebView2::remove_WebResourceRequested           56
+'       ICoreWebView2::AddWebResourceRequestedFilter         57
+'       ICoreWebView2::RemoveWebResourceRequestedFilter      58
+'       ...WebResourceRequestedEventArgs::get_Request         3
+'       ...WebResourceRequestedEventArgs::get_ResourceContext 7
+'       ICoreWebView2WebResourceRequest::get_Uri              3
+'       ICoreWebView2WebResourceRequest::get_Method           5
+''''''''''''''''''''''''''''''''''
+''''''''''''''''''''''''''''''''''
+' --- Wv2Pane.cls  K-4a 段階 (解放経路のログを Wv2Log へ移す) ---
+'
+'   ★目的は計測★ フォームを閉じたときの解放が遅い (1 件ごとに 0.5 秒ほどの間)
+'   という報告を受けたが、この経路は Debug.Print のままでログに何も残らず、
+'   どこで時間を食っているのか分からなかった。
+'
+'   Wv2Log はミリ秒のタイムスタンプを持つので、★置き換えるだけで所要が読める★。
+'   さらに Wv2Log.LogEcho = False / True で 2 回測れば、
+'   ★「COM の解放が遅い」のか「イミディエイトへの出力が遅い」のか★ が切り分く。
+'
+'   ★この段階では直さない。測るだけ。★ (D-7 で推測を 3 回続けて外したため)
+''''''''''''''''''''''''''''''''''
+''''''''''''''''''''''''''''''''''
 ' --- Wv2Pane.cls  D-6 段階 (QuerySelectorAll と寿命管理) ---
 '
 '   ■ 追加した Public メンバ
@@ -733,6 +815,14 @@ Option Explicit
     #Error "このクラスは 64 ビット VBA (x64) が必要です"
 #End If
 
+' --- N-1: 経過ミリ秒の時刻源 ---
+'   ★Timer は使わない★ Timer は Single の「午前 0 時からの秒」なので、
+'   午後の値 (5 万秒台) では Single の有効桁が足りず ms の分解能が消える。
+'   さらに日付を跨ぐと巻き戻る。GetTickCount は起動からの ms で単調増加。
+'   戻り値は Long なので約 49.7 日で一周する。差は Double に上げてから計算し、
+'   負になったら 2^32 を足して戻す (NetElapsedMs)。
+Private Declare PtrSafe Function GetTickCount Lib "kernel32" () As Long
+
 
 Public Enum ControllerState
     Cs_Created = 0
@@ -788,6 +878,7 @@ Private m_lastError As Long
 '
 ' 第9.6a 段階で上限を HK_DocumentTitleChanged → HK_NewWindowRequested に拡張。
 ' 第9.9b 段階で上限を HK_NewWindowRequested(7) → HK_DOMContentLoaded(10) に拡張。
+' N-1 段階で上限を HK_DOMContentLoaded(10) → HK_WebResourceRequested(11) に拡張。
 '   これにより HK_HistoryChanged(9) / HK_DOMContentLoaded(10) も永続配列で
 '   管理できる。
 '
@@ -800,8 +891,8 @@ Private m_lastError As Long
 ' Class_Terminate ですべての非 Nothing なハンドラについて remove_ を呼ぶ
 ' (CleanupAllPersistentHandlers の LBound/UBound ループは変更不要、
 '  これが「HandlerKind 連動配列で横展開を自動化」の本領発揮)。
-Private m_persistentHandlers(HK_NavigationStarting To HK_DOMContentLoaded) As ComCallbackHandler
-Private m_persistentTokens(HK_NavigationStarting To HK_DOMContentLoaded) As LongLong
+Private m_persistentHandlers(HK_NavigationStarting To HK_WebResourceRequested) As ComCallbackHandler
+Private m_persistentTokens(HK_NavigationStarting To HK_WebResourceRequested) As LongLong
 
 ' --- ページ読み込み完了フラグ (第9.4c 段階で追加、暫定実装) ---
 '
@@ -932,6 +1023,38 @@ Private m_sigUrl As Boolean
 Private m_staleMs As Long
 
 
+' --- N-1: ネットワーク要求のキャプチャ (WebResourceRequested) ---
+'   m_netOn      : 捕捉中か (add_WebResourceRequested 済みか)
+'   m_netCap     : リングの容量 (件)。NetLogCapacity で変えられる。
+'   m_netHead    : 次に書く位置 (0 起点)
+'   m_netCount   : 今リングに入っている件数 (0 ～ m_netCap)
+'   m_netTotal   : 捕捉開始からの★総発火数★ (溢れた分も数える)
+'   m_netDropped : ★溢れて捨てた件数★ 黙って切らない
+'   m_netT0      : 捕捉開始時の GetTickCount 値。各件の経過 ms の基準。
+'   m_netFilters : 登録済みフィルタ (uri & vbTab & ctx)。Stop で外すために覚える。
+Private m_netOn      As Boolean
+Private m_netCap     As Long
+Private m_netHead    As Long
+Private m_netCount   As Long
+Private m_netTotal   As Long
+Private m_netDropped As Long
+Private m_netT0      As Long
+Private m_netFilters As Collection
+Private m_netSeq()    As Long
+Private m_netMs()     As Long
+Private m_netCtx()    As Long
+Private m_netMethod() As String
+Private m_netUri()    As String
+
+' リングの既定容量と上限。既定 500 件は「1 ページ分の操作」を丸ごと収める目安。
+Private Const NET_CAP_DEFAULT As Long = 500
+Private Const NET_CAP_MAX     As Long = 50000
+
+' 既定で捕まえる種別 (論点4)。画像・CSS・フォント・スクリプトは除外する。
+'   1 = DOCUMENT (フォーム POST / ページ遷移) / 7 = XML_HTTP_REQUEST / 8 = FETCH
+Private Const NET_CTX_DEFAULT As String = "DOCUMENT,XHR,FETCH"
+
+
 ' --- D-2: 要素レジストリの世代キャッシュ ---
 '   m_domGen : JS から最後に受け取った window.__wv2.gen。高速パス専用。
 '              まだ一度も要素検索をしていなければ空文字。
@@ -967,6 +1090,12 @@ Private Sub Class_Initialize()
 
     ' --- D-2: 要素レジストリの世代キャッシュ ---
     m_domGen = ""
+
+    ' --- N-1: ネットワーク要求のリングバッファ ---
+    m_netOn = False
+    m_netCap = NET_CAP_DEFAULT
+    Set m_netFilters = New Collection
+    NetRingAlloc
 End Sub
 
 Private Sub Class_Terminate()
@@ -995,12 +1124,18 @@ Private Sub Class_Terminate()
     '     寿命の依存関係 (Ctrl が親、View が子、Settings が孫) を
     '     VBA レベルでも明示するため、子から先に解放する。
 
+    ' --- K-4a: ★所要時間を測るための入口★ ---
+    '   ここから次の行 (Cleanup の 1 本目) までが remove_*Event の所要になる。
+    Wv2Log.LogD "Wv2Pane.Terminate: ★開始★ (pCtrl=" & m_pCtrl & _
+                " pView=" & m_pView & ")"
+
     ' --- 1. 永続イベントハンドラを一括解除 (第9.4a 段階で追加) ---
     CleanupAllPersistentHandlers
+    Wv2Log.LogD "Wv2Pane.Terminate: 永続ハンドラの解除おわり"
 
     ' --- 2. m_pSettings の Release (第9.8b 段階で追加) ---
     If m_pSettings <> 0 Then
-        Debug.Print "Wv2Pane.Terminate: Releasing m_pSettings = " & m_pSettings
+        Wv2Log.LogD "Wv2Pane.Terminate: Releasing m_pSettings = " & m_pSettings
         ComRelease m_pSettings
         m_pSettings = 0
     End If
@@ -1009,7 +1144,7 @@ Private Sub Class_Terminate()
     '   View3 は View を QI で取り出した最派生 IF (ICoreWebView2_3)。
     '   派生から順に解放するため、m_pView2 より先に Release (設計原則 51)。
     If m_pView3 <> 0 Then
-        Debug.Print "Wv2Pane.Terminate: Releasing m_pView3 = " & m_pView3
+        Wv2Log.LogD "Wv2Pane.Terminate: Releasing m_pView3 = " & m_pView3
         ComRelease m_pView3
         m_pView3 = 0
     End If
@@ -1017,21 +1152,21 @@ Private Sub Class_Terminate()
     ' --- 3. m_pView2 の Release (第9.9a 段階で追加) ---
     '   View2 は View を QueryInterface で取り出した派生 IF。View より先に Release。
     If m_pView2 <> 0 Then
-        Debug.Print "Wv2Pane.Terminate: Releasing m_pView2 = " & m_pView2
+        Wv2Log.LogD "Wv2Pane.Terminate: Releasing m_pView2 = " & m_pView2
         ComRelease m_pView2
         m_pView2 = 0
     End If
 
     ' --- 4. m_pView の Release ---
     If m_pView <> 0 Then
-        Debug.Print "Wv2Pane.Terminate: Releasing m_pView = " & m_pView
+        Wv2Log.LogD "Wv2Pane.Terminate: Releasing m_pView = " & m_pView
         ComRelease m_pView
         m_pView = 0
     End If
 
     ' --- 5. m_pCtrl の Release ---
     If m_pCtrl <> 0 Then
-        Debug.Print "Wv2Pane.Terminate: Releasing m_pCtrl = " & m_pCtrl
+        Wv2Log.LogD "Wv2Pane.Terminate: Releasing m_pCtrl = " & m_pCtrl
         ComRelease m_pCtrl
         m_pCtrl = 0
     End If
@@ -1039,9 +1174,11 @@ Private Sub Class_Terminate()
     ' m_handler は通常 OnControllerCompleted で Nothing になっているはずだが、
     ' 万一 Init で例外が起きた等で残っている場合はここで切る。
     If Not (m_handler Is Nothing) Then
-        Debug.Print "Wv2Pane.Terminate: m_handler が残っているので切る (異常終了パス)"
+        Wv2Log.LogD "Wv2Pane.Terminate: m_handler が残っているので切る (異常終了パス)"
         Set m_handler = Nothing
     End If
+
+    Wv2Log.LogD "Wv2Pane.Terminate: ★完了★"   ' K-4a
 End Sub
 
 
@@ -1095,14 +1232,14 @@ Private Sub CleanupAllPersistentHandlers()
                 Dim pIfRemove As LongPtr
                 pIfRemove = RemoveInterfaceFor(CLng(k))
                 If pIfRemove <> 0 Then
-                    Debug.Print "Wv2Pane.Cleanup: removing persistent handler kind=" & k & _
+                    Wv2Log.LogD "Wv2Pane.Cleanup: removing persistent handler kind=" & k & _
                                 " vtable=" & removeIndex & " token=" & m_persistentTokens(k) & _
                                 " iface=" & pIfRemove
                     dcf pIfRemove, removeIndex, "View.remove_Event", m_persistentTokens(k)
                 Else
                     ' 解除に必要なインターフェース (例: m_pView2) が未取得 / 解放済み。
                     ' remove を撃つ手段がないので参照だけ切る (リーク容認)。
-                    Debug.Print "Wv2Pane.Cleanup: kind=" & k & " の remove 用 IF が 0、" & _
+                    Wv2Log.LogD "Wv2Pane.Cleanup: kind=" & k & " の remove 用 IF が 0、" & _
                                 "remove スキップ (参照のみ解放)"
                 End If
             End If
@@ -1174,6 +1311,7 @@ End Function
 '     ...
 '    44  add_NewWindowRequested      45  remove_NewWindowRequested  ← 第9.6a で追加
 '    46  add_DocumentTitleChanged    47  remove_DocumentTitleChanged
+'    55  add_WebResourceRequested    56  remove_WebResourceRequested  ← N-1 で追加
 '
 '   ICoreWebView2_2 vtable layout (基底の 61 個に続く派生 IF):
 '    64  add_DOMContentLoaded        65  remove_DOMContentLoaded     ← 第9.9b で追加
@@ -1192,6 +1330,7 @@ Private Function RemoveVtableIndexFor(ByVal kind As Long) As Long
         Case HK_NewWindowRequested:   RemoveVtableIndexFor = 45   ' 第9.6a で追加
         Case HK_HistoryChanged:       RemoveVtableIndexFor = 14   ' 第9.9b で追加 (基底 IF)
         Case HK_DOMContentLoaded:     RemoveVtableIndexFor = 65   ' 第9.9b で追加 (_2 IF)
+        Case HK_WebResourceRequested: RemoveVtableIndexFor = 56   ' N-1 で追加 (基底 IF)
         Case Else:                    RemoveVtableIndexFor = 0   ' 未知 → 解除不可
     End Select
 End Function
@@ -5470,4 +5609,676 @@ Private Sub WarnIfElementsPiled(ByVal total As Long)
                 "(掴んだ要素は解放しない設計)。要らなければ ClearElementRegistry で" & _
                 "作り直せる。ただし手元の Wv2Element はすべて stale になる。"
 End Sub
+
+
+
+' ============================================================
+' ★N-1 : ネットワーク要求のキャプチャ (WebResourceRequested)★
+'
+'   ここから下が N-1 段階で足した一式。並びは
+'     (1) 使う側の口   NetCaptureStart / NetCaptureStop / NetLogDrain ほか
+'     (2) COM の配線   View_AddWebResourceRequested ほか 4 本
+'     (3) 受け口       View_OnWebResourceRequested (+ in-callback ガード)
+'     (4) リング       NetRingAlloc / NetPush / NetElapsedMs / NetRingIndex
+'     (5) 種別の名前   NetCtxName / NetCtxFromName
+'
+'   使い方 (最小):
+'     p.NetCaptureStart          ' ★Navigate の前に呼べば初回の DOCUMENT から捕まる★
+'     ... 手で 1 回操作する ...
+'     p.NetLogDrain              ' 溜まった分をログファイルへ流して空にする
+'     p.NetCaptureStop
+' ============================================================
+
+
+' ============================================================
+' NetCaptureStart (N-1) - 捕捉を始める
+'
+'   contexts  : 捕まえる種別をカンマ区切りで指定する。空なら DOCUMENT,XHR,FETCH。
+'               名前でも数字でもよい。"ALL" にすると全種別 (画像も CSS も来る)。
+'                 DOCUMENT / STYLESHEET / IMAGE / MEDIA / FONT / SCRIPT /
+'                 XHR (= XMLHTTPREQUEST) / FETCH / TEXTTRACK / EVENTSOURCE /
+'                 WEBSOCKET / MANIFEST / SIGNEDEXCHANGE / PING /
+'                 CSPVIOLATIONREPORT / OTHER / ALL
+'               ★数字も受ける★ SDK が種別を増やしてもここを直さずに使えるため。
+'   uriFilter : URL のフィルタ。既定 "*" (すべて)。* と ? が使える。
+'
+'   ★既に捕捉中なら一度止めてから張り直す★
+'     種別を変えたつもりが前の網も残っている、という事故を防ぐ (設計原則106 の趣旨)。
+'
+'   ★フィルタが 1 つも張れなかったらハンドラごと外して False を返す★
+'     フィルタゼロではイベントが 1 件も来ないので、「捕捉中なのに何も出ない」
+'     という一番たちの悪い状態を作らない。
+'
+'   戻り値: True なら捕捉中。
+' ============================================================
+Public Function NetCaptureStart(Optional ByVal contexts As String = "", _
+                                Optional ByVal uriFilter As String = "*") As Boolean
+    Dim parts As Variant
+    Dim i     As Long
+    Dim ctx   As Long
+    Dim added As Long
+    Dim hr    As Long
+    Dim spec  As String
+
+    If m_closed Then
+        Wv2Log.LogW "Wv2Pane.NetCaptureStart: このペインは既に閉じている"
+        Exit Function
+    End If
+    If m_pView = 0 Then
+        Wv2Log.LogW "Wv2Pane.NetCaptureStart: m_pView が未取得 (先にタブを作ること)"
+        Exit Function
+    End If
+
+    If m_netOn Then NetCaptureStop
+
+    spec = Trim$(contexts)
+    If LenB(spec) = 0 Then spec = NET_CTX_DEFAULT
+    If LenB(Trim$(uriFilter)) = 0 Then uriFilter = "*"
+
+    ' --- (1) ハンドラを登録する ---
+    hr = View_AddWebResourceRequested()
+    If hr <> 0 Then
+        Wv2Log.LogE "Wv2Pane.NetCaptureStart: add_WebResourceRequested 失敗 hr=&H" & Hex(hr)
+        Exit Function
+    End If
+
+    ' --- (2) フィルタを張る (★1 つも張らないと 1 件も来ない★) ---
+    parts = Split(spec, ",")
+    For i = LBound(parts) To UBound(parts)
+        ctx = NetCtxFromName(CStr(parts(i)))
+        If ctx < 0 Then
+            Wv2Log.LogW "Wv2Pane.NetCaptureStart: 種別 [" & Trim$(CStr(parts(i))) & _
+                        "] が分からないので飛ばす"
+        Else
+            hr = View_AddWebResourceRequestedFilter(uriFilter, ctx)
+            If hr <> 0 Then
+                Wv2Log.LogW "Wv2Pane.NetCaptureStart: フィルタ登録に失敗 " & _
+                            NetCtxName(ctx) & " hr=&H" & Hex(hr)
+            Else
+                m_netFilters.Add uriFilter & vbTab & ctx
+                added = added + 1
+            End If
+        End If
+    Next i
+
+    If added = 0 Then
+        Wv2Log.LogE "Wv2Pane.NetCaptureStart: ★フィルタが 1 つも張れなかった★ " & _
+                    "この状態ではイベントが 1 件も来ないので、ハンドラも外して中止する。"
+        View_RemoveWebResourceRequested
+        Exit Function
+    End If
+
+    NetLogClear
+    m_netOn = True
+    NetCaptureStart = True
+
+    Wv2Log.LogI "Wv2Pane.NetCaptureStart: 捕捉開始 uri=" & uriFilter & _
+                " 種別=" & spec & " (フィルタ " & added & " 本)"
+End Function
+
+
+' ============================================================
+' NetCaptureStop (N-1) - 捕捉をやめる
+'
+'   ★張ったフィルタは必ず外す★ (設計原則106 の趣旨)
+'   ハンドラを外すだけでもイベントは来なくなるが、相手側に網が残ったままだと
+'   次の NetCaptureStart が知らないうちに広い網で動くことになる。
+'
+'   戻り値: True なら後始末まで含めて成功。
+' ============================================================
+Public Function NetCaptureStop() As Boolean
+    Dim v     As Variant
+    Dim parts As Variant
+    Dim hr    As Long
+    Dim allOk As Boolean
+
+    If Not m_netOn Then
+        NetCaptureStop = True
+        Exit Function
+    End If
+
+    allOk = True
+
+    ' --- (1) フィルタを外す ---
+    '   ★既に閉じている / View が無いときは COM を叩けない★
+    '   相手ごと消えているので網も残らない。覚えている分を捨てるだけにする。
+    If m_closed Or m_pView = 0 Then
+        Wv2Log.LogD "Wv2Pane.NetCaptureStop: View が無いのでフィルタ解除は省略"
+    Else
+        For Each v In m_netFilters
+            parts = Split(CStr(v), vbTab)
+            hr = View_RemoveWebResourceRequestedFilter(CStr(parts(0)), CLng(parts(1)))
+            If hr <> 0 Then
+                Wv2Log.LogW "Wv2Pane.NetCaptureStop: フィルタ解除に失敗 " & _
+                            CStr(parts(0)) & " / " & NetCtxName(CLng(parts(1))) & _
+                            " hr=&H" & Hex(hr)
+                allOk = False
+            End If
+        Next v
+    End If
+    Set m_netFilters = New Collection
+
+    ' --- (2) ハンドラを外す ---
+    hr = View_RemoveWebResourceRequested()
+    If hr <> 0 Then allOk = False
+
+    m_netOn = False
+    NetCaptureStop = allOk
+
+    Wv2Log.LogI "Wv2Pane.NetCaptureStop: 捕捉終了 (総発火 " & m_netTotal & " 件 / " & _
+                "手元 " & m_netCount & " 件 / 溢れ " & m_netDropped & " 件)"
+End Function
+
+
+' ============================================================
+' NetCaptureOn (N-1) - 捕捉中かどうか
+' ============================================================
+Public Property Get NetCaptureOn() As Boolean
+    NetCaptureOn = m_netOn
+End Property
+
+
+' ============================================================
+' NetLogCount / NetLogTotal / NetLogDropped (N-1)
+'
+'   NetLogCount   : 今リングに入っている件数 (取り出せる数)
+'   NetLogTotal   : 捕捉開始からの★総発火数★ (溢れた分も数える)
+'   NetLogDropped : ★リングから溢れて捨てた件数★
+'
+'   ★どちらも「捕捉開始からの通算」で、NetLogDrain では 0 に戻らない★ (N-1b)
+'   取り出したのは中身だけ。0 に戻したいときは NetLogClear を呼ぶ。
+'
+'   ★NetLogCount と NetLogTotal が食い違っていたら取りこぼしている★
+'   件数を黙って切らないための組 (D-6 の LastAllTruncated と同じ判断)。
+' ============================================================
+Public Property Get NetLogCount() As Long
+    NetLogCount = m_netCount
+End Property
+
+Public Property Get NetLogTotal() As Long
+    NetLogTotal = m_netTotal
+End Property
+
+Public Property Get NetLogDropped() As Long
+    NetLogDropped = m_netDropped
+End Property
+
+
+' ============================================================
+' NetLogCapacity (N-1) - リングの容量 (件)
+'   ★変えると中身は捨てられる★ (作り直すため)。捕捉を始める前に決めること。
+' ============================================================
+Public Property Get NetLogCapacity() As Long
+    NetLogCapacity = m_netCap
+End Property
+
+Public Property Let NetLogCapacity(ByVal n As Long)
+    If n < 1 Then n = 1
+    If n > NET_CAP_MAX Then
+        Wv2Log.LogW "Wv2Pane.NetLogCapacity: " & n & " は上限 " & NET_CAP_MAX & " を超えるので丸める"
+        n = NET_CAP_MAX
+    End If
+    m_netCap = n
+    NetRingAlloc
+    Wv2Log.LogD "Wv2Pane.NetLogCapacity = " & m_netCap & " (中身は作り直したので空)"
+End Property
+
+
+' ============================================================
+' NetLogClear (N-1) - リングを空にする
+'   ★経過 ms の基準もここで打ち直す★ (次の 1 件が +0ms から始まる)
+'   ★通算カウンタ (NetLogTotal / NetLogDropped) も 0 に戻る★
+'   中身だけ取り出したいなら NetLogDrain を使うこと (通算は保たれる)。
+' ============================================================
+Public Sub NetLogClear()
+    NetRingAlloc
+End Sub
+
+
+' ============================================================
+' NetLogLine (N-1) - 流さずに 1 件だけ読む
+'
+'   idx は★古い順に 1 起点★。範囲外なら空文字。
+'   1 行は vbTab 区切りで 5 項目:
+'     通し番号 / 経過ms / メソッド / 種別名 / URL
+'
+'   ★ドレインすると消えるので、判定に使うときはこちらで読む★
+'   (N-5 で PowerShell コードを吐くときの入口もここになる)
+' ============================================================
+Public Property Get NetLogLine(ByVal idx As Long) As String
+    Dim k As Long
+    k = NetRingIndex(idx)
+    If k < 0 Then Exit Property
+
+    NetLogLine = m_netSeq(k) & vbTab & m_netMs(k) & vbTab & _
+                 m_netMethod(k) & vbTab & NetCtxName(m_netCtx(k)) & vbTab & m_netUri(k)
+End Property
+
+
+' ============================================================
+' NetLogDrain (N-1) - 溜まった分を Wv2Log へ流して空にする
+'
+'   ★取り出したらリングは空になる★ (D-4 の SpaProbeDrainLog と同じ契約)。
+'   ★判定はログファイルで読む★ (設計原則105)。イミディエイトは配管ログで流れる。
+'
+'   戻り値: 流した件数。0 なら何も溜まっていなかった。
+' ============================================================
+Public Function NetLogDrain() As Long
+    Dim i As Long
+    Dim n As Long
+
+    n = m_netCount
+    If n = 0 Then
+        Wv2Log.LogI "  --- ネットワーク要求: 溜まっていない (総発火 " & m_netTotal & " 件) ---"
+        Exit Function
+    End If
+
+    Wv2Log.LogI "  --- ネットワーク要求 " & n & " 件 (総発火 " & m_netTotal & " 件) ---"
+    Wv2Log.LogI "        #   経過ms  メソッド 種別       URL"
+    For i = 1 To n
+        Wv2Log.LogI "      " & NetLogFormat(i)
+    Next i
+
+    If m_netDropped > 0 Then
+        ' ★通算で数えている★ ので、溢れたまま何度もドレインすると毎回出る。
+        '   出続けるのが鬱陶しいのではなく、★取りこぼしたままだという事実★ が
+        '   消えないだけ。消したいなら NetLogClear で数え直す。
+        Wv2Log.LogW "  ★捕捉開始から " & m_netDropped & " 件が溢れて捨てられている★ " & _
+                    "NetLogCapacity を増やすか、こまめに NetLogDrain すること。"
+    End If
+
+    NetLogDrain = n
+    ' ★中身だけ空にする (通算は保つ)★ 論点3 案Y
+    NetRingEmpty
+End Function
+
+
+' ============================================================
+' View_AddWebResourceRequested (N-1、ICoreWebView2 vtable 55)
+'
+'   ★index 55 は tools/vtable.py で WebView2.h から確定させた値★ (設計原則115)。
+'   既存の配線からの逆算では 54 になっていた (OpenDevToolsWindow の数え落とし)。
+'
+'   実装は View2_AddDOMContentLoaded を逐語的な見本にしている。違いは
+'   「m_pView2 ではなく m_pView」「vtable 64/65 ではなく 55/56」だけ。
+'   pVTableObj = h.Slot + VTABLE_OBJ_OFFSET は同じく必ず通す (設計原則45)。
+'
+'   戻り値: HRESULT (S_OK = 0 で成功)
+' ============================================================
+Public Function View_AddWebResourceRequested() As Long
+    If m_closed Then
+        View_AddWebResourceRequested = &H80004003   ' E_POINTER
+        Exit Function
+    End If
+    If m_pView = 0 Then
+        Debug.Print "Wv2Pane.View_AddWebResourceRequested: m_pView が未取得"
+        View_AddWebResourceRequested = &H80004003
+        Exit Function
+    End If
+
+    ' 既に登録済みなら何もしない
+    If Not (m_persistentHandlers(HK_WebResourceRequested) Is Nothing) Then
+        Debug.Print "Wv2Pane.View_AddWebResourceRequested: 既に登録済みなのでスキップ"
+        View_AddWebResourceRequested = 0
+        Exit Function
+    End If
+
+    Dim h As ComCallbackHandler
+    Set h = AcquireHandlerFor(HK_WebResourceRequested, Me)
+    If h Is Nothing Then
+        Debug.Print "Wv2Pane.View_AddWebResourceRequested: ハンドラの Acquire に失敗"
+        View_AddWebResourceRequested = &H8000FFFF   ' E_UNEXPECTED
+        Exit Function
+    End If
+
+    Dim pVTableObj As LongPtr
+    pVTableObj = h.Slot + VTABLE_OBJ_OFFSET
+
+    Dim token As LongLong
+    Dim hr As Long
+    hr = dcf(m_pView, 55, "View.add_WebResourceRequested", pVTableObj, VarPtr(token))
+
+    If hr <> 0 Then
+        Debug.Print "Wv2Pane.View_AddWebResourceRequested: 失敗 hr=&H" & Hex(hr)
+        Set h = Nothing
+        View_AddWebResourceRequested = hr
+        Exit Function
+    End If
+
+    m_persistentTokens(HK_WebResourceRequested) = token
+    Set m_persistentHandlers(HK_WebResourceRequested) = h
+    Debug.Print "Wv2Pane.View_AddWebResourceRequested OK: token=" & token & _
+                ", handler.slot=" & h.Slot
+
+    View_AddWebResourceRequested = 0
+End Function
+
+
+' ============================================================
+' View_RemoveWebResourceRequested (N-1、ICoreWebView2 vtable 56)
+'   未登録なら no-op (S_OK で返す)。
+' ============================================================
+Public Function View_RemoveWebResourceRequested() As Long
+    If m_persistentHandlers(HK_WebResourceRequested) Is Nothing Then
+        View_RemoveWebResourceRequested = 0   ' 未登録は no-op
+        Exit Function
+    End If
+
+    Dim hr As Long
+    If m_pView <> 0 Then
+        hr = dcf(m_pView, 56, "View.remove_WebResourceRequested", _
+                 m_persistentTokens(HK_WebResourceRequested))
+        If hr <> 0 Then
+            Debug.Print "Wv2Pane.View_RemoveWebResourceRequested: 解除失敗 hr=&H" & Hex(hr)
+        Else
+            Debug.Print "Wv2Pane.View_RemoveWebResourceRequested OK"
+        End If
+    Else
+        ' m_pView が無いので remove を撃つ手段がない。参照だけ切る。
+        Debug.Print "Wv2Pane.View_RemoveWebResourceRequested: m_pView が 0 なので参照のみ解放"
+    End If
+
+    Set m_persistentHandlers(HK_WebResourceRequested) = Nothing
+    m_persistentTokens(HK_WebResourceRequested) = 0^
+
+    View_RemoveWebResourceRequested = hr
+End Function
+
+
+' ============================================================
+' View_AddWebResourceRequestedFilter (N-1、ICoreWebView2 vtable 57)
+'
+'   ★フィルタを 1 つも登録しないとイベントは 1 件も来ない★
+'   種別ごとに 1 回ずつ呼ぶ。NetCaptureStart が既定の 3 種別ぶん撃つ。
+'
+'   uriFilter       : URL のパターン。* と ? が使える ("*" ですべて)
+'   resourceContext : COREWEBVIEW2_WEB_RESOURCE_CONTEXT の値 (0=ALL, 1=DOCUMENT, ...)
+'
+'   戻り値: HRESULT (S_OK = 0 で成功)
+' ============================================================
+Public Function View_AddWebResourceRequestedFilter( _
+    ByVal uriFilter As String, _
+    ByVal resourceContext As Long) As Long
+
+    If m_pView = 0 Then
+        View_AddWebResourceRequestedFilter = &H80004003
+        Exit Function
+    End If
+    View_AddWebResourceRequestedFilter = dcf(m_pView, 57, _
+                                             "View.AddWebResourceRequestedFilter", _
+                                             StrPtr(uriFilter), resourceContext)
+End Function
+
+
+' ============================================================
+' View_RemoveWebResourceRequestedFilter (N-1、ICoreWebView2 vtable 58)
+'   ★登録したときと同じ (uri, context) の組で呼ばないと外れない★
+' ============================================================
+Public Function View_RemoveWebResourceRequestedFilter( _
+    ByVal uriFilter As String, _
+    ByVal resourceContext As Long) As Long
+
+    If m_pView = 0 Then
+        View_RemoveWebResourceRequestedFilter = &H80004003
+        Exit Function
+    End If
+    View_RemoveWebResourceRequestedFilter = dcf(m_pView, 58, _
+                                                "View.RemoveWebResourceRequestedFilter", _
+                                                StrPtr(uriFilter), resourceContext)
+End Function
+
+
+' ============================================================
+' View_OnWebResourceRequested (N-1)
+'   ComCallbackHandler から動的バインディング経由で呼ばれる。Public Sub 必須。
+'
+'   ★他の受け口と違ってエラーを再送出しない★ (事後報告)
+'     WebResourceRequested は通信の途中で同期的に呼ばれるので、ここで
+'     Err.Raise すると★通信の最中にエラーダイアログが出る★。しかも 1 ページで
+'     数十～数百件来るので、1 件壊れただけで操作が続けられなくなる。
+'     そこで握り潰す代わりに★リングに 1 件「(err)」として書き残す★。
+'     握り潰したことは NetLogDrain の出力に必ず現れる。
+' ============================================================
+Public Sub View_OnWebResourceRequested(ByVal pSender As LongPtr, ByVal pArgs As LongPtr)
+    Dim errNum As Long
+    Dim errDsc As String
+
+    m_inCallback = m_inCallback + 1
+    On Error GoTo GuardExit
+    View_OnWebResourceRequested_Core pSender, pArgs
+
+GuardExit:
+    errNum = Err.Number
+    errDsc = Err.Description
+    If m_inCallback > 0 Then m_inCallback = m_inCallback - 1
+    If errNum <> 0 Then
+        On Error Resume Next
+        NetPush "(err)", -1, "★受け口でエラー " & errNum & " " & errDsc & "★"
+    End If
+End Sub
+
+
+' ============================================================
+' View_OnWebResourceRequested_Core (N-1、Private)
+'
+'   ★記録だけしてすぐ返す (論点5)★
+'     ここで Wv2Log も Debug.Print も撃たない。EvalSync は論外 (仕様事実14 / 20)。
+'     dcf / GetStringProperty に渡す funcName も空にして、失敗しても
+'     イミディエイトに何も出さない (失敗はリングに書き残すので消えない)。
+'
+'   args の vtable (tools/vtable.py で確定):
+'     3 = get_Request(ICoreWebView2WebResourceRequest**)
+'     7 = get_ResourceContext(COREWEBVIEW2_WEB_RESOURCE_CONTEXT*)
+'   request の vtable:
+'     3 = get_Uri(LPWSTR*)   5 = get_Method(LPWSTR*)
+'
+'   ★get_Request は AddRef 済みで返る★ ので必ず Release する (COM 規約)。
+'   1 ページで数百回通る経路なので、ここを漏らすと目に見えて漏れる。
+' ============================================================
+Private Sub View_OnWebResourceRequested_Core(ByVal pSender As LongPtr, ByVal pArgs As LongPtr)
+    Dim pReq As LongPtr
+    Dim hr   As Long
+    Dim uri  As String
+    Dim mth  As String
+    Dim ctx  As Long
+
+    If pArgs = 0 Then
+        NetPush "(err)", -1, "★args が 0★"
+        Exit Sub
+    End If
+
+    ' 種別 (取得できなければ 0 = ALL が返る。get_ResourceContext は本来 ALL を
+    ' 返さないので、ログに ALL が並んでいたらこの取得が失敗している合図)
+    ctx = GetLongProperty(pArgs, 7, "")
+
+    hr = dcf(pArgs, 3, "", VarPtr(pReq))
+    If hr <> 0 Or pReq = 0 Then
+        NetPush "(err)", ctx, "★get_Request 失敗 hr=&H" & Hex(hr) & "★"
+        Exit Sub
+    End If
+
+    uri = GetStringProperty(pReq, 3, "")
+    mth = GetStringProperty(pReq, 5, "")
+    ComRelease pReq
+
+    NetPush mth, ctx, uri
+End Sub
+
+
+' ============================================================
+' NetRingAlloc (N-1、Private) - リングを作り直して空にする
+'   容量を変えたときと、捕捉を始め直すときに通る。
+' ============================================================
+Private Sub NetRingAlloc()
+    If m_netCap < 1 Then m_netCap = NET_CAP_DEFAULT
+
+    ReDim m_netSeq(0 To m_netCap - 1)
+    ReDim m_netMs(0 To m_netCap - 1)
+    ReDim m_netCtx(0 To m_netCap - 1)
+    ReDim m_netMethod(0 To m_netCap - 1)
+    ReDim m_netUri(0 To m_netCap - 1)
+
+    m_netHead = 0
+    m_netCount = 0
+    m_netTotal = 0
+    m_netDropped = 0
+    m_netT0 = GetTickCount()
+End Sub
+
+
+' ============================================================
+' NetRingEmpty (N-1b、Private) - ★中身だけ★ 空にする
+'   通算カウンタ (m_netTotal / m_netDropped) と経過 ms の基準は触らない。
+'   NetLogDrain が「取り出したぶんを捨てる」ために使う。
+' ============================================================
+Private Sub NetRingEmpty()
+    m_netHead = 0
+    m_netCount = 0
+End Sub
+
+
+' ============================================================
+' NetPush (N-1、Private) - 1 件をリングに置く
+'   ★溢れたら古いものを上書きし、捨てた数を数える★ (黙って切らない)
+' ============================================================
+Private Sub NetPush(ByVal mth As String, ByVal ctx As Long, ByVal uri As String)
+    m_netTotal = m_netTotal + 1
+
+    m_netSeq(m_netHead) = m_netTotal
+    m_netMs(m_netHead) = NetElapsedMs()
+    m_netCtx(m_netHead) = ctx
+    m_netMethod(m_netHead) = mth
+    m_netUri(m_netHead) = uri
+
+    m_netHead = m_netHead + 1
+    If m_netHead >= m_netCap Then m_netHead = 0
+
+    If m_netCount < m_netCap Then
+        m_netCount = m_netCount + 1
+    Else
+        m_netDropped = m_netDropped + 1
+    End If
+End Sub
+
+
+' ============================================================
+' NetElapsedMs (N-1、Private) - 捕捉開始からの経過 ms
+'   GetTickCount は Long なので約 49.7 日で一周する。差は Double に上げて
+'   計算し、負になったら 2^32 を足して戻す。
+' ============================================================
+Private Function NetElapsedMs() As Long
+    Dim d As Double
+    d = CDbl(GetTickCount()) - CDbl(m_netT0)
+    If d < 0 Then d = d + 4294967296#
+    If d > 2147483647# Then d = 2147483647#
+    NetElapsedMs = CLng(d)
+End Function
+
+
+' ============================================================
+' NetRingIndex (N-1、Private) - 古い順 1 起点 → リング上の位置
+'   範囲外なら -1。
+' ============================================================
+Private Function NetRingIndex(ByVal idx As Long) As Long
+    Dim k As Long
+
+    If idx < 1 Or idx > m_netCount Then
+        NetRingIndex = -1
+        Exit Function
+    End If
+
+    k = m_netHead - m_netCount + (idx - 1)
+    Do While k < 0
+        k = k + m_netCap
+    Loop
+    NetRingIndex = k Mod m_netCap
+End Function
+
+
+' ============================================================
+' NetLogFormat (N-1、Private) - 1 件を桁を揃えた 1 行にする
+' ============================================================
+Private Function NetLogFormat(ByVal idx As Long) As String
+    Dim k As Long
+    k = NetRingIndex(idx)
+    If k < 0 Then Exit Function
+
+    NetLogFormat = Right$("     " & m_netSeq(k), 5) & "  " & _
+                   Right$("       " & m_netMs(k), 7) & "  " & _
+                   Left$(m_netMethod(k) & "        ", 8) & " " & _
+                   Left$(NetCtxName(m_netCtx(k)) & "          ", 10) & " " & _
+                   m_netUri(k)
+End Function
+
+
+' ============================================================
+' NetCtxName (N-1、Private) - COREWEBVIEW2_WEB_RESOURCE_CONTEXT の名前
+'   ★値は tools/vtable.py --enum COREWEBVIEW2_WEB_RESOURCE_CONTEXT で確定★
+' ============================================================
+Private Function NetCtxName(ByVal ctx As Long) As String
+    Select Case ctx
+        Case 0:  NetCtxName = "ALL"
+        Case 1:  NetCtxName = "DOCUMENT"
+        Case 2:  NetCtxName = "STYLESHEET"
+        Case 3:  NetCtxName = "IMAGE"
+        Case 4:  NetCtxName = "MEDIA"
+        Case 5:  NetCtxName = "FONT"
+        Case 6:  NetCtxName = "SCRIPT"
+        Case 7:  NetCtxName = "XHR"
+        Case 8:  NetCtxName = "FETCH"
+        Case 9:  NetCtxName = "TEXTTRACK"
+        Case 10: NetCtxName = "EVENTSRC"
+        Case 11: NetCtxName = "WEBSOCKET"
+        Case 12: NetCtxName = "MANIFEST"
+        Case 13: NetCtxName = "SIGNEDEX"
+        Case 14: NetCtxName = "PING"
+        Case 15: NetCtxName = "CSPREPORT"
+        Case 16: NetCtxName = "OTHER"
+        Case Else: NetCtxName = "CTX" & ctx
+    End Select
+End Function
+
+
+' ============================================================
+' NetCtxFromName (N-1、Private) - 名前 (または数字) → 種別の値
+'   分からなければ -1。★数字も受ける★ SDK が種別を増やしても直さずに済む。
+' ============================================================
+Private Function NetCtxFromName(ByVal ctxToken As String) As Long
+    Dim t As String
+
+    t = UCase$(Trim$(ctxToken))
+    t = Replace$(t, "_", "")
+    t = Replace$(t, " ", "")
+
+    If LenB(t) = 0 Then
+        NetCtxFromName = -1
+        Exit Function
+    End If
+
+    If IsNumeric(t) Then
+        NetCtxFromName = CLng(t)
+        Exit Function
+    End If
+
+    Select Case t
+        Case "ALL":                             NetCtxFromName = 0
+        Case "DOCUMENT", "DOC":                 NetCtxFromName = 1
+        Case "STYLESHEET", "CSS":               NetCtxFromName = 2
+        Case "IMAGE", "IMG":                    NetCtxFromName = 3
+        Case "MEDIA":                           NetCtxFromName = 4
+        Case "FONT":                            NetCtxFromName = 5
+        Case "SCRIPT", "JS":                    NetCtxFromName = 6
+        Case "XHR", "XMLHTTPREQUEST":           NetCtxFromName = 7
+        Case "FETCH":                           NetCtxFromName = 8
+        Case "TEXTTRACK":                       NetCtxFromName = 9
+        Case "EVENTSOURCE", "EVENTSRC":         NetCtxFromName = 10
+        Case "WEBSOCKET", "WS":                 NetCtxFromName = 11
+        Case "MANIFEST":                        NetCtxFromName = 12
+        Case "SIGNEDEXCHANGE", "SIGNEDEX":      NetCtxFromName = 13
+        Case "PING":                            NetCtxFromName = 14
+        Case "CSPVIOLATIONREPORT", "CSPREPORT": NetCtxFromName = 15
+        Case "OTHER":                           NetCtxFromName = 16
+        Case Else:                              NetCtxFromName = -1
+    End Select
+End Function
 

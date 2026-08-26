@@ -1,5 +1,95 @@
 Attribute VB_Name = "Wv2Tests"
 ''''''''''''''''''''''''''''''''''
+' --- Wv2Tests.bas  N-1c 段階 (種別の決めつけをやめる) ---
+'
+'   ★N-1b の実機で分かったこと★
+'     ★WebView2 は fetch() の要求を FETCH(8) ではなく XML_HTTP_REQUEST(7) として
+'     報告する★ (実機で fetch 10 本を撃って 10 本とも XHR で届いた)。
+'     N-1b のテストが「fetch なら種別は FETCH のはず」と決めつけていたため、
+'     ★捕まっているのに FAIL 3 件★ になっていた。実装は無傷。
+'
+'   ■ 直したこと (テスト側だけ)
+'     1. 判定は「捕まったか」で行い、★種別は決めつけない★
+'        ついでに localOk / netOk の誤報 (「1 件も届いていない」) も消える
+'     2. ★「fetch は XHR 種別で届く」を数える判定を足した★
+'        見つけた仕様事実をそのまま回帰試験にする
+'     3. ★(3) の直後にドレインを 1 回挟む★
+'        N-1b では (4) で容量を 3 に落とした時点で (2) の中身が消えてしまい、
+'        「seq 1/2 は f-local と f-net だったはず」と★推測で埋める羽目になった★。
+'        次からは推測が要らない (設計原則112)。
+''''''''''''''''''''''''''''''''''
+''''''''''''''''''''''''''''''''''
+' --- Wv2Tests.bas  N-1b 段階 (的を仮想ホストの外へ移す) ---
+'
+'   ★N-1 の初回実機で分かったこと★
+'     仮想ホスト (SetVirtualHostNameToFolderMapping) で配信した要求は
+'     WebResourceRequested に乗らない。初回の Test_N1_Capture が全滅したのは
+'     ★的が 1 本残らず仮想ホストだったから★ で、配線は最初から正しかった
+'     (Test_N1_Site では 10 件すべて捕まっていた)。
+'
+'   ★的を 2 系統 + 対照 1 系統にした (論点1 案G)★
+'     案F  http://127.0.0.1:59999/…  到達不能なローカル (外部依存ゼロ)
+'     案D  https://httpbingo.org/…   外部サービス (ネットが要る)
+'     対照 仮想ホストの data.json    ★捕まらないことを数える★
+'   どちらの的が使えるかを 1 回の実機で両方確かめる。
+''''''''''''''''''''''''''''''''''
+''''''''''''''''''''''''''''''''''
+' --- Wv2Tests.bas  N-1 段階 (ネットワーク要求のキャプチャ) ---
+'
+'   Test_N1_Capture … ★自前 HTML だけで完結する回帰試験★ (論点8)
+'   Test_N1_Watch   … ★今開いているタブの通信を捕まえ始める★ (実用の入口)
+'   Test_N1_Drain   … 溜まった分をログへ流して空にする
+'   Test_N1_Stop    … 捕まえるのをやめる (フィルタも外す)
+'   Test_N1_Help    … 手順
+'
+'   ★実サイトに頼らない★ 検証ページは %TEMP%\Wv2NetProbe に書き出して
+'   仮想ホスト https://appassets.netprobe/ で開く (第9.26b と同じ手口)。
+'   フォーム POST も fetch も XHR も、すべてこのフォルダの中で完結する。
+''''''''''''''''''''''''''''''''''
+''''''''''''''''''''''''''''''''''
+' --- Wv2Tests.bas  K-4a 段階 (解放が遅い原因の切り分け) ---
+'
+'   Test_K4_Quiet … ★フォームを閉じる前に全タブを静める★
+'                   解放が遅いのは「ページが動き続けているから」なのかを測る。
+'   Test_K4_Help  … 手順。
+'
+'   ★実測で分かっていること (K-4a)★
+'     素の状態 (起動 → 即閉じ)     … 解放の全体 0.336 秒
+'     Maps を 1 枚開いた後          … 解放の全体 ★6.718 秒★ (20 倍)
+'     LogEcho = True / False の差   … ★ゼロ★ (Debug.Print は犯人ではない)
+'     遅いのは特定のステップではなく ★COM 往復が全部 300～500ms★
+'     (素の状態では 8～16ms)。Ctrl_Close 1 回はさらに重く 1.4 秒。
+''''''''''''''''''''''''''''''''''
+''''''''''''''''''''''''''''''''''
+' --- Wv2Tests.bas  D-7e 段階 (進捗と中断の検証) ---
+'
+'   D-7b の追加事項:
+'     Test_D7_StatusBar … ★プローブ★ 製品コードを通さずに Excel の生の挙動を
+'                         測る。D-7 で FAIL した StatusBar の判定が、判定側の
+'                         問題なのか Excel の仕様なのかを切り分ける (原則103)。
+'     Test_D7_Resume    … ★自動★ 中断された後の状態を人工的に作り、そこから
+'                         再開できるかを Esc 無しで確かめる (回帰確認用)。
+'
+'   D-7 からの持ち越し:
+'     Test_D7_Cancel … ★ネットワーク不要★ 中断の口・入口でのクリア・分母の
+'                      数え方・0 件ならタブを開かないこと。
+'     Test_D7_Sheet  … ★実サイト + 手で Esc を押す★ 中断 → 再開まで。
+'     Test_D7_Help   … 手順。
+'
+'   ■ ★D-7e: 人が観察する検証は、人に見える形にする★
+'     D-7d の実機で中断は成立していたのに、たーぼーさんには「止まっていない」
+'     ように見えた。★中断した直後に自動で 2 回目を走らせていたから★。
+'     さらに連打した Esc が 2 回目にも効いて、判定が 3 件 FAIL になった。
+'     → 中断したら★はっきり知らせて一拍置き、Esc が離れるのを待ってから★
+'       再開を試す (TestWaitEscReleased)。
+'     Test_D7_Key も同じ理由で作り直した。「これから 10 秒」と出しても、
+'     ★読む前に終わってしまう★ ので、押されるまで待つ形にした。
+'
+'   ★Esc そのものの検証は自動化していない★ SafeTimer で代わりにフラグを立てる
+'   案もあったが、SafeTimer は WithEvents が要る = クラスモジュールの新設が要る
+'   ので見送った。代わりに★中断後の状態からの再開★を Test_D7_Resume で自動化し、
+'   毎回の回帰確認はそちらで賄う。Esc 経路は Test_D7_Sheet で人が 1 回確かめる。
+''''''''''''''''''''''''''''''''''
 ''''''''''''''''''''''''''''''''''
 ' --- Wv2Tests.bas  D-4a 段階 (ページ内 SPA プローブの検証) ---
 '
@@ -415,6 +505,19 @@ Option Explicit
 '     判定はログファイルにも残す (K-1 の Wv2Log 経由)。★
 Private m_okCount As Long
 Private m_ngCount As Long
+
+' --- N-1: 検証ページを置く仮想ホスト名とフォルダ名 ---
+Private Const N1_HOST   As String = "appassets.netprobe"
+Private Const N1_FOLDER As String = "Wv2NetProbe"
+
+' --- N-1b: 検証の的 (★どちらも仮想ホストの外★) ---
+'   N1_LOCAL … 到達不能なローカルアドレス。接続は必ず失敗するが、要求は飛ぶ。
+'     ★ポートは Chromium が塞いでいる番号を避ける★ (1/7/9/11/13/…/10080 など)
+'     ★http でも混在コンテンツで止まらない★ 127.0.0.1 は仕様上
+'     「潜在的に信頼できるオリジン」なので https のページから呼べる。
+'   N1_NET   … 外部サービス。ネットが要る代わりに素直に届く。
+Private Const N1_LOCAL  As String = "http://127.0.0.1:59999"
+Private Const N1_NET    As String = "https://httpbingo.org"
 
 
 ' ============================================================
@@ -5211,6 +5314,867 @@ Public Sub Test_D6_Pick()
 End Sub
 
 ' ============================================================
+' Test_D7_Cancel (D-7 の検証: 中断の口と分母)
+'
+'   ★ネットワークもブラウザも要らない★ 実サイトを叩く中断の検証は
+'   Test_D7_Sheet (手で Esc を押す) の方。
+' ============================================================
+Public Sub Test_D7_Cancel()
+    Dim wb As Workbook
+    Dim sh As Object
+    Dim sh2 As Object
+    Dim lat As Double
+    Dim lng As Double
+    Dim nm As String
+    Dim ok As Boolean
+    Dim n As Long
+    Dim beforeTabs As Long
+
+    Wv2Log.LogI ""
+    TestCountReset
+    Wv2Log.LogI "================ Test_D7_Cancel 開始 ================"
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (1) 外から中断を立てる口 ---"
+
+    Wv2Maps.MapsCancel = True
+    TestBool "★立てたら立つ★", (Wv2Maps.MapsCancel = True)
+    Wv2Maps.MapsCancel = False
+    TestBool "  下ろしたら下りる", (Wv2Maps.MapsCancel = False)
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (2) ★中断状態は入口で捨てられる★ (設計原則106) ---"
+    Wv2Log.LogI "        立てっぱなしにして、次の呼び出しが殺されないことを見る"
+
+    Wv2Maps.MapsCancel = True
+    ok = Wv2Maps.MapsGeocode(Nothing, "東京駅", lat, lng, nm, 1)
+    Wv2Log.LogI "        戻り値 = " & ok & " 理由 = " & Wv2Maps.MapsLastError
+    TestBool "呼べる (中身は no-pane で失敗する)", (ok = False)
+    TestBool "★理由が canceled ではない★ (入口で捨てたから)", _
+             (Wv2Maps.MapsLastError = "no-pane")
+    TestBool "  中断要求が下りている", (Wv2Maps.MapsCancel = False)
+    TestBool "  中断で終わった印も下りている", (Wv2Maps.MapsCanceled = False)
+
+    ' --- D-7b: ★戻し忘れると Excel 全体で Esc が効かなくなる★ ---
+    Wv2Log.LogI "        EnableCancelKey = " & Application.EnableCancelKey & _
+                " (xlInterrupt = " & xlInterrupt & ")"
+    TestBool "★EnableCancelKey が戻っている★", _
+             (Application.EnableCancelKey = xlInterrupt)
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (3) ★分母を数える★ (MapsCountRows) ---"
+
+    Set wb = Workbooks.Add
+    Set sh = wb.Worksheets(1)
+    sh.Cells(1, 1).value = "住所"
+    sh.Cells(2, 1).value = "東京都千代田区丸の内1-9-1"
+    sh.Cells(3, 1).value = "大阪府大阪市中央区大阪城1-1"
+    sh.Cells(4, 1).value = "京都府京都市下京区東塩小路町"
+    ' 5 行目は空 ― ★ここで止まる★
+    sh.Cells(6, 1).value = "空白の向こうは数えない"
+
+    TestBool "★空セルで止めて 3 件と数える★", (Wv2Maps.MapsCountRows(sh) = 3)
+    TestBool "  開始行を 3 にすれば 2 件", (Wv2Maps.MapsCountRows(sh, 3) = 2)
+    TestBool "  住所の無い列を見れば 0 件", (Wv2Maps.MapsCountRows(sh, 2, 5) = 0)
+    TestBool "  シートが無ければ 0 件", (Wv2Maps.MapsCountRows(Nothing) = 0)
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (4) ★0 件ならタブを開かずに帰る★ ---"
+
+    Set sh2 = wb.Worksheets.Add
+    beforeTabs = -1
+    If Not UserForm1.CurrentBrowser Is Nothing Then
+        beforeTabs = UserForm1.CurrentBrowser.TabCount
+    End If
+
+    n = Wv2Maps.MapsGeocodeSheet(sh2)
+    TestBool "0 を返す", (n = 0)
+    TestBool "  理由が no-rows", (Wv2Maps.MapsLastError = "no-rows")
+
+    If beforeTabs >= 0 Then
+        Wv2Log.LogI "        タブ数 " & beforeTabs & " → " & _
+                    UserForm1.CurrentBrowser.TabCount
+        TestBool "★タブが増えていない★", _
+                 (UserForm1.CurrentBrowser.TabCount = beforeTabs)
+    Else
+        Wv2Log.LogI "        (ブラウザ未起動なのでタブ数の判定は省略)"
+    End If
+
+    Application.StatusBar = Empty   ' D-7d: 前のテストの残りを消してから見る
+    TestBool "  ステータスバーが汚れていない", _
+             (TypeName(Application.StatusBar) = "Boolean")
+
+    wb.Close SaveChanges:=False
+
+    Wv2Log.LogI ""
+    TestCountPrint
+    Wv2Log.LogI "================ Test_D7_Cancel 終了 ================"
+    Wv2Log.LogI ""
+End Sub
+
+' ============================================================
+' Test_D7_Sheet (D-7b の検証: ★実行中に手で Esc を押す★)
+'
+'   ★外部サイトに実アクセスする★ ネットワークが要る。
+'   ★新しいブックを作って試し、保存せずに閉じる★
+'
+'   手順:
+'     1) 実行すると 4 件の住所を順に処理し始める (1 件 8 秒ほど)。
+'     2) ★ステータスバーを見ながら 2 件目あたりで Esc を押す★
+'        押しっぱなしでなくてよい。焦点はどこにあってもよい。
+'        ★D-7b からは「コードの実行が中断されました」は出ない★ (エラー18 として
+'        受け取って中断に変える)。出たら D-7b が効いていないということ。
+'     3) 中断されたことと、★中断した行に何も書かれていないこと★を判定する。
+'     4) そのまま呼び直して★続きから埋まること★を判定する (設計原則110)。
+'
+'   ★Esc を押さなければ FAIL になる★ 押し忘れたらもう一度実行する。
+'   ★住所はすべて「1 件に確定する」ものを選んである★ (D-7 では ambiguous な
+'   住所が混ざって 1 件 27 秒かかり、判定も間接的になっていた)。
+' ============================================================
+Public Sub Test_D7_Sheet()
+    Dim wb As Workbook
+    Dim sh As Object
+    Dim n As Long
+    Dim n2 As Long
+    Dim i As Long
+    Dim blanks As Long
+    Dim wasCanceled As Boolean
+
+    If UserForm1.CurrentBrowser Is Nothing Then
+        Wv2Log.LogI "Test_D7_Sheet: Browser が起動していません。"
+        Exit Sub
+    End If
+
+    Wv2Log.LogI ""
+    TestCountReset
+    Wv2Log.LogI "================ Test_D7_Sheet 開始 ================"
+    Wv2Log.LogI "  ★★★ 2 件目あたりで Esc を押してください ★★★"
+    Debug.Print ""
+    Debug.Print "  ★★★ 2 件目あたりで Esc を押してください ★★★"
+    Debug.Print "  (連打しなくてよい。1 回で効きます)"
+
+    Set wb = Workbooks.Add
+    Set sh = wb.Worksheets(1)
+    sh.Cells(1, 1).value = "住所"
+    sh.Cells(2, 1).value = "東京都千代田区丸の内1-9-1"
+    sh.Cells(3, 1).value = "大阪府大阪市中央区大阪城1-1"
+    sh.Cells(4, 1).value = "北海道札幌市北区北6条西4丁目"
+    sh.Cells(5, 1).value = "宮城県仙台市青葉区中央1-1-1"
+
+    n = Wv2Maps.MapsGeocodeSheet(sh)
+    wasCanceled = Wv2Maps.MapsCanceled
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "        ok = " & n & " / 中断 = " & wasCanceled & _
+                " / 理由 = " & Wv2Maps.MapsLastError
+    TestDumpStatusBar "StatusBar"
+    Wv2Log.LogI "        ★中断検知の呼び出し = " & Wv2Maps.MapsCheckCount & " 回★"
+
+    TestBool "★中断された★ (押していなければ FAIL。もう一度どうぞ)", wasCanceled
+    TestBool "  理由が canceled", (Wv2Maps.MapsLastError = "canceled")
+    ' D-7d: Empty で戻すようにしたので判定を復活させた
+    TestBool "★ステータスバーが戻っている★", _
+             (TypeName(Application.StatusBar) = "Boolean")
+    TestBool "★EnableCancelKey が戻っている★", _
+             (Application.EnableCancelKey = xlInterrupt)
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- ★書きかけの行を残していないか★ (設計原則111) ---"
+
+    blanks = 0
+    For i = 2 To 5
+        If Len(CStr(sh.Cells(i, 5).value)) = 0 Then
+            blanks = blanks + 1
+            TestBool "  " & i & " 行目は手つかず (座標も空)", _
+                     (Len(CStr(sh.Cells(i, 2).value)) = 0 And _
+                      Len(CStr(sh.Cells(i, 3).value)) = 0)
+        End If
+    Next i
+    Wv2Log.LogI "        手つかずの行 = " & blanks & " 件"
+    ' ★これが「途中で止まった」の直接の証拠★ (n < 4 は間接指標なので使わない)
+    TestBool "★手つかずの行がある★", (blanks >= 1)
+
+    ' --- D-7e: ★止まったことを人に見せて、指が離れるのを待つ★ ---
+    Wv2Log.LogI ""
+    Debug.Print ""
+    If wasCanceled Then
+        Debug.Print "  ★★★ 止まりました (" & n & " 件処理して中断) ★★★"
+        Wv2Log.LogI "  ★★★ 止まりました (" & n & " 件処理して中断) ★★★"
+    Else
+        Debug.Print "  ★止まりませんでした★ Esc を押しましたか?"
+        Wv2Log.LogI "  ★止まりませんでした★"
+    End If
+    Debug.Print "  ★Esc から指を離してください★ 静かになったら再開を試します"
+    TestWaitEscReleased 15
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- ★呼び直して続きから★ (今度は Esc を押さないでください) ---"
+    Debug.Print "  --- 再開します (Esc は押さないでください) ---"
+
+    n2 = Wv2Maps.MapsGeocodeSheet(sh)
+    Wv2Log.LogI "        2 回目の ok = " & n2 & " / 中断 = " & Wv2Maps.MapsCanceled
+
+    blanks = 0
+    For i = 2 To 5
+        Wv2Log.LogI "        " & i & " 行目: " & sh.Cells(i, 2).value & " / " & _
+                    sh.Cells(i, 3).value & " / " & sh.Cells(i, 5).value
+        If Len(CStr(sh.Cells(i, 5).value)) = 0 Then blanks = blanks + 1
+    Next i
+
+    TestBool "★2 回目は中断していない★ (入口で捨てられた)", _
+             (Wv2Maps.MapsCanceled = False)
+    TestBool "★手つかずの行が無くなった★", (blanks = 0)
+    TestBool "  ok が減っていない", (n2 >= n)
+    TestBool "  EnableCancelKey が戻っている", _
+             (Application.EnableCancelKey = xlInterrupt)
+    TestBool "  ステータスバーが戻っている", _
+             (TypeName(Application.StatusBar) = "Boolean")
+    TestDumpStatusBar "StatusBar"
+
+    wb.Close SaveChanges:=False
+
+    Wv2Log.LogI ""
+    TestCountPrint
+    Wv2Log.LogI "================ Test_D7_Sheet 終了 ================"
+    Wv2Log.LogI ""
+End Sub
+
+' ============================================================
+' Test_D7_Resume (D-7b の検証: ★中断後の状態から再開できるか★)
+'
+'   ★Esc を押さなくてよい★ 中断された後のシート ―― 前半だけ埋まっていて
+'   後半が手つかず ―― を人工的に作り、そこから呼び直す。
+'   これで「再開」の回帰確認を毎回自動で回せる。
+'
+'   ★外部サイトに実アクセスする★ 処理するのは 2 件だけ (15 秒ほど)。
+' ============================================================
+Public Sub Test_D7_Resume()
+    Dim wb As Workbook
+    Dim sh As Object
+    Dim n As Long
+    Dim i As Long
+    Dim blanks As Long
+
+    If UserForm1.CurrentBrowser Is Nothing Then
+        Wv2Log.LogI "Test_D7_Resume: Browser が起動していません。"
+        Exit Sub
+    End If
+
+    Wv2Log.LogI ""
+    TestCountReset
+    Wv2Log.LogI "================ Test_D7_Resume 開始 ================"
+
+    Set wb = Workbooks.Add
+    Set sh = wb.Worksheets(1)
+    sh.Cells(1, 1).value = "住所"
+    sh.Cells(2, 1).value = "東京都千代田区丸の内1-9-1"
+    sh.Cells(3, 1).value = "大阪府大阪市中央区大阪城1-1"
+    sh.Cells(4, 1).value = "北海道札幌市北区北6条西4丁目"
+    sh.Cells(5, 1).value = "宮城県仙台市青葉区中央1-1-1"
+
+    ' --- ★中断された後の状態を人工的に作る★ 前半 2 行は処理済み ---
+    sh.Cells(2, 2).value = 11.111
+    sh.Cells(2, 3).value = 22.222
+    sh.Cells(2, 4).value = "見張り番 1"
+    sh.Cells(2, 5).value = "ok"
+    sh.Cells(3, 2).value = 33.333
+    sh.Cells(3, 3).value = 44.444
+    sh.Cells(3, 4).value = "見張り番 2"
+    sh.Cells(3, 5).value = "ok(候補1)"
+
+    Wv2Log.LogI "  4 行のうち前半 2 行を「済み」にしてから呼ぶ"
+    n = Wv2Maps.MapsGeocodeSheet(sh)
+
+    Wv2Log.LogI "        戻り値 = " & n & " / 中断 = " & Wv2Maps.MapsCanceled
+    For i = 2 To 5
+        Wv2Log.LogI "        " & i & " 行目: " & sh.Cells(i, 2).value & " / " & _
+                    sh.Cells(i, 3).value & " / " & sh.Cells(i, 5).value
+    Next i
+
+    ' ★済みの行に触っていないこと★ (見張り番の値がそのまま残っているか)
+    TestBool "★済みの行は書き換えない★ (2 行目)", (sh.Cells(2, 2).value = 11.111)
+    TestBool "  ok(候補1) も済み扱いになる (3 行目)", (sh.Cells(3, 2).value = 33.333)
+
+    blanks = 0
+    For i = 2 To 5
+        If Len(CStr(sh.Cells(i, 5).value)) = 0 Then blanks = blanks + 1
+    Next i
+    TestBool "★手つかずの行が埋まった★", (blanks = 0)
+    TestBool "  4 行目に座標が入った", (Len(CStr(sh.Cells(4, 2).value)) > 0)
+    TestBool "  5 行目に座標が入った", (Len(CStr(sh.Cells(5, 2).value)) > 0)
+    TestBool "★戻り値は「済み」も数える★ (4 = 2 + 2)", (n = 4)
+    TestBool "  中断していない", (Wv2Maps.MapsCanceled = False)
+    TestBool "  EnableCancelKey が戻っている", _
+             (Application.EnableCancelKey = xlInterrupt)
+
+    wb.Close SaveChanges:=False
+
+    Wv2Log.LogI ""
+    TestCountPrint
+    Wv2Log.LogI "================ Test_D7_Resume 終了 ================"
+    Wv2Log.LogI ""
+End Sub
+
+' ============================================================
+' Test_K4_Quiet (K-4a の実験) - ★閉じる前に全タブを静める★
+'
+'   解放が遅い原因の切り分け。仮説は
+'   ★「ページが動き続けているので WebView2 が忙しく、COM の応答が遅い」★。
+'   全タブを about:blank に飛ばしてから閉じれば、速くなるはず。
+'
+'   ★製品コードは 1 行も変えない★ ここでやることは、利用者が手でできること
+'   (別のページへ移動する) と同じ。効いたら製品側にどう入れるかを別途決める。
+'
+'   使い方:
+'     1) Wv2Log.LogStart
+'     2) UserForm1.Show vbModeless → StartWebView2_Full
+'     3) Wv2Maps.MapsOpen UserForm1.CurrentBrowser   (重いページを 1 枚作る)
+'     4) ★Test_K4_Quiet 3★ / ★Test_K4_Quiet 1★ / ★Test_K4_Quiet 0★
+'     5) フォームを × で閉じる
+'
+'   ★K-4b: 待ち秒数を引数にした★ 3 秒では合計時間で得をしない
+'   (静めるのに 1.6 秒 + 待ち 3 秒 = 4.6 秒かけて、解放が 6.7 → 0.37 秒)。
+'   ★0 秒 (飛ばすだけ) で効くなら合計でも勝てる★ ので、そこを測る。
+'
+'   実測済み: 何もしない = 6.718 秒 / 3 秒待つ = 0.367 秒
+' ============================================================
+Public Sub Test_K4_Quiet(Optional ByVal waitSec As Single = 3)
+    Dim b As Wv2Browser
+    Dim p As Wv2Pane
+    Dim i As Long
+    Dim t0 As Single
+
+    Set b = UserForm1.CurrentBrowser
+    If b Is Nothing Then
+        Wv2Log.LogI "Test_K4_Quiet: Browser が起動していません。"
+        Exit Sub
+    End If
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "================ Test_K4_Quiet 開始 ================"
+    Wv2Log.LogI "  ★全 " & b.TabCount & " タブを about:blank に飛ばす★" & _
+                " (そのあと " & waitSec & " 秒待つ)"
+
+    t0 = Timer
+
+    For i = 1 To b.TabCount
+        Set p = b.PaneAt(i)
+        If Not p Is Nothing Then
+            p.View_Navigate "about:blank"
+            Wv2Log.LogI "        タブ " & i & " を about:blank へ"
+        End If
+    Next i
+
+    Wv2Log.LogI "  ★飛ばし終えた (" & Format$(Timer - t0, "0.00") & " 秒)★"
+
+    ' ★飛ばした直後は「これから止まる」ところ★ なので、落ち着くまで待つ
+    '   waitSec = 0 なら待たない (飛ばすだけで効くかを測るため)
+    If waitSec > 0 Then
+        t0 = Timer
+        Do
+            DoEvents
+        Loop Until Timer - t0 >= waitSec Or Timer < t0
+    End If
+
+    Wv2Log.LogI "  ★静めた。この状態でフォームを × で閉じてください★"
+    Debug.Print ""
+    Debug.Print "  ★静めました。フォームを × で閉じてください★"
+    Wv2Log.LogI "================ Test_K4_Quiet 終了 ================"
+    Wv2Log.LogI ""
+End Sub
+
+' ============================================================
+' Test_K4_Step (K-4c) - ★何が「閉じるのを遅くする」のかを二分探索する★
+'
+'   実測で分かっていること:
+'     AddTabWithUrl だけ … 閉じるのは★速い★
+'     MapsOpen 相当     … 閉じるのが★遅い★ (5 秒)
+'   差分は EvalSync を何度も撃つことと、QuerySelector で要素レジストリを
+'   作ることの 2 つ。どちらが効いているのかを段階的に再現して確かめる。
+'
+'   使い方 ★1 段階ごとに Excel の再起動は不要。フォームを開き直すだけ★:
+'     Wv2Log.LogStart
+'     UserForm1.Show vbModeless → StartWebView2_Full
+'     ★UserForm1.CurrentBrowser.QuietOnShutdown = False★  ← これを忘れない
+'     Test_K4_Step 1   (または 2 / 3 / 4)
+'     フォームを × で閉じる → ログの解放時間を見る
+'
+'   ★QuietOnShutdown = False が要る★ K-4c で解放前に静めるようにしたので、
+'   そのままだと全部速くなって切り分けにならない (設計原則103: プローブを検算する)。
+'
+'   段階ごとの内容:
+'     1 … AddTabWithUrl だけ (既知: 速い)
+'     2 … + EvalSync を 20 回
+'     3 … + QuerySelector を 5 回
+'     4 … MapsOpen 相当 (全部)                        (既知: 遅い)
+'     5 … ★DoEvents を 15 秒回すだけ★ (JS は撃たない)   (実測: 速い)
+'     6 … ★EvalSync を 300 回★     (MapsOpen 相当の回数)
+'     7 … ★View_GetSource を 300 回★ (COM で読むだけ)   (実測: 速い)
+'     8 … + JS が通るまで待つ           (MapsOpen の第 1 段)
+'     9 … + ★WaitFor で検索ボックスを待つ★ (唯一まだ試していない要素)
+'    10 … + /@ が付くまで待つ           (= MapsOpen 相当)   (実測: 速い)
+'    11 … + ★EnableCancelKey 操作 + AddIgnoreNetwork★ (最後の差分)
+'
+'   ★8→9→10 と進めて、遅くなった段階が答え★
+'
+'   ★実測で分かったこと (K-4c の切り分け)★
+'     Step 1 + 30 秒待ち … 速い  ← ただし★VBA は止まっていた★
+'     Step 2 (EvalSync×20) … 速い
+'     Step 3 (+QuerySelector×5) … 速い / +30 秒待ち でも速い
+'     MapsOpen … ★遅い★
+'     Step 5 (DoEvents 15 秒 / 69 万回) … 速い
+'   → ★「JS を撃つ」「時間」「DoEvents」はすべて無罪★。
+'     残るのは ★回数★ (MapsOpen は EvalSync を 200 回前後撃っている)。それが段階6/7。
+' ============================================================
+Public Sub Test_K4_Step(Optional ByVal stepNo As Long = 1)
+    Dim b As Wv2Browser
+    Dim p As Wv2Pane
+    Dim el As Wv2Element
+    Dim i As Long
+    Dim t0 As Single
+    Dim loops As Long
+    Dim savedKey As Long
+
+    Set b = UserForm1.CurrentBrowser
+    If b Is Nothing Then
+        Wv2Log.LogI "Test_K4_Step: Browser が起動していません。"
+        Exit Sub
+    End If
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "================ Test_K4_Step " & stepNo & " 開始 ================"
+    If b.QuietOnShutdown Then
+        Wv2Log.LogW "  ★QuietOnShutdown が True のままです★ 切り分けになりません。"
+        Wv2Log.LogW "  UserForm1.CurrentBrowser.QuietOnShutdown = False を先に打つこと。"
+        Debug.Print "  ★QuietOnShutdown = False を先に打ってください★"
+    End If
+
+    ' --- 段階1: タブを開く (全段階で共通) ---
+    t0 = Timer
+    Set p = b.AddTabWithUrl("https://www.google.com/maps")
+    Wv2Log.LogI "  [1] AddTabWithUrl … " & Format$(Timer - t0, "0.00") & " 秒"
+    If p Is Nothing Then
+        Wv2Log.LogI "      タブを開けなかった"
+        Exit Sub
+    End If
+
+    If stepNo >= 2 And stepNo <= 4 Then
+        ' --- 段階2: EvalSync を 20 回 ---
+        t0 = Timer
+        For i = 1 To 20
+            p.EvalSync "1", 3
+        Next i
+        Wv2Log.LogI "  [2] EvalSync × 20 … " & Format$(Timer - t0, "0.00") & " 秒"
+    End If
+
+    If stepNo >= 3 And stepNo <= 4 Then
+        ' --- 段階3: QuerySelector を 5 回 (要素レジストリを作る) ---
+        t0 = Timer
+        For i = 1 To 5
+            Set el = p.QuerySelector("input")
+        Next i
+        Wv2Log.LogI "  [3] QuerySelector × 5 … " & Format$(Timer - t0, "0.00") & _
+                    " 秒 (レジストリ " & p.ElementCount & " 個)"
+    End If
+
+    If stepNo >= 11 Then
+        ' [11] ★MapsOpen と同じ順序で包む★
+        '   本物は「入る前に arm → 全部やる → 最後に AddIgnoreNetwork → disarm」。
+        '   ★arm が一瞬では再現にならない★ ので、ここで掛けて最後に外す。
+        savedKey = Application.EnableCancelKey
+        Application.EnableCancelKey = xlDisabled
+        Wv2Log.LogI "  [11] EnableCancelKey = xlDisabled にした"
+    End If
+
+    If stepNo >= 8 Then
+        ' --- 段階8/9/10 (K-4c): ★MapsOpen の中身を段階的に再現する★ ---
+        '   候補を当てにいって 6 連敗したので、当てるのをやめて
+        '   ★MapsOpen を分解し、途中で止めて閉じる★ 方式にした。
+        '   MapsOpen 全体は確実に遅いので、どこかに必ず境界がある。
+
+        ' [8] JS が通るようになるまで待つ (MapsOpenCore の第 1 段)
+        t0 = Timer
+        Do
+            p.EvalSync "1", 3
+            If p.LastEvalOk Then Exit Do
+            If Timer - t0 >= 30 Or Timer < t0 Then Exit Do
+            DoEvents
+        Loop
+        Wv2Log.LogI "  [8] JS が通るまで … " & Format$(Timer - t0, "0.00") & " 秒"
+
+        If stepNo >= 9 Then
+            ' [9] ★検索ボックスが出るまで WaitFor★ (唯一まだ試していない要素)
+            t0 = Timer
+            Set el = p.WaitFor("input[name='q']", 30)
+            Wv2Log.LogI "  [9] WaitFor … " & Format$(Timer - t0, "0.00") & " 秒 " & _
+                        IIf(el Is Nothing, "(見つからなかった)", "(見つかった)") & _
+                        " レジストリ " & p.ElementCount & " 個"
+        End If
+
+        If stepNo >= 10 Then
+            ' [10] 地図が位置を持つまで待つ (= MapsOpen 相当)
+            t0 = Timer
+            Do
+                If InStr(1, p.View_GetSource(), "/@") > 0 Then Exit Do
+                If Timer - t0 >= 8 Or Timer < t0 Then Exit Do
+                DoEvents
+            Loop
+            Wv2Log.LogI "  [10] /@ が付くまで … " & Format$(Timer - t0, "0.00") & " 秒"
+        End If
+
+        If stepNo >= 11 Then
+            p.AddIgnoreNetwork "/search?tbm=map"
+            Application.EnableCancelKey = savedKey
+            Wv2Log.LogI "  [11] AddIgnoreNetwork して EnableCancelKey を戻した"
+        End If
+    End If
+
+    If stepNo = 6 Or stepNo = 7 Then
+        ' --- 段階6/7 (K-4c): ★回数を桁で増やす★ ---
+        '   段階2 の EvalSync は 20 回で速かったが、MapsOpen は 17 秒ぶん
+        '   ポーリングするので ★200 回前後★ 撃っている計算になる。桁が違う。
+        '     6 … EvalSync (JS を撃つ) を 300 回
+        '     7 … View_GetSource (COM で URL を読むだけ) を 300 回
+        '   ★どちらが効くかで「JS 側が溜まる」か「COM 側が溜まる」かが分かれる★
+        t0 = Timer
+        For i = 1 To 300
+            If stepNo = 6 Then
+                p.EvalSync "1", 3
+            Else
+                p.View_GetSource
+            End If
+        Next i
+        Wv2Log.LogI "  [" & stepNo & "] " & _
+                    IIf(stepNo = 6, "EvalSync", "View_GetSource") & _
+                    " × 300 … " & Format$(Timer - t0, "0.00") & " 秒"
+        Wv2Log.LogI "      レジストリ " & p.ElementCount & " 個 / " & _
+                    "最後の EvalSync は " & p.LastEvalOk
+    End If
+
+    If stepNo = 5 Then
+        ' --- 段階5 (K-4c): ★DoEvents を回すだけ★ JS は 1 回も撃たない ---
+        '   Step 1 + 30 秒待ち は速かったが、そのとき VBA は★止まっていた★。
+        '   MapsOpen は 15 秒間 DoEvents を回し続ける = ★WebView2 のイベントが
+        '   VBA のコールバックへ配送され続ける★。ここが唯一の差分。
+        t0 = Timer
+        loops = 0
+        Do
+            DoEvents
+            loops = loops + 1
+        Loop Until Timer - t0 >= 15 Or Timer < t0
+        Wv2Log.LogI "  [5] DoEvents を 15 秒 … " & loops & " 回まわした"
+    End If
+
+    If stepNo = 4 Then
+        ' --- 段階4: MapsOpen 相当 (待ちも含めて丸ごと) ---
+        '   ★= 4 であって >= 4 ではない★ 段階5 に巻き込むと切り分けにならない
+        '   (K-4c で実際にやらかした。設計原則103: プローブ自体を検算する)
+        t0 = Timer
+        Wv2Maps.MapsOpen b
+        Wv2Log.LogI "  [4] MapsOpen … " & Format$(Timer - t0, "0.00") & " 秒"
+    End If
+
+    Wv2Log.LogI "  ★この状態でフォームを × で閉じてください★"
+    Debug.Print ""
+    Debug.Print "  ★段階 " & stepNo & " まで実行しました。× で閉じてください★"
+    Wv2Log.LogI "================ Test_K4_Step " & stepNo & " 終了 ================"
+    Wv2Log.LogI ""
+End Sub
+
+' ============================================================
+' Test_K4_Help (K-4a の手順)
+' ============================================================
+Public Sub Test_K4_Help()
+    Debug.Print ""
+    Debug.Print "=========================================================="
+    Debug.Print " K-4a 実測手順 (フォームを閉じたときの解放が遅い)"
+    Debug.Print "=========================================================="
+    Debug.Print ""
+    Debug.Print "  ★毎回 Wv2Log.LogStart から始める★ 1 回分が 1 ファイルに閉じる。"
+    Debug.Print ""
+    Debug.Print "  --- ケース1: 素の状態 (実測済み 0.336 秒) ---"
+    Debug.Print "  1) Wv2Log.LogStart"
+    Debug.Print "  2) UserForm1.Show vbModeless → StartWebView2_Full"
+    Debug.Print "  3) すぐ × で閉じる"
+    Debug.Print ""
+    Debug.Print "  --- ケース2: 重いページを開いた後 (実測済み ★6.718 秒★) ---"
+    Debug.Print "  3) Wv2Maps.MapsOpen UserForm1.CurrentBrowser"
+    Debug.Print "  4) × で閉じる"
+    Debug.Print ""
+    Debug.Print "  --- ケース3: 閉じる前に静める (実測済み ★0.367 秒★) ---"
+    Debug.Print "  3) Wv2Maps.MapsOpen UserForm1.CurrentBrowser"
+    Debug.Print "  4) ★Test_K4_Quiet 3★  (about:blank に飛ばして 3 秒待つ)"
+    Debug.Print "  5) × で閉じる"
+    Debug.Print ""
+    Debug.Print "  --- ケース3b: ★待ち時間を削る★ (これから測る) ---"
+    Debug.Print "  4) Test_K4_Quiet 1   … 1 秒待つ"
+    Debug.Print "  4) Test_K4_Quiet 0   … ★待たない (飛ばすだけ)★"
+    Debug.Print "  ★合計時間で勝てるのはこちら★ 静めるのに 1.6 秒かかるので、"
+    Debug.Print "  3 秒待つと合計 5 秒で「何もしない 6.7 秒」とあまり変わらない。"
+    Debug.Print ""
+    Debug.Print "  --- ケース4: 重いタブを閉じてから (これから測る) ---"
+    Debug.Print "  3) Wv2Maps.MapsOpen UserForm1.CurrentBrowser"
+    Debug.Print "  4) UserForm1.CurrentBrowser.CloseTab 4   ' Maps のタブ番号"
+    Debug.Print "  5) × で閉じる"
+    Debug.Print ""
+    Debug.Print "  ★見るのはログの解放部分★ Wv2NavBar.Shutdown 開始 から"
+    Debug.Print "  Wv2Browser.Terminate 完了 までの経過。?Wv2Log.LogPath"
+    Debug.Print ""
+    Debug.Print "  --- K-4c: 対策が入った後の切り分け ---"
+    Debug.Print "  ★既定では解放の前に about:blank へ飛ばすので速い★"
+    Debug.Print "  遅い状態を再現するには:"
+    Debug.Print "    UserForm1.CurrentBrowser.QuietOnShutdown = False"
+    Debug.Print "  何が遅くしているかの二分探索:"
+    Debug.Print "    Test_K4_Step 1  … AddTabWithUrl だけ (既知: 速い)"
+    Debug.Print "    Test_K4_Step 2  … + EvalSync × 20"
+    Debug.Print "    Test_K4_Step 3  … + QuerySelector × 5"
+    Debug.Print "    Test_K4_Step 4  … MapsOpen 相当 (既知: 遅い)"
+    Debug.Print ""
+End Sub
+
+' ============================================================
+' Test_D7_Key (D-7d のプローブ) - ★GetAsyncKeyState が Esc を見えているか★
+'
+'   D-7c で Esc が拾えなかった。原因は 2 つのどちらか:
+'     A. MapsPump が回っておらず、そもそも呼ばれていない
+'     B. 呼んでも API が Esc を見えていない
+'   ★このプローブは B だけを測る★ 製品コードの待ちを通さず、
+'   ここで自前に回して生の値を記録する (設計原則103)。
+'
+'   ★実行中は EnableCancelKey を xlDisabled にする★ さもないと Esc で
+'   VBA が break して測定にならない。10 秒で必ず終わり、必ず元に戻す。
+'
+'   ネットワークもブラウザも要らない。
+' ============================================================
+Public Sub Test_D7_Key()
+    Dim savedKey As Long
+    Dim t0 As Single
+    Dim polls As Long
+    Dim hits As Long
+    Dim firstHit As Single
+    Dim lastSec As Long
+    Dim k As Long
+    Dim seen As Long
+
+    Wv2Log.LogI ""
+    TestCountReset
+    Wv2Log.LogI "================ Test_D7_Key 開始 ================"
+
+    ' ★D-7e: 「これから 10 秒」では読む前に終わる★ 押されるまで待つ形にした。
+    Debug.Print ""
+    Debug.Print "  ★★★ 今から Esc を押してください ★★★"
+    Debug.Print "  (押されたら即座に終わります。最大 30 秒待ちます)"
+    Wv2Log.LogI "  ★押されるまで待つ★ (最大 30 秒)"
+
+    savedKey = Application.EnableCancelKey
+    Application.EnableCancelKey = xlDisabled   ' さもないと Esc で break する
+
+    firstHit = -1
+    lastSec = -1
+    t0 = Timer
+    Do
+        DoEvents
+        polls = polls + 1
+
+        k = Wv2Maps.MapsRawEscState()
+        If k <> 0 Then
+            hits = hits + 1
+            If firstHit < 0 Then
+                firstHit = Timer - t0
+                seen = k
+                Debug.Print "  ★検出した★ 生の値 = " & k
+            End If
+            ' 押されたことが分かれば十分 (毎秒 4 万回まわるのですぐ貯まる)
+            If hits >= 500 Then Exit Do
+        End If
+
+        If Int(Timer - t0) <> lastSec Then
+            lastSec = Int(Timer - t0)
+            Debug.Print "  ... 残り " & (30 - lastSec) & " 秒"
+        End If
+
+        If Timer - t0 >= 30 Or Timer < t0 Then Exit Do
+    Loop
+
+    Application.EnableCancelKey = savedKey
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "        ポーリング " & polls & " 回 / " & _
+                Format$(Timer - t0, "0.0") & " 秒"
+    Wv2Log.LogI "        検出       " & hits & " 回"
+    If hits > 0 Then
+        Wv2Log.LogI "        最初の検出 " & Format$(firstHit, "0.00") & " 秒後"
+        Wv2Log.LogI "        生の値     " & seen & " (&H" & Hex$(seen And &HFFFF&) & ")"
+    End If
+
+    TestBool "★GetAsyncKeyState は Esc を見えている★", (hits > 0)
+
+    Wv2Log.LogI ""
+    If hits > 0 Then
+        Wv2Log.LogI "  ★結論: API は見えている★"
+    Else
+        Wv2Log.LogI "  ★結論: 30 秒待っても検出できなかった★"
+        Wv2Log.LogI "         ★押し忘れでなければ★ キーの拾い方を変える必要がある。"
+    End If
+
+    TestCountPrint
+    Wv2Log.LogI "================ Test_D7_Key 終了 ================"
+    Wv2Log.LogI ""
+End Sub
+
+' ============================================================
+' TestWaitEscReleased (D-7e、Private) - ★Esc から指が離れるまで待つ★
+'
+'   D-7d で、中断した直後に 2 回目を走らせたら、連打していた Esc が
+'   そちらにも効いて判定が 3 件 FAIL になった。製品側は正しく、
+'   ★検証の段取りが悪かった★。静かになるまで待ってから次へ進む。
+'
+'   ★待っている間は xlDisabled にする★ 戻したままだと、待ちの最中に
+'   押された Esc で VBA が break してしまう。
+' ============================================================
+Private Sub TestWaitEscReleased(ByVal maxSec As Single)
+    Dim savedKey As Long
+    Dim t0 As Single
+    Dim quiet As Single
+
+    savedKey = Application.EnableCancelKey
+    Application.EnableCancelKey = xlDisabled
+
+    quiet = -1
+    t0 = Timer
+    Do
+        DoEvents
+        If Wv2Maps.MapsRawEscState() = 0 Then
+            If quiet < 0 Then quiet = Timer
+            If Timer - quiet >= 2 Then Exit Do   ' ★2 秒静かなら離れたと見なす★
+        Else
+            quiet = -1
+        End If
+        If Timer - t0 >= maxSec Or Timer < t0 Then Exit Do
+    Loop
+
+    Application.EnableCancelKey = savedKey
+    Wv2Log.LogI "  (Esc が静まった。再開します)"
+End Sub
+
+' ============================================================
+' Test_D7_StatusBar (D-7b のプローブ)
+'
+'   ★製品コードを通さずに Excel の生の挙動だけを測る★ (設計原則103)
+'   D-7 の実機で「★ステータスバーが戻っている★」が 3 箇所とも FAIL した。
+'   判定の書き方 (TypeName で見る) が悪いのか、Excel が実行中は制御を返さないのか
+'   を切り分ける。★判定はしない。事実だけ出す。★
+'
+'   ネットワークもブラウザも要らない。
+' ============================================================
+Public Sub Test_D7_StatusBar()
+    Wv2Log.LogI ""
+    Wv2Log.LogI "================ Test_D7_StatusBar 開始 ================"
+    Wv2Log.LogI "  ★D-7b の実測: False を入れると文字列 ""FALSE"" が残った★"
+    Wv2Log.LogI "  正しい戻し方を候補ごとに測る。★型が Boolean に戻れば当たり★"
+    Wv2Log.LogI ""
+
+    TestDumpStatusBar "(0) 何もしていないとき"
+    Wv2Log.LogI ""
+
+    TestStatusTry "(1) False       ", False
+    TestStatusTry "(2) Empty       ", Empty
+    TestStatusTry "(3) 空文字 """"   ", ""
+    TestStatusTry "(4) vbNullString", vbNullString
+    TestStatusTry "(5) CVar(False) ", CVar(False)
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  ★どれかで 型=Boolean になっていれば、それが正しい戻し方★"
+    Wv2Log.LogI "  すべて String なら、この Excel では制御を返せない ―― その場合は"
+    Wv2Log.LogI "  ★空文字にしておく★ のが実害が小さい (FALSE と表示されるよりよい)。"
+
+    ' ★測り終えたら Empty で戻す★ (D-7d の実測で当たりだったのがこれ)
+    Application.StatusBar = Empty
+    TestDumpStatusBar "(9) 後始末に Empty"
+
+    Wv2Log.LogI "================ Test_D7_StatusBar 終了 ================"
+    Wv2Log.LogI ""
+End Sub
+
+' ============================================================
+' TestStatusTry (D-7c、Private) - 戻し方の候補を 1 つ試す
+'
+'   ★毎回「文字列を入れてから戻す」★ 入れずに戻しても、元から Excel が
+'   制御を持っている状態なので何も測ったことにならない (設計原則103)。
+'   DoEvents を挟んだ後の値も見る ―― Excel が後から取り戻す可能性があるため。
+' ============================================================
+Private Sub TestStatusTry(ByVal tag As String, ByVal v As Variant)
+    Dim before As String
+    Dim after As String
+
+    Application.StatusBar = "テスト中 12/100"
+    Application.StatusBar = v
+    before = "[" & CStr(Application.StatusBar) & "] 型=" & _
+             TypeName(Application.StatusBar)
+
+    DoEvents
+    after = "[" & CStr(Application.StatusBar) & "] 型=" & _
+            TypeName(Application.StatusBar)
+
+    Wv2Log.LogI "        " & tag & " → 直後 " & before & " / DoEvents 後 " & after
+End Sub
+
+' ============================================================
+' TestDumpStatusBar (D-7b、Private) - ステータスバーの実測値を出す
+'   ★値そのものと型の両方を残す★ どちらか片方では切り分けられない。
+' ============================================================
+Private Sub TestDumpStatusBar(ByVal tag As String)
+    Wv2Log.LogI "        " & tag & " = [" & CStr(Application.StatusBar) & _
+                "] 型=" & TypeName(Application.StatusBar)
+End Sub
+
+' ============================================================
+' Test_D7_Help (D-7 の手順)
+' ============================================================
+Public Sub Test_D7_Help()
+    Debug.Print ""
+    Debug.Print "=========================================================="
+    Debug.Print " D-7 検証手順 (進捗表示と中断)"
+    Debug.Print "=========================================================="
+    Debug.Print ""
+    Debug.Print "  --- 準備 ---"
+    Debug.Print "  1) Wv2Log.LogStart"
+    Debug.Print "  2) UserForm1.Show vbModeless して StartWebView2_Full を実行する"
+    Debug.Print "  3) ★イベントバーストが静まるまで待つ★ (仕様事実 20)"
+    Debug.Print ""
+    Debug.Print "  --- 実行 (上から順に) ---"
+    Debug.Print "  4) Test_D7_Key … ★プローブ★ GetAsyncKeyState が Esc を"
+    Debug.Print "     見えているか。★押されるまで待つ★ (最大 30 秒)。"
+    Debug.Print "     ネットワーク不要。イミディエイトに残り秒数が出る。"
+    Debug.Print "  4b) Test_D7_StatusBar … ★プローブ★ ステータスバーの戻し方を"
+    Debug.Print "     候補ごとに実測する。ネットワーク不要・数秒。"
+    Debug.Print "     ★判定はしない。事実だけ出す★ (設計原則103)。"
+    Debug.Print "  5) Test_D7_Cancel … ★ネットワーク不要★ 中断の口と分母 (すぐ終わる)"
+    Debug.Print "  6) Test_D7_Resume … ★自動★ 中断後の状態からの再開 (2 件・15 秒)"
+    Debug.Print "  7) Test_D7_Sheet  … ★実サイト★ 4 件を処理する。"
+    Debug.Print "     ★2 件目あたりで Esc を押す★ ステータスバーを見ながら。"
+    Debug.Print "     ★連打しなくてよい。1 回で効く★ (連打すると再開にも効く)。"
+    Debug.Print "     押しっぱなしでなくてよく、焦点はどこにあってもよい。"
+    Debug.Print "     止まったらイミディエイトに ★★★ 止まりました ★★★ と出る。"
+    Debug.Print "     ★D-7c からは中断ダイアログも実行時エラー 18 も出ない★"
+    Debug.Print "     出たら効いていない。ログに ★Esc で中断が要求された★ が出る。"
+    Debug.Print "     そのあと自動で呼び直して、続きから埋まるかを見る。"
+    Debug.Print ""
+    Debug.Print "  --- 判定はログファイルで読む (設計原則105) ---"
+    Debug.Print "  ?Wv2Log.LogPath"
+    Debug.Print ""
+    Debug.Print "  --- 実務での使い方 ---"
+    Debug.Print "  Wv2Maps.MapsGeocodeSheet Sheets(""住所録"")"
+    Debug.Print "    処理中はステータスバーに 12/100 (ok 11 / 失敗 1) と出る。"
+    Debug.Print "    ★Esc でいつでも止まる★ 止めた行には何も書かれない。"
+    Debug.Print "    もう一度呼べば ok の行を飛ばして続きから進む。"
+    Debug.Print "  ?Wv2Maps.MapsCanceled   ' 中断で終わったか"
+    Debug.Print "  ?Wv2Maps.MapsCountRows(Sheets(""住所録""))  ' 何件あるか先に数える"
+    Debug.Print "  Wv2Maps.MapsCancel = True  ' 外から止める (イミディエイトから)"
+    Debug.Print ""
+End Sub
+
+' ============================================================
 ' Test_D4_Help (D-4 の手順)
 ' ============================================================
 Public Sub Test_D4_Help()
@@ -5235,6 +6199,9 @@ Public Sub Test_D4_Help()
     Debug.Print " 10) Test_D5_Sheet   … ★D-5b★ シート連携 (新しいブックを作って試す)"
     Debug.Print " 11) Test_D6_All     … ★D-6★ QuerySelectorAll と寿命管理"
     Debug.Print " 12) Test_D6_Pick    … ★D-6b★ 候補一覧から 1 番目を採る (実サイト)"
+    Debug.Print " 13) Test_D7_Cancel  … ★D-7★ 中断の口と分母 (ネットワーク不要)"
+    Debug.Print " 14) Test_D7_Resume  … ★D-7b★ 中断後の状態からの再開 (自動)"
+    Debug.Print " 15) Test_D7_Sheet   … ★D-7b★ 進捗と中断 (実行中に Esc を押す)"
     Debug.Print "     ★外部サイトに実アクセスする唯一の Test_*★ ネットワークが要る。"
     Debug.Print "     住所を変えたいときは Test_D4_Site ""別の住所"" と打つ。"
     Debug.Print ""
@@ -5319,4 +6286,692 @@ Public Sub Test_D4_Help()
     Debug.Print "    stableMs より後に始まる処理は原理的に取り逃す。"
     Debug.Print ""
 End Sub
+
+
+
+' ============================================================
+' ★N-1 : ネットワーク要求のキャプチャの検証★
+'
+'   Test_N1_Capture … ★自前 HTML だけで完結する回帰試験★ (論点8)
+'                     実サイトに頼らず、まず確実に捕まることを見る。
+'   Test_N1_Watch   … ★今開いているタブの通信を捕まえ始める★ (実用の入口)
+'   Test_N1_Drain   … 溜まった分をログへ流して空にする
+'   Test_N1_Stop    … 捕まえるのをやめる
+'   Test_N1_Help    … 手順
+'
+'   ★判定は Wv2Log に出す★ (設計原則105)。イミディエイトは配管ログで流れる。
+' ============================================================
+
+
+' ============================================================
+' Test_N1_Capture (N-1b の回帰試験)
+'
+'   ★N-1 の初回実機で分かったこと★
+'     仮想ホスト (SetVirtualHostNameToFolderMapping) で配信した要求は
+'     WebResourceRequested に乗らない。初回が全滅したのはこれが原因で、
+'     ★配線は最初から正しかった★ (実サイトでは 10 件すべて捕まった)。
+'
+'   ★そこで的を 2 系統 + 対照 1 系統にした (論点1 案G)★
+'
+'     案F  http://127.0.0.1:59999/...   到達不能なローカルアドレス
+'          ★外部サービスに依存しない★ 接続は必ず失敗するが、
+'          WebResourceRequested は「要求を止める / 書き換える」ためのイベントなので
+'          ネットワークへ出る前に発火する ―― はず。それをここで確かめる。
+'          ・★Chromium が塞いでいるポートを避ける★ (1/7/9/11/13/…/10080 など)。
+'            59999 は塞がれていない。
+'          ・★http なのに混在コンテンツで止まらない★ 127.0.0.1 と localhost は
+'            仕様上「潜在的に信頼できるオリジン」なので、https のページから
+'            呼んでも混在コンテンツ扱いされない。
+'
+'     案D  https://httpbingo.org/...    外部サービス
+'          ネットが要る代わりに、素直に届く経路。
+'
+'     対照 https://appassets.netprobe/data.json (仮想ホスト)
+'          ★捕まらないことを数えて確かめる★ = 見つけた仕様事実を回帰試験にする
+'
+'   ページ自体は今までどおり仮想ホストで配信する。★配信は問題なくできる★
+'   乗らないのはイベントだけ。
+'
+'   ★どちらの的が届かなくても、空振りになった判定はログに明示する★
+'   (「来ない」のが当たり前の状況で OK を積み上げないため)
+'
+'   ★種別は決めつけない (N-1c)★
+'     fetch() で撃っても WebView2 は XHR 種別で報告してくる。判定は「捕まったか」
+'     で行い、★実際に何の種別で届いたかはログに書き出して数える★。
+' ============================================================
+Public Sub Test_N1_Capture()
+    Dim b   As Wv2Browser
+    Dim p   As Wv2Pane
+    Dim el  As Wv2Element
+    Dim folderPath   As String
+    Dim hr           As Long
+    Dim localOk      As Boolean
+    Dim netOk        As Boolean
+    Dim totalBefore  As Long
+
+    Set b = UserForm1.CurrentBrowser
+    If b Is Nothing Then
+        Wv2Log.LogI "Test_N1_Capture: Browser が起動していません。" & _
+                    "先に UserForm1.StartWebView2_Full を実行してください。"
+        Exit Sub
+    End If
+
+    folderPath = N1WriteFolder()
+    If LenB(folderPath) = 0 Then
+        Wv2Log.LogI "Test_N1_Capture: 検証ページの書き出しに失敗しました。中止します。"
+        Exit Sub
+    End If
+
+    Set p = b.AddTab()
+    If p Is Nothing Then
+        Wv2Log.LogI "Test_N1_Capture: タブの生成に失敗しました。"
+        Exit Sub
+    End If
+
+    Wv2Log.LogI ""
+    TestCountReset
+    Wv2Log.LogI "================ Test_N1_Capture 開始 ================"
+    Wv2Log.LogI "        案F の的 = " & N1_LOCAL & "  (到達不能なローカル)"
+    Wv2Log.LogI "        案D の的 = " & N1_NET & "  (外部サービス)"
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (0) 準備 (★Navigate の前に捕捉を始める★) ---"
+
+    TestBool "NetCaptureStart が成功する", p.NetCaptureStart()
+    TestBool "  捕捉中になっている", (p.NetCaptureOn = True)
+
+    hr = p.View3_SetVirtualHostNameToFolderMapping(N1_HOST, folderPath, 1)   ' 1 = ALLOW
+    TestBool "  仮想ホストのマッピングができる", (hr = 0)
+
+    hr = p.View_Navigate("https://" & N1_HOST & "/netprobe.html")
+    TestBool "  Navigate が成功する", (hr = 0)
+
+    If Not D2WaitTitle(p, "N-1 プローブ", 10) Then
+        Wv2Log.LogI "Test_N1_Capture: 検証ページの読み込みを確認できませんでした。"
+        p.NetLogDrain
+        p.NetCaptureStop
+        TestCountPrint
+        Exit Sub
+    End If
+
+    ' ページ内の資材 (CSS / 画像) が飛び終わるだけの間を置く
+    D3Pump 3
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (1) ★仮想ホストの要求はイベントに乗らない (仕様事実の回帰)★ ---"
+    ' ★間接的な指標を使わない★ (設計原則112) ページは確かに読めている
+    ' (title が取れた) のに、その DOCUMENT が 1 件も居ないことを数える。
+    TestBool "★ページ自身の DOCUMENT が 1 件も居ない★", _
+             (N1Find(p, "", "", "netprobe.html") = 0)
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (2) fetch / XHR ― 的を 2 系統 + 対照 ---"
+
+    N1Fire p, "(function(){" & _
+              "fetch('" & N1_LOCAL & "/n1?k=f-local').catch(function(){});" & _
+              "fetch('" & N1_NET & "/get?k=f-net').catch(function(){});" & _
+              "fetch('data.json?k=f-vhost').catch(function(){});" & _
+              "var a=new XMLHttpRequest();a.open('GET','" & N1_LOCAL & _
+              "/n1?k=x-local',true);a.send();" & _
+              "var c=new XMLHttpRequest();c.open('GET','" & N1_NET & _
+              "/get?k=x-net',true);c.send();" & _
+              "return 1;})()"
+
+    ' ★種別を条件に入れない (N-1c)★ fetch が FETCH で来るとは限らない。
+    localOk = N1Wait(p, "GET", "", "k=f-local", 6)
+    TestBool "★案F: 到達不能なローカルへの fetch が捕まる★", localOk
+    TestBool "  案F: XHR も捕まる", N1Wait(p, "GET", "", "k=x-local", 4)
+
+    netOk = N1Wait(p, "GET", "", "k=f-net", 8)
+    TestBool "★案D: 外部への fetch が捕まる★", netOk
+    TestBool "  案D: XHR も捕まる", N1Wait(p, "GET", "", "k=x-net", 4)
+
+    TestBool "★対照: 仮想ホストへの fetch は捕まらない★", _
+             (N1Find(p, "", "", "k=f-vhost") = 0)
+
+    ' --- ★何の種別で届いたかを数える (N-1c)★ ---
+    '   fetch で撃ったものが FETCH で来るのか XHR で来るのかは★こちらの都合では
+    '   決まらない★。実機が返した種別をそのまま書き出して判定する。
+    Wv2Log.LogI "        届いた種別: f-local=" & N1CtxOf(p, "k=f-local") & _
+                "  x-local=" & N1CtxOf(p, "k=x-local") & _
+                "  f-net=" & N1CtxOf(p, "k=f-net") & _
+                "  x-net=" & N1CtxOf(p, "k=x-net")
+    TestBool "★fetch は FETCH ではなく XHR 種別で届く★", _
+             (N1CtxOf(p, "k=f-local") = "XHR" Or N1CtxOf(p, "k=f-net") = "XHR")
+
+    If Not localOk Then
+        Wv2Log.LogW "  ※ 案F が 1 件も届いていない。以降の案F の判定は空振りとして読むこと。"
+    End If
+    If Not netOk Then
+        Wv2Log.LogW "  ※ 案D が 1 件も届いていない (ネット断か httpbingo.org のダウン)。" & _
+                    "以降の案D の判定は空振りとして読むこと。"
+    End If
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (3) ★画像と CSS は来ない (既定フィルタ)★ ---"
+    ' ページは n1.css / n1.png / image/png を★両系統に対して★要求している。
+    ' 既定フィルタ (DOCUMENT / XHR / FETCH) がそれを弾いていることを数える。
+    TestBool "★n1.css が 1 件も居ない★", (N1Find(p, "", "", "n1.css") = 0)
+    TestBool "★n1.png が 1 件も居ない★", (N1Find(p, "", "", "n1.png") = 0)
+    TestBool "★image/png が 1 件も居ない★", (N1Find(p, "", "", "image/png") = 0)
+    If Not (localOk Or netOk) Then
+        Wv2Log.LogW "  ※ ★この 3 件は空振り★ 的が 1 つも届いていないので、" & _
+                    "「来ない」のはフィルタのおかげではない。"
+    End If
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (3b) ★ここまでに捕まえたものを全部出す★ ---"
+    ' ★推測で埋めないため (N-1c)★
+    '   次の (4) で容量を 3 に落とすと中身が消える。N-1b ではそれで (2) の
+    '   記録が失われ、「seq 1/2 は f-local と f-net だったはず」と推測する
+    '   羽目になった。消える前に必ず出しておく (設計原則112)。
+    p.NetLogDrain
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (4) ★溢れたら黙って捨てず、捨てた数が見える★ ---"
+
+    p.NetLogCapacity = 3
+    TestBool "容量を 3 にできる", (p.NetLogCapacity = 3)
+    TestBool "  中身も通算も 0 に戻る", (p.NetLogCount = 0 And p.NetLogTotal = 0)
+
+    N1Fire p, "(function(){for(var i=0;i<5;i++){" & _
+              "fetch('" & N1_LOCAL & "/n1?n='+i).catch(function(){});" & _
+              "fetch('" & N1_NET & "/get?n='+i).catch(function(){});" & _
+              "}return 10;})()"
+    D3Pump 4
+
+    Wv2Log.LogI "        総発火 " & p.NetLogTotal & " 件 / 手元 " & p.NetLogCount & _
+                " 件 / 溢れ " & p.NetLogDropped & " 件"
+    TestBool "5 件以上発火した", (p.NetLogTotal >= 5)
+    TestBool "★手元は容量ぶんの 3 件だけ★", (p.NetLogCount = 3)
+    TestBool "★溢れた数が数えられている★", (p.NetLogDropped = p.NetLogTotal - 3)
+
+    ' --- ★N-1b: ドレインしても通算は残る (論点3 案Y)★ ---
+    '   初回実機のログで「総発火 0 件」と出て 10 件来ていた事実が消えた。
+    '   その再発を止める判定。
+    totalBefore = p.NetLogTotal
+    p.NetLogDrain
+    TestBool "★ドレインしても総発火は残る (通算)★", (p.NetLogTotal = totalBefore)
+    TestBool "  手元だけ空になる", (p.NetLogCount = 0)
+    p.NetLogClear
+    TestBool "  NetLogClear なら通算も 0 に戻る", (p.NetLogTotal = 0)
+
+    p.NetLogCapacity = 500
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (5) ★止めたら本当に来なくなり、張り直せる★ ---"
+
+    TestBool "NetCaptureStop が成功する", p.NetCaptureStop()
+    TestBool "  捕捉中でなくなる", (p.NetCaptureOn = False)
+
+    p.NetLogClear
+    N1Fire p, "(function(){" & _
+              "fetch('" & N1_LOCAL & "/n1?k=afterstop').catch(function(){});" & _
+              "fetch('" & N1_NET & "/get?k=afterstop').catch(function(){});return 1;})()"
+    D3Pump 3
+    ' ★フィルタも外している★ ので、止めた後は 1 件も来ないのが正しい。
+    TestBool "★止めた後は 1 件も来ない★", (p.NetLogTotal = 0)
+
+    TestBool "もう一度 NetCaptureStart できる", p.NetCaptureStart()
+    N1Fire p, "(function(){" & _
+              "fetch('" & N1_LOCAL & "/n1?k=restart').catch(function(){});" & _
+              "fetch('" & N1_NET & "/get?k=restart').catch(function(){});return 1;})()"
+    TestBool "★張り直した網でまた捕まる★", N1Wait(p, "GET", "", "k=restart", 8)
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (6) ★フォーム POST でのページ遷移が見える★ ---"
+    ' ★これが方式 B (ネイティブイベント) を選んだ理由そのもの★
+    '   ページ内 JS のラップでは、この 1 行はどうやっても見えない。
+
+    p.NetLogClear
+    Set el = p.QuerySelector("#postbtn-local")
+    TestBool "案F: 送信ボタンを掴める", Not (el Is Nothing)
+    If Not (el Is Nothing) Then
+        TestBool "  案F: クリックできる", el.Click()
+        TestBool "★案F: POST が DOCUMENT として捕まる★", _
+                 N1Wait(p, "POST", "DOCUMENT", "127.0.0.1", 8)
+    End If
+
+    ' 検証ページへ戻る (仮想ホストなのでこの遷移自体はイベントに乗らない)
+    p.NetLogClear
+    If N1Nav(p, "https://" & N1_HOST & "/netprobe.html", "N-1 プローブ", 10) Then
+        Set el = p.QuerySelector("#postbtn-net")
+        TestBool "案D: 送信ボタンを掴める", Not (el Is Nothing)
+        If Not (el Is Nothing) Then
+            TestBool "  案D: クリックできる", el.Click()
+            TestBool "★案D: POST が DOCUMENT として捕まる★", _
+                     N1Wait(p, "POST", "DOCUMENT", "httpbingo.org", 10)
+        End If
+    Else
+        Wv2Log.LogI "        検証ページへ戻れなかったので案D の POST は飛ばす"
+    End If
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (7) ★DOCUMENT の GET★ (論点2 案a) ---"
+    ' ページ自身の DOCUMENT は仮想ホストなので取れない。的へ直接 Navigate して取る。
+
+    p.NetLogClear
+    p.View_Navigate N1_LOCAL & "/n1-doc-get"
+    TestBool "★案F: DOCUMENT GET が捕まる★", _
+             N1Wait(p, "GET", "DOCUMENT", "n1-doc-get", 8)
+
+    p.NetLogClear
+    p.View_Navigate N1_NET & "/get?k=doc"
+    TestBool "★案D: DOCUMENT GET が捕まる★", _
+             N1Wait(p, "GET", "DOCUMENT", "k=doc", 10)
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- 手元に残っているものを全部出す ---"
+    p.NetLogDrain
+    p.NetCaptureStop
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  in-callback 深さ (期待 0): " & p.InCallbackDepth
+    TestCountPrint
+    Wv2Log.LogI "================ Test_N1_Capture 終了 ================"
+    Wv2Log.LogI ""
+End Sub
+
+
+' ============================================================
+' Test_N1_Site (N-1 の切り分け役 兼 実サイトでの実感)
+'
+'   ★外部サイトに実アクセスする★ Test_N1_Capture が仮想ホスト頼みなので、
+'   「配線が悪いのか、仮想ホストの要求だけ乗らないのか」を 1 手で切り分ける。
+'
+'   やることは Test_N1_Capture の (1) と同じ:
+'     タブを作る → ★Navigate の前に捕捉を始める★ → 開く → 溜まった分を出す。
+'
+'   実サイトなので件数は毎回変わる。★合否は「DOCUMENT が 1 件以上居るか」だけ★
+'   見る (中身の数は数えない)。
+' ============================================================
+Public Sub Test_N1_Site(Optional ByVal url As String = "https://www.google.com/")
+    Dim b As Wv2Browser
+    Dim p As Wv2Pane
+    Dim hr As Long
+
+    Set b = UserForm1.CurrentBrowser
+    If b Is Nothing Then
+        Wv2Log.LogI "Test_N1_Site: Browser が起動していません。"
+        Exit Sub
+    End If
+
+    Set p = b.AddTab()
+    If p Is Nothing Then
+        Wv2Log.LogI "Test_N1_Site: タブの生成に失敗しました。"
+        Exit Sub
+    End If
+
+    Wv2Log.LogI ""
+    TestCountReset
+    Wv2Log.LogI "================ Test_N1_Site 開始 (" & url & ") ================"
+
+    TestBool "NetCaptureStart が成功する", p.NetCaptureStart()
+
+    hr = p.View_Navigate(url)
+    TestBool "  Navigate が成功する", (hr = 0)
+
+    ' 実サイトは遅いので少し長めに待つ (件数は問わない)
+    D3Pump 6
+
+    TestBool "★DOCUMENT が 1 件以上捕まっている★", _
+             (N1Find(p, "", "DOCUMENT", "") > 0)
+    TestBool "  何かしら捕まっている", (p.NetLogCount > 0)
+
+    Wv2Log.LogI ""
+    p.NetLogDrain
+    p.NetCaptureStop
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  in-callback 深さ (期待 0): " & p.InCallbackDepth
+    TestCountPrint
+    Wv2Log.LogI "================ Test_N1_Site 終了 ================"
+    Wv2Log.LogI ""
+End Sub
+
+
+' ============================================================
+' Test_N1_Watch (N-1 の実用の入口)
+'
+'   ★今開いているタブの通信を捕まえ始める★
+'   「手で 1 回操作して、何をどの順で叩いているか」を見るための道具。
+'
+'   contexts を省略すると DOCUMENT / XHR / FETCH の 3 種別。
+'   画像や CSS まで見たいときは Test_N1_Watch "ALL" と打つ。
+' ============================================================
+Public Sub Test_N1_Watch(Optional ByVal contexts As String = "")
+    Dim b As Wv2Browser
+    Dim p As Wv2Pane
+
+    Set b = UserForm1.CurrentBrowser
+    If b Is Nothing Then
+        Debug.Print "[N-1] Browser が起動していません。"
+        Exit Sub
+    End If
+    Set p = b.ActivePane
+    If p Is Nothing Then
+        Debug.Print "[N-1] アクティブなタブがありません。"
+        Exit Sub
+    End If
+
+    If p.NetCaptureStart(contexts) Then
+        Debug.Print "[N-1] 捕捉を開始しました。ページを手で操作してから Test_N1_Drain を打ってください。"
+        Debug.Print "      ★判定・一覧はログファイルに出ます★ (%APPDATA%\Wv2Browser\logs)"
+    Else
+        Debug.Print "[N-1] 捕捉を開始できませんでした。ログを見てください。"
+    End If
+End Sub
+
+
+' ============================================================
+' Test_N1_Drain (N-1) - 溜まった分をログへ流して空にする
+' ============================================================
+Public Sub Test_N1_Drain()
+    Dim b As Wv2Browser
+    Dim p As Wv2Pane
+    Dim n As Long
+
+    Set b = UserForm1.CurrentBrowser
+    If b Is Nothing Then Exit Sub
+    Set p = b.ActivePane
+    If p Is Nothing Then Exit Sub
+
+    n = p.NetLogDrain
+    Debug.Print "[N-1] " & n & " 件をログへ流しました (総発火 " & p.NetLogTotal & " 件)。"
+End Sub
+
+
+' ============================================================
+' Test_N1_Stop (N-1) - 捕まえるのをやめる (フィルタも外す)
+' ============================================================
+Public Sub Test_N1_Stop()
+    Dim b As Wv2Browser
+    Dim p As Wv2Pane
+
+    Set b = UserForm1.CurrentBrowser
+    If b Is Nothing Then Exit Sub
+    Set p = b.ActivePane
+    If p Is Nothing Then Exit Sub
+
+    p.NetLogDrain
+    If p.NetCaptureStop() Then
+        Debug.Print "[N-1] 捕捉を終了しました。"
+    Else
+        Debug.Print "[N-1] 捕捉は終了しましたが、後始末で失敗があります。ログを見てください。"
+    End If
+End Sub
+
+
+' ============================================================
+' Test_N1_Help (N-1 の手順)
+' ============================================================
+Public Sub Test_N1_Help()
+    Debug.Print "==== N-1 実機手順 (ブラウザが何を叩いているかを見る) ===="
+    Debug.Print ""
+    Debug.Print "  【回帰試験 (外部依存ゼロ)】"
+    Debug.Print "    1) UserForm1.Show vbModeless      ' ★仕様事実54★ 先に Show する"
+    Debug.Print "    2) UserForm1.StartWebView2_Full"
+    Debug.Print "    3) Wv2Log.LogStart                ' このテスト 1 回分を 1 ファイルに閉じる"
+    Debug.Print "    4) Test_N1_Capture"
+    Debug.Print "    → ★判定はログファイルで読む★ %APPDATA%\Wv2Browser\logs の最新 1 本。"
+    Debug.Print "       末尾の『★判定 n 件: OK x / FAIL y★』を見ること。"
+    Debug.Print ""
+    Debug.Print "  【落ちたときの切り分け】"
+    Debug.Print "    Test_N1_Site                      ' 実サイトで同じことをする"
+    Debug.Print "    ・そちらでも 0 件      → ★配線の問題★ (vtable / IID / フィルタ)"
+    Debug.Print "    ・そちらだけ捕まる     → 検証ページの的の問題"
+    Debug.Print ""
+    Debug.Print "  【★N-1 で確定した仕様★】"
+    Debug.Print "    仮想ホスト (SetVirtualHostNameToFolderMapping) で配信した要求は"
+    Debug.Print "    ★WebResourceRequested に乗らない★ (DOCUMENT / fetch / XHR / 画像 / CSS"
+    Debug.Print "    のすべて)。ランタイムが内部の資材ハンドラで直接返しているため。"
+    Debug.Print "    Test_N1_Capture の的はこれを避けて 2 系統に置いてある:"
+    Debug.Print "      案F  http://127.0.0.1:59999/…  到達不能なローカル (外部依存ゼロ)"
+    Debug.Print "      案D  https://httpbingo.org/…   外部サービス (ネットが要る)"
+    Debug.Print ""
+    Debug.Print "    ★fetch() は FETCH ではなく XHR 種別で届く★"
+    Debug.Print "    JS の fetch で撃った要求を WebView2 は XML_HTTP_REQUEST(7) として"
+    Debug.Print "    報告する。種別で絞り込むときに決めつけないこと。既定のフィルタは"
+    Debug.Print "    FETCH(8) も張ったままにしてある (害はなく、将来変わっても拾える)。"
+    Debug.Print ""
+    Debug.Print "  【実際のサイトで使う】"
+    Debug.Print "    1) 調べたいページをタブで開く"
+    Debug.Print "    2) Test_N1_Watch                  ' 捕捉開始 (DOCUMENT / XHR / FETCH)"
+    Debug.Print "       Test_N1_Watch ""ALL""            ' 画像や CSS まで見たいとき"
+    Debug.Print "    3) ★ページを手で 1 回操作する★ (ログインする、検索する、CSV を吐かせる…)"
+    Debug.Print "    4) Test_N1_Drain                  ' 溜まった分をログへ流して空にする"
+    Debug.Print "    5) Test_N1_Stop                   ' 終わり (フィルタも外れる)"
+    Debug.Print ""
+    Debug.Print "  --- ログの読み方 ---"
+    Debug.Print "    #    経過ms  メソッド 種別       URL"
+    Debug.Print "    経過ms は捕捉開始からの時間。★順番と間隔が分かるのが眼目★。"
+    Debug.Print ""
+    Debug.Print "  --- N-1 でできないこと (後段) ---"
+    Debug.Print "    ・リクエストのヘッダとボディ          → N-2"
+    Debug.Print "    ・レスポンスのステータスとヘッダ      → N-3"
+    Debug.Print "    ・レスポンス本文                      → N-4"
+    Debug.Print "    ・PowerShell の Invoke-WebRequest 化  → N-5"
+    Debug.Print ""
+    Debug.Print "  --- 注意 ---"
+    Debug.Print "  ・★捕捉は Navigate の前に始める★ さもないと初回の DOCUMENT を取り逃がす。"
+    Debug.Print "  ・既定のリングは 500 件。溢れたら NetLogDropped に出る (黙って切らない)。"
+    Debug.Print "    足りなければ p.NetLogCapacity = 5000 のように増やせる。"
+    Debug.Print "  ・★仕様事実 20★ イベントバーストが静まるまでブレーク/ステップ実行はしない。"
+End Sub
+
+
+' ============================================================
+' N1Fire (N-1、Private) - ページ側で JS を 1 発撃つ
+'   ★JS の文字列は必ずシングルクォート★ (プロジェクト規則)
+' ============================================================
+Private Sub N1Fire(ByVal p As Wv2Pane, ByVal js As String)
+    p.EvalSync js, 5
+    If Not p.LastEvalOk Then
+        Wv2Log.LogI "        (N1Fire 失敗 err=" & p.LastEvalError & ")"
+    End If
+End Sub
+
+
+' ============================================================
+' N1Find (N-1、Private) - 条件に合う 1 件目を探す
+'
+'   methodWant / ctxWant / uriPart は空文字なら「問わない」。
+'   戻り値は NetLogLine に渡せる 1 起点の位置。見つからなければ 0。
+'
+'   ★「たぶん来たはず」で済ませないための道具★ (設計原則112)
+' ============================================================
+Private Function N1Find(ByVal p As Wv2Pane, _
+                        ByVal methodWant As String, _
+                        ByVal ctxWant As String, _
+                        ByVal uriPart As String) As Long
+    Dim i As Long
+    Dim f As Variant
+
+    For i = 1 To p.NetLogCount
+        f = Split(p.NetLogLine(i), vbTab)
+        If UBound(f) >= 4 Then
+            If (LenB(methodWant) = 0 Or UCase$(CStr(f(2))) = UCase$(methodWant)) Then
+                If (LenB(ctxWant) = 0 Or UCase$(CStr(f(3))) = UCase$(ctxWant)) Then
+                    If (LenB(uriPart) = 0 Or _
+                        InStr(1, CStr(f(4)), uriPart, vbTextCompare) > 0) Then
+                        N1Find = i
+                        Exit Function
+                    End If
+                End If
+            End If
+        End If
+    Next i
+End Function
+
+
+' ============================================================
+' N1Wait (N-1、Private) - 条件に合う 1 件が来るまで待つ
+'   来たら True。見つかった行はログに出す。
+' ============================================================
+Private Function N1Wait(ByVal p As Wv2Pane, _
+                        ByVal methodWant As String, _
+                        ByVal ctxWant As String, _
+                        ByVal uriPart As String, _
+                        ByVal timeoutSec As Single) As Boolean
+    Dim t0 As Single
+    Dim k  As Long
+
+    t0 = Timer
+    Do
+        DoEvents
+        k = N1Find(p, methodWant, ctxWant, uriPart)
+        If k > 0 Then
+            Wv2Log.LogI "        " & Replace$(p.NetLogLine(k), vbTab, "  ")
+            N1Wait = True
+            Exit Function
+        End If
+        If (Timer - t0) > timeoutSec Then Exit Do
+    Loop
+End Function
+
+
+' ============================================================
+' N1CtxOf (N-1c、Private) - その要求が★何の種別で届いたか★を返す
+'   見つからなければ "(居ない)"。★種別を決めつけずに観察するための道具★
+' ============================================================
+Private Function N1CtxOf(ByVal p As Wv2Pane, ByVal uriPart As String) As String
+    Dim k As Long
+    Dim f As Variant
+
+    k = N1Find(p, "", "", uriPart)
+    If k = 0 Then
+        N1CtxOf = "(居ない)"
+        Exit Function
+    End If
+
+    f = Split(p.NetLogLine(k), vbTab)
+    If UBound(f) >= 3 Then N1CtxOf = CStr(f(3))
+End Function
+
+
+' ============================================================
+' N1Nav (N-1b、Private) - 遷移してタイトルで着地を確かめる
+'   戻り値: True なら目的のページに着いた。
+' ============================================================
+Private Function N1Nav(ByVal p As Wv2Pane, _
+                       ByVal url As String, _
+                       ByVal wantTitle As String, _
+                       ByVal timeoutSec As Single) As Boolean
+    If p.View_Navigate(url) <> 0 Then Exit Function
+    N1Nav = D2WaitTitle(p, wantTitle, timeoutSec)
+End Function
+
+
+' ============================================================
+' N1WriteFolder (N-1、Private) - 検証ページ一式を %TEMP% に書き出す
+'   戻り値: 書き出したフォルダの絶対パス。失敗なら空文字。
+'
+'   置くもの:
+'     netprobe.html … 入口。両系統の的への form / fetch / CSS / 画像を持つ
+'     data.json     … ★仮想ホストの的 (対照)★ 捕まらないことを数えるために要る
+'
+'   ★N-1b で echo.html を捨てた★ フォームの送り先は仮想ホストの外 (案F / 案D)
+'   に移したので、同じフォルダに送り先を置く必要がなくなった。
+' ============================================================
+Private Function N1WriteFolder() As String
+    Dim folderPath As String
+
+    folderPath = Environ$("TEMP")
+    If Right$(folderPath, 1) <> "\" Then folderPath = folderPath & "\"
+    folderPath = folderPath & N1_FOLDER
+
+    If Not WriteUtf8NoBom(folderPath, "netprobe.html", BuildN1ProbeHtml()) Then Exit Function
+    If Not WriteUtf8NoBom(folderPath, "data.json", "{""ok"":1}") Then Exit Function
+
+    N1WriteFolder = folderPath
+End Function
+
+
+' ============================================================
+' BuildN1ProbeHtml (N-1b の検証ページ)
+'
+'   ★静的な HTML なので引用符は VBA の "" で書いてよい★ (JS ではない)
+'   ★このページ自身には JS を一切置かない★ fetch / XHR は EvalSync で撃つので、
+'     ページ側に仕掛けを持たせない = 何が飛んだかの原因が 1 つに絞れる。
+'
+'   ★的はすべて仮想ホストの外★ (N-1b)
+'     仮想ホストの要求は WebResourceRequested に乗らないと実機で分かったので、
+'     form / link / img の行き先を案F (127.0.0.1) と案D (httpbingo.org) の
+'     2 系統に置いた。どちらも実在しない資材を指すので 404 / 接続失敗になるが、
+'     ★見たいのは「要求が飛んだ」という 1 行だけ★ (設計原則112)。
+' ============================================================
+Private Function BuildN1ProbeHtml() As String
+    Dim s As String
+
+    s = "<!DOCTYPE html>" & vbLf
+    s = s & "<html lang=""ja""><head><meta charset=""UTF-8"">" & vbLf
+    s = s & "<title>N-1 プローブ</title>" & vbLf
+
+    ' --- 捕まらないはずの資材 (CSS)。両系統に 1 本ずつ ---
+    s = s & "<link rel=""stylesheet"" href=""" & N1_LOCAL & "/n1.css"">" & vbLf
+    s = s & "<link rel=""stylesheet"" href=""" & N1_NET & "/n1.css"">" & vbLf
+
+    s = s & "<style>" & vbLf
+    s = s & "  body{font-family:'Segoe UI','Meiryo',sans-serif;padding:36px 28px;" & _
+            "background:#0e121b;color:#e8eaed;}" & vbLf
+    s = s & "  h1{font-size:22px;margin:0 0 6px;}" & vbLf
+    s = s & "  .lead{font-size:13px;color:#9aa7bd;line-height:1.7;margin-bottom:22px;}" & vbLf
+    s = s & "  .row{border:1px solid rgba(255,255,255,.12);border-radius:12px;" & _
+            "padding:16px 18px;margin-bottom:14px;background:rgba(255,255,255,.04);}" & vbLf
+    s = s & "  .tag{font-size:10.5px;letter-spacing:.08em;color:#6ea8fe;" & _
+            "border:1px solid rgba(110,168,254,.4);border-radius:999px;padding:2px 9px;}" & vbLf
+    s = s & "  button{font-family:inherit;font-size:14px;font-weight:600;color:#0e121b;" & _
+            "background:#6ea8fe;border:0;border-radius:8px;padding:9px 18px;" & _
+            "cursor:pointer;margin-top:10px;}" & vbLf
+    s = s & "  .note{font-size:12px;color:#8ea2c8;margin-top:10px;line-height:1.6;}" & vbLf
+    s = s & "  .ep{font-family:'Consolas','Courier New',monospace;font-size:11.5px;" & _
+            "color:#7d8aa0;}" & vbLf
+    s = s & "</style></head><body>" & vbLf
+    s = s & "<h1>N-1 プローブ</h1>" & vbLf
+    s = s & "<div class=""lead"">WebResourceRequested が本当に拾えるかを確かめるページです。" & _
+            "このページ自身は仮想ホストで配信されているので、" & _
+            "<b>ページの読み込みそのものはイベントに乗りません</b>。" & _
+            "的はすべて仮想ホストの外に置いてあります。</div>" & vbLf
+
+    ' --- 案F: 到達不能なローカルへ POST ---
+    s = s & "<div class=""row"">" & vbLf
+    s = s & "  <span class=""tag"">案F</span>" & vbLf
+    s = s & "  <form id=""f-local"" action=""" & N1_LOCAL & "/echo"" method=""post"">" & vbLf
+    s = s & "    <input type=""hidden"" name=""probe"" value=""wv2-n1-local"">" & vbLf
+    s = s & "    <input type=""hidden"" name=""nihongo"" value=""日本語　全角スペース入り"">" & vbLf
+    s = s & "    <button type=""submit"" id=""postbtn-local"">POST する (ローカル)</button>" & vbLf
+    s = s & "  </form>" & vbLf
+    s = s & "  <div class=""note"">接続は必ず失敗しますが、" & _
+            "<b>要求が飛んだこと自体</b>が捕まれば合格です。" & _
+            "<br><span class=""ep"">" & N1_LOCAL & "/echo</span></div>" & vbLf
+    s = s & "</div>" & vbLf
+
+    ' --- 案D: 外部サービスへ POST ---
+    s = s & "<div class=""row"">" & vbLf
+    s = s & "  <span class=""tag"">案D</span>" & vbLf
+    s = s & "  <form id=""f-net"" action=""" & N1_NET & "/post"" method=""post"">" & vbLf
+    s = s & "    <input type=""hidden"" name=""probe"" value=""wv2-n1-net"">" & vbLf
+    s = s & "    <input type=""hidden"" name=""nihongo"" value=""日本語　全角スペース入り"">" & vbLf
+    s = s & "    <button type=""submit"" id=""postbtn-net"">POST する (外部)</button>" & vbLf
+    s = s & "  </form>" & vbLf
+    s = s & "  <div class=""note"">ネットが要ります。届けば 200 の JSON が返ります。" & _
+            "<br><span class=""ep"">" & N1_NET & "/post</span></div>" & vbLf
+    s = s & "</div>" & vbLf
+
+    ' --- 捕まらないはずの資材 (画像)。両系統に 1 本ずつ ---
+    s = s & "<div class=""row"">" & vbLf
+    s = s & "  <img src=""" & N1_LOCAL & "/n1.png"" alt="""" width=""1"" height=""1"">" & vbLf
+    s = s & "  <img src=""" & N1_NET & "/image/png"" alt="""" width=""1"" height=""1"">" & vbLf
+    s = s & "  <div class=""note"">CSS と画像は要求こそ飛びますが、" & _
+            "既定のフィルタ (DOCUMENT / XHR / FETCH) では捕まりません。" & _
+            "★捕まらないことを数えて確かめます★</div>" & vbLf
+    s = s & "</div>" & vbLf
+
+    s = s & "</body></html>"
+
+    BuildN1ProbeHtml = s
+End Function
+
+
+
+
 

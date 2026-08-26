@@ -1,5 +1,17 @@
 Attribute VB_Name = "Wv2Thunks"
 ''''''''''''''''''''''''''''''''''
+' --- Wv2Thunks.bas N-1 段階 (WebResourceRequested の配線) ---
+'
+'   N-1 の変更点:
+'     - HandlerKind に HK_WebResourceRequested = 11 を追加 (永続、基底 ICoreWebView2)
+'     - m_iidTable の配列上限を HK_DOMContentLoaded ← HK_WebResourceRequested に拡張
+'     - InitIIDTable に ICoreWebView2WebResourceRequestedEventHandler の IID を追加
+'       {ab00b74c-15f1-4646-80e8-e76341d25d71}
+'       ★出典は SDK ヘッダ WebView2.h の MIDL_INTERFACE 行 (設計原則115)★
+'     - 本体ロジック (Handler_QueryInterface / AddRef / Release / dcf) は無変更
+'       (kind は動的アクセスなので新 kind=11 も自動的に通る)
+''''''''''''''''''''''''''''''''''
+''''''''''''''''''''''''''''''''''
 ' --- Wv2Thunks.bas 第9.16段階 (旧称: Module9_9_9.bas) ---
 '
 '   第9.16 の変更点 (整理: フィーチャー検証 Sub を Wv2Tests.bas へ移設):
@@ -561,6 +573,7 @@ Public Enum HandlerKind
     HK_ExecuteScriptCompleted = 8   ' 第9.8c で追加、1 ショット系、同時並行可
     HK_HistoryChanged = 9           ' 第9.9b で追加、永続、基底 ICoreWebView2 (vtable 13/14)
     HK_DOMContentLoaded = 10        ' 第9.9b で追加、永続、ICoreWebView2_2 (vtable 64/65)
+    HK_WebResourceRequested = 11    ' N-1 で追加、永続、基底 ICoreWebView2 (vtable 55/56)
 End Enum
 
 
@@ -591,9 +604,9 @@ Private m_handlers(0 To SLOT_COUNT - 1) As ComCallbackHandler
 '   S_OK + 自身、不一致なら ppvObject = 0 + E_NOINTERFACE を返す。
 '
 '   Thunks_Init の末尾で InitIIDTable によって初期化される。
-'   宣言のレンジは HandlerKind の全範囲 (HK_None = 0 ? HK_DOMContentLoaded = 10)。
+'   宣言のレンジは HandlerKind の全範囲 (HK_None = 0 ? HK_WebResourceRequested = 11)。
 '   HK_None のエントリは未使用 (ハンドラとして使われない、初期値 0 のまま)。
-Private m_iidTable(HK_None To HK_DOMContentLoaded) As GUID
+Private m_iidTable(HK_None To HK_WebResourceRequested) As GUID
 
 ' --- IID_IUnknown (Win32 標準、Thunks_Init で初期化) ---
 '   {00000000-0000-0000-C000-000000000046}。Handler_QueryInterface での
@@ -1139,7 +1152,7 @@ Public Sub Test_Environment_Real()
 
     If env.IsFailed Then
         Debug.Print "[NG] env.Init が即座に失敗 (LastError = &H" & Hex(env.LastError) & ")"
-        GoTo CleanUp
+        GoTo Cleanup
     End If
 
     Debug.Print "Init 直後の State = " & env.state & _
@@ -1164,7 +1177,7 @@ Public Sub Test_Environment_Real()
         Debug.Print "[NG] タイムアウト (state = " & env.state & ")"
     End If
 
-CleanUp:
+Cleanup:
     Debug.Print "--- env を解放 (Class_Terminate で ComRelease が走る予定) ---"
     Set env = Nothing
     Debug.Print "Set env = Nothing 完了"
@@ -2312,6 +2325,11 @@ Private Sub InitIIDTable()
     '   出典: WebView2.h L5718
     FillGUID m_iidTable(HK_DOMContentLoaded), _
              "4bac7e9c-199e-49ed-87ed-249303acf019"
+
+    ' ICoreWebView2WebResourceRequestedEventHandler (N-1 で追加)
+    '   出典: WebView2.h の MIDL_INTERFACE 行 (★推測ではなくヘッダから取った★)
+    FillGUID m_iidTable(HK_WebResourceRequested), _
+             "ab00b74c-15f1-4646-80e8-e76341d25d71"
 End Sub
 
 
@@ -2524,5 +2542,4 @@ End Function
 Private Sub WritePtrNatively(ByRef ptrs() As LONG_PTR, ByVal Ptr As LongPtr)
     ptrs(0) = Ptr
 End Sub
-
 
