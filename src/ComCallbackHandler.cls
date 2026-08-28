@@ -8,6 +8,25 @@ Attribute VB_Creatable = False
 Attribute VB_PredeclaredId = False
 Attribute VB_Exposed = False
 ''''''''''''''''''''''''''''''''''
+' --- ComCallbackHandler.cls N-4 段階 (レスポンス本文) ---
+'
+'   N-4 の変更点:
+'     - Handler_Invoke に Case HK_ResponseGetContent を追加。
+'       ★1 ショット系★ で HK_ExecuteScriptCompleted と同じ形:
+'         Invoke(HRESULT errorCode, IStream* result)
+'       → m_owner.OnResponseContentCompleted m_callbackId, errorCode, arg2
+'
+'   ★ここでは IStream を読まない★
+'     上限バイト数などの設定は Wv2Pane が持っているので、
+'     ポインタのまま渡して Wv2Pane に読ませる。
+'     ★IStream は Invoke の間しか有効でない★ ので、Wv2Pane 側は
+'     戻る前に同期的に読み切ること。
+'
+'   ★CallbackId には要求の通し番号 (seq) を入れる★
+'     Invoke には識別子が無いので、どの応答の本文かは CallbackId で見分ける
+'     (第9.8c の仕組みをそのまま流用)。
+''''''''''''''''''''''''''''''''''
+''''''''''''''''''''''''''''''''''
 ' --- ComCallbackHandler.cls N-3 段階 (レスポンスのステータスとヘッダ) ---
 '
 '   N-3 の変更点:
@@ -88,6 +107,7 @@ Attribute VB_Exposed = False
 '     HK_DOMContentLoaded        (永続、第9.9b で追加、ICoreWebView2_2)
 '     HK_WebResourceRequested    (永続、N-1 で追加、基底 ICoreWebView2)
 '     HK_WebResourceResponseReceived (永続、N-3 で追加、ICoreWebView2_2)
+'     HK_ResponseGetContent      (1 ショット、N-4 で追加、同時並行可)
 '
 '   引数解釈の法則 (設計原則 11):
 '     ComCallbackHandler の Handler_Invoke が受ける (this, arg1, arg2) は
@@ -453,6 +473,27 @@ Public Function Handler_Invoke( _
             '    4 : get_Response(ICoreWebView2WebResourceResponseView**)
             If Not (m_owner Is Nothing) Then
                 m_owner.View2_OnWebResourceResponseReceived arg1, arg2
+            End If
+
+        Case HK_ResponseGetContent
+            ' N-4 で追加。1 ショット系、同時並行可。
+            '   ICoreWebView2WebResourceResponseViewGetContentCompletedHandler
+            '     Invoke(HRESULT errorCode, IStream* result)
+            '
+            ' 引数解釈 (ExecuteScriptCompleted と同じ形):
+            '   arg1 = errorCode (LongPtr の下位 32 bit)
+            '   arg2 = IStream*  (★本文が無い応答では 0★)
+            '
+            ' ★ここでは読まない★ 上限などの設定は Wv2Pane が持っているので
+            '   ポインタのまま渡す。★IStream は Invoke の間しか有効でない★ ので
+            '   Wv2Pane 側は戻る前に同期的に読み切ること。
+            '
+            ' ★Debug.Print は撃たない★ (N-1 以降と同じ。応答は数が多い)
+            Dim errorCode4 As Long
+            errorCode4 = LongPtrLowDword(arg1)
+
+            If Not (m_owner Is Nothing) Then
+                m_owner.OnResponseContentCompleted m_callbackId, errorCode4, arg2
             End If
 
         Case HK_ExecuteScriptCompleted

@@ -1,5 +1,22 @@
 Attribute VB_Name = "Wv2Tests"
 ''''''''''''''''''''''''''''''''''
+' --- Wv2Tests.bas  N-4 段階 (レスポンス本文) ---
+'
+'   Test_N4_Body … 回帰試験
+'   Test_N4_Help … 手順
+'
+'   ★N-4 で初めて非同期になる★
+'     GetContent はハンドラを渡して即座に戻り、本文は後から届く。
+'     判定は必ず ★N4Wait (本文が届くまで) ★ で待つこと。N-3 で
+'     「詳細が現れるまで」で待って空を読み、実機 3 回ぶんを溶かした
+'     (設計原則120)。同じ轍を踏まないための専用ヘルパーが N4Wait。
+'
+'   ★最大の未知数は圧縮★
+'     GetContent が復号済みを返すかは SDK に書かれていない。httpbingo の
+'     /gzip は中身に "gzipped": true を持つので、★本文に読めるか / 先頭が
+'     1F 8B か★ のどちらか一方に必ず決まる。それを判定にしてある。
+''''''''''''''''''''''''''''''''''
+''''''''''''''''''''''''''''''''''
 ' --- Wv2Tests.bas  N-3 段階 (レスポンスのステータスとヘッダ) ---
 '
 '   Test_N3_Status … 回帰試験。的は N-1 / N-2 と同じ 2 系統
@@ -7788,3 +7805,341 @@ Private Sub N3DumpAll(ByVal p As Wv2Pane)
     Next i
 End Sub
 
+
+
+' ============================================================
+' Test_N4_Body (N-4 の回帰試験)
+'
+'   ★N-4 で初めて非同期になる★ GetContent はハンドラを渡して即座に戻り、
+'   本文は後から届く。だから ★必ず「本文が届くまで」待つ★ (設計原則120)。
+'   N-3 で「詳細が現れるまで」待って空を読んだ失敗を繰り返さない。
+'
+'   見ているもの:
+'     (0) ★本文は既定 OFF★ (論点1 案A)
+'     (1) JSON 本文が読める / ★何が来たかを全部残す★ (論点2 案P')
+'     (2) ★圧縮の扱いがどちらか一方に確定する★ ―― N-4 の最大の未知数
+'     (3) HTML も読める
+'     (4) バイナリは中身を出さず hex で残す
+'     (5) ★上限で切ったことが分かる★
+'     (6) ★本文が無い応答 (204) と「まだ来ていない」を区別する★
+'     (7) OFF に戻すと本文だけ取らない (ステータスとヘッダは付く)
+'
+'   ★(1)～(6) は外部が要る★ 到達不能ローカルには応答が来ないので本文も来ない。
+' ============================================================
+Public Sub Test_N4_Body()
+    Dim b   As Wv2Browser
+    Dim p   As Wv2Pane
+    Dim folderPath As String
+    Dim hr  As Long
+    Dim k   As Long
+    Dim netOk As Boolean
+    Dim bodyTxt As String
+    Dim hexHead As String
+    Dim f   As Variant
+    Dim isPlain As Boolean
+    Dim isGz    As Boolean
+
+    Set b = UserForm1.CurrentBrowser
+    If b Is Nothing Then
+        Wv2Log.LogI "Test_N4_Body: Browser が起動していません。"
+        Exit Sub
+    End If
+
+    folderPath = N1WriteFolder()
+    If LenB(folderPath) = 0 Then
+        Wv2Log.LogI "Test_N4_Body: 検証ページの書き出しに失敗しました。中止します。"
+        Exit Sub
+    End If
+
+    Set p = b.AddTab()
+    If p Is Nothing Then
+        Wv2Log.LogI "Test_N4_Body: タブの生成に失敗しました。"
+        Exit Sub
+    End If
+
+    Wv2Log.LogI ""
+    TestCountReset
+    Wv2Log.LogI "================ Test_N4_Body 開始 ================"
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (0) ★本文は既定 OFF★ (論点1 案A) ---"
+
+    TestBool "★NetRespBodyOn の既定は False★", (p.NetRespBodyOn = False)
+    TestBool "  本文の上限の既定は 64KB", (p.NetRespBodyMaxBytes = 65536)
+
+    TestBool "NetCaptureStart が成功する", p.NetCaptureStart()
+    hr = p.View3_SetVirtualHostNameToFolderMapping(N1_HOST, folderPath, 1)   ' 1 = ALLOW
+    TestBool "  仮想ホストのマッピングができる", (hr = 0)
+    hr = p.View_Navigate("https://" & N1_HOST & "/netprobe.html")
+    TestBool "  Navigate が成功する", (hr = 0)
+
+    If Not D2WaitTitle(p, "N-1 プローブ", 10) Then
+        Wv2Log.LogI "Test_N4_Body: 検証ページの読み込みを確認できませんでした。"
+        p.NetCaptureStop
+        TestCountPrint
+        Exit Sub
+    End If
+    D3Pump 2
+
+    ' ★本文を取るには詳細も要る★ (置き場が詳細エントリなので)
+    p.NetDetailOn = True
+    p.NetRespBodyOn = True
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (1) JSON 本文が読める / ★何が来たかを全部残す★ ---"
+
+    p.NetLogClear
+    p.NetDetailClear
+    N1Fire p, "(function(){fetch('" & N1_NET & "/json?k=n4-json').catch(function(){});" & _
+              "return 1;})()"
+
+    netOk = N4Wait(p, "k=n4-json", 15)
+    TestBool "★本文が届くまで待てる★", netOk
+    If Not netOk Then
+        Wv2Log.LogW "  ※ ★外部が届いていない★ (1)～(6) は空振りとして読むこと。"
+    Else
+        k = N2Find(p, "k=n4-json")
+        Wv2Log.LogI "        素性 = " & Replace$(p.NetDetailRespLine(k), vbTab, "  ")
+        Wv2Log.LogI "        本文 (先頭 160 字) = " & Left$(p.NetDetailRespBody(k), 160)
+        f = Split(p.NetDetailRespLine(k), vbTab)
+        TestBool "★バイト数が入っている★", (CLng(f(0)) > 0)
+        TestBool "★テキストと判定している★", (f(2) = "True")
+        TestBool "★先頭 32 バイトの hex が残っている★", (LenB(f(4)) > 0)
+        TestBool "★JSON の中身が読める★", _
+                 (InStr(1, p.NetDetailRespBody(k), "slideshow") > 0 Or _
+                  InStr(1, p.NetDetailRespBody(k), "{") > 0)
+    End If
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (2) ★圧縮の扱いを確定させる★ (N-4 の最大の未知数) ---"
+    ' ★決めつけない (設計原則117)★
+    '   httpbingo の /gzip は gzip 圧縮された JSON を返す。中身には
+    '   "gzipped": true が入っている。だから
+    '     ・本文に gzipped が読めたら → GetContent は★復号済み★を返す
+    '     ・先頭 hex が 1F 8B なら     → GetContent は★圧縮されたまま★返す
+    '   のどちらか一方に必ず決まる。それを判定にする。
+
+    If netOk Then
+        p.NetLogClear
+        p.NetDetailClear
+        N1Fire p, "(function(){fetch('" & N1_NET & "/gzip?k=n4-gzip').catch(function(){});" & _
+                  "return 1;})()"
+        If N4Wait(p, "k=n4-gzip", 15) Then
+            k = N2Find(p, "k=n4-gzip")
+            Wv2Log.LogI "        素性 = " & Replace$(p.NetDetailRespLine(k), vbTab, "  ")
+            bodyTxt = p.NetDetailRespBody(k)
+            f = Split(p.NetDetailRespLine(k), vbTab)
+            hexHead = CStr(f(4))
+            Wv2Log.LogI "        本文 (先頭 120 字) = " & Left$(bodyTxt, 120)
+
+            isPlain = (InStr(1, bodyTxt, "gzipped") > 0)
+            isGz = (Left$(hexHead, 5) = "1F 8B")
+
+            TestBool "★圧縮の扱いがどちらか一方に確定した★", (isPlain Xor isGz)
+            If isPlain Then
+                Wv2Log.LogI "        → ★GetContent は復号済みの本文を返す★"
+            ElseIf isGz Then
+                Wv2Log.LogI "        → ★GetContent は圧縮されたまま返す★ " & _
+                            "(VBA では解凍できないので、encoding とバイト数だけを残す設計にする)"
+            Else
+                Wv2Log.LogW "        → ★どちらとも言えない★ 素性と本文をそのまま読むこと。"
+            End If
+        End If
+    End If
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (3) HTML も読める ---"
+
+    If netOk Then
+        p.NetLogClear
+        p.NetDetailClear
+        N1Fire p, "(function(){fetch('" & N1_NET & "/html?k=n4-html').catch(function(){});" & _
+                  "return 1;})()"
+        If N4Wait(p, "k=n4-html", 15) Then
+            k = N2Find(p, "k=n4-html")
+            Wv2Log.LogI "        素性 = " & Replace$(p.NetDetailRespLine(k), vbTab, "  ")
+            TestBool "★HTML の中身が読める★", _
+                     (InStr(1, p.NetDetailRespBody(k), "<html", vbTextCompare) > 0 Or _
+                      InStr(1, p.NetDetailRespBody(k), "Melville") > 0)
+        End If
+    End If
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (4) バイナリは中身を出さず hex で残す ---"
+
+    If netOk Then
+        p.NetLogClear
+        p.NetDetailClear
+        N1Fire p, "(function(){fetch('" & N1_NET & "/image/png?k=n4-png')" & _
+                  ".catch(function(){});return 1;})()"
+        If N4Wait(p, "k=n4-png", 15) Then
+            k = N2Find(p, "k=n4-png")
+            Wv2Log.LogI "        素性 = " & Replace$(p.NetDetailRespLine(k), vbTab, "  ")
+            f = Split(p.NetDetailRespLine(k), vbTab)
+            TestBool "★バイナリと判定している★", (f(2) = "False")
+            TestBool "  本文は空 (中身を出さない)", (LenB(p.NetDetailRespBody(k)) = 0)
+            TestBool "★hex は残っている★", (LenB(f(4)) > 0)
+        End If
+    End If
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (5) ★上限で切ったことが分かる★ ---"
+
+    If netOk Then
+        p.NetLogClear
+        p.NetDetailClear
+        p.NetRespBodyMaxBytes = 100
+        TestBool "上限を 100 バイトにできる", (p.NetRespBodyMaxBytes = 100)
+        N1Fire p, "(function(){fetch('" & N1_NET & "/json?k=n4-cut').catch(function(){});" & _
+                  "return 1;})()"
+        If N4Wait(p, "k=n4-cut", 15) Then
+            k = N2Find(p, "k=n4-cut")
+            Wv2Log.LogI "        素性 = " & Replace$(p.NetDetailRespLine(k), vbTab, "  ")
+            f = Split(p.NetDetailRespLine(k), vbTab)
+            TestBool "★100 バイトで止まっている★", (f(0) = "100")
+            TestBool "★切ったことが分かる★", (f(1) = "True")
+        End If
+        p.NetRespBodyMaxBytes = 65536
+    End If
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (6) ★本文が無い応答と「まだ来ていない」を区別する★ ---"
+    ' 204 は本文が無い。0 バイトだが★届いてはいる★。
+    ' 到達不能な的は★そもそも届かない★。この 2 つを混ぜない (設計原則111)。
+
+    If netOk Then
+        p.NetLogClear
+        p.NetDetailClear
+        N1Fire p, "(function(){fetch('" & N1_NET & "/status/204?k=n4-204')" & _
+                  ".catch(function(){});return 1;})()"
+        If N4Wait(p, "k=n4-204", 15) Then
+            k = N2Find(p, "k=n4-204")
+            Wv2Log.LogI "        素性 = " & Replace$(p.NetDetailRespLine(k), vbTab, "  ")
+            f = Split(p.NetDetailRespLine(k), vbTab)
+            TestBool "★0 バイトだが届いている★", (f(0) = "0" And f(5) = "True")
+            ' ★204 は ERROR_NO_DATA で完了が来る。これは失敗ではない★
+            '   「取得失敗」と書くと N-5 で『本文があるか』を誤らせる (設計原則111)。
+            TestBool "★『取得失敗』とは書かない (本文が無いだけ)★", _
+                     (InStr(1, CStr(f(3)), "取得失敗") = 0)
+        End If
+    End If
+
+    p.NetLogClear
+    p.NetDetailClear
+    N1Fire p, "(function(){fetch('" & N1_LOCAL & "/n4none?k=n4-none')" & _
+              ".catch(function(){});return 1;})()"
+    D3Pump 4
+    k = N2Find(p, "k=n4-none")
+    If k > 0 Then
+        Wv2Log.LogI "        素性 = " & Replace$(p.NetDetailRespLine(k), vbTab, "  ")
+        f = Split(p.NetDetailRespLine(k), vbTab)
+        TestBool "★到達不能なら「届いていない」のまま★", (f(5) = "False")
+    End If
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (7) ★OFF に戻すと本文だけ取らない★ ---"
+    ' ★ステータスとヘッダは付く★ = 本文だけが別のスイッチであることの確認。
+
+    If netOk Then
+        p.NetRespBodyOn = False
+        p.NetLogClear
+        p.NetDetailClear
+        N1Fire p, "(function(){fetch('" & N1_NET & "/json?k=n4-off').catch(function(){});" & _
+                  "return 1;})()"
+        If N3WaitAny(p, "k=n4-off", 15) Then
+            D3Pump 3
+            k = N2Find(p, "k=n4-off")
+            Wv2Log.LogI "        素性 = " & Replace$(p.NetDetailRespLine(k), vbTab, "  ")
+            f = Split(p.NetDetailRespLine(k), vbTab)
+            TestBool "★本文は届かない★", (f(5) = "False")
+            TestBool "★ステータスは付く★", (p.NetLogStatus(N1Find(p, "", "", "k=n4-off")) > 0)
+            TestBool "★応答ヘッダも付く★", (InStr(1, p.NetDetailRespHeaders(k), ":") > 0)
+        End If
+        p.NetRespBodyOn = True
+    End If
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "        置き場が無かった本文 = " & p.NetRespBodyOrphan & " 件"
+
+    p.NetCaptureStop
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  in-callback 深さ (期待 0): " & p.InCallbackDepth
+    TestCountPrint
+    Wv2Log.LogI "================ Test_N4_Body 終了 ================"
+    Wv2Log.LogI ""
+End Sub
+
+
+' ============================================================
+' Test_N4_Help (N-4 の手順)
+' ============================================================
+Public Sub Test_N4_Help()
+    Debug.Print "==== N-4 実機手順 (レスポンス本文) ===="
+    Debug.Print ""
+    Debug.Print "  【回帰試験】"
+    Debug.Print "    1) UserForm1.Show vbModeless      ' ★仕様事実54★"
+    Debug.Print "    2) UserForm1.StartWebView2_Full"
+    Debug.Print "    3) Wv2Log.LogStart"
+    Debug.Print "    4) Test_N4_Body"
+    Debug.Print "    → ★(1)～(6) は外部 (httpbingo.org) が要る★"
+    Debug.Print ""
+    Debug.Print "  【使い方】"
+    Debug.Print "    p.NetDetailOn = True             ' ★本文の置き場は詳細エントリ★"
+    Debug.Print "    p.NetRespBodyOn = True           ' ★本文は別のスイッチ (既定 OFF)★"
+    Debug.Print "    Test_N1_Watch"
+    Debug.Print "    ' ... 手で操作する ..."
+    Debug.Print "    Test_N1_Drain                    ' 一覧で当たりを付ける"
+    Debug.Print "    p.NetDetail 3                    ' 要求 + 応答 + 本文"
+    Debug.Print "    p.NetDetailRespBody(3)           ' 本文だけ取る"
+    Debug.Print "    p.NetDetailRespLine(3)           ' バイト数/切った/種類/encoding/hex/届いた"
+    Debug.Print "    p.NetRespBodyMaxBytes = 500000   ' 本文の上限 (既定 64KB)"
+    Debug.Print ""
+    Debug.Print "  --- ★N-4 で作りが変わったところ★ ---"
+    Debug.Print "  ・★初めて非同期★ GetContent はハンドラを渡して即座に戻り、本文は"
+    Debug.Print "    後から届く。判定するときは★本文が届くまで待つ★こと (設計原則120)。"
+    Debug.Print "  ・★N-2 と違って Seek(0) は要らない★ 応答のコピーを読むだけで、"
+    Debug.Print "    通信物には手を入れない。"
+    Debug.Print "  ・★ResponseView は完了まで保持している★ (解放してよいか SDK に"
+    Debug.Print "    書かれていないため)。NetCaptureStop で必ずほどく。"
+    Debug.Print ""
+    Debug.Print "  --- ★圧縮について★ ---"
+    Debug.Print "  応答は gzip / br / zstd で来る。GetContent が復号済みを返すかは"
+    Debug.Print "  実機で確かめた (Test_N4_Body の (2))。どちらであっても"
+    Debug.Print "  ★content-encoding と先頭 32 バイトの hex は必ず残る★ ので、"
+    Debug.Print "  本文が読めないときはそこを見ること。"
+    Debug.Print ""
+    Debug.Print "  --- N-4 でできないこと (後段) ---"
+    Debug.Print "    ・PowerShell の Invoke-WebRequest 化  → N-5"
+End Sub
+
+
+' ============================================================
+' N4Wait (N-4、Private) - ★本文が届くまで★ 待つ
+'
+'   ★「詳細が現れるまで」でも「ステータスが付くまで」でもない★
+'   本文は GetContent の完了ハンドラで最後に届くので、それを待つ。
+'   N-3 でここを取り違えて実機 3 回ぶんを溶かした (設計原則120)。
+' ============================================================
+Private Function N4Wait(ByVal p As Wv2Pane, _
+                        ByVal uriPart As String, _
+                        ByVal timeoutSec As Single) As Boolean
+    Dim t0 As Single
+    Dim k  As Long
+    Dim f  As Variant
+
+    t0 = Timer
+    Do
+        DoEvents
+        k = N2Find(p, uriPart)
+        If k > 0 Then
+            f = Split(p.NetDetailRespLine(k), vbTab)
+            If UBound(f) >= 5 Then
+                If f(5) = "True" Then          ' ★届いた★
+                    N4Wait = True
+                    Exit Function
+                End If
+            End If
+        End If
+        If (Timer - t0) > timeoutSec Then Exit Do
+    Loop
+End Function

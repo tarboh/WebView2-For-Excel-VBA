@@ -8,6 +8,18 @@ Attribute VB_Creatable = False
 Attribute VB_PredeclaredId = False
 Attribute VB_Exposed = False
 ''''''''''''''''''''''''''''''''''
+' --- Wv2Pane.cls  N-4 段階 (レスポンス本文) ---
+'
+'   ★N-1～N-3 と作りが違う。初めて非同期になる★
+'   詳細一式は N-4 の節 (このファイルの末尾) にまとめてある。要点だけ:
+'
+'     ・`GetContent` はハンドラを渡して即座に戻る。本文は後から届く
+'     ・★N-2 と違って Seek(0) は要らない★ 応答のコピーを読むだけ
+'     ・★本文は別のスイッチ★ (`NetRespBodyOn`、既定 False)
+'     ・★圧縮は決めつけず観測する★ encoding と先頭 32 バイトの hex を必ず残す
+'     ・★ResponseView は完了まで AddRef して保持する★ (解放してよいか不明のため)
+''''''''''''''''''''''''''''''''''
+''''''''''''''''''''''''''''''''''
 ' --- Wv2Pane.cls  N-3 段階 (レスポンスのステータスとヘッダ) ---
 '
 '   一覧の 1 行に★結果★が付いた。詳細には★応答ヘッダ★が付いた。
@@ -1083,6 +1095,13 @@ Private m_detHex()     As String
 Private m_detRespHeaders() As String   ' N-3: 応答ヘッダ
 Private m_detStatus()      As Long     ' N-3: ステータス (0 = 未着)
 Private m_detReason()      As String   ' N-3: 理由句
+Private m_detRespBody()    As String   ' N-4: レスポンス本文 (テキストのみ)
+Private m_detRespBytes()   As Long     ' N-4: 本文のバイト数
+Private m_detRespTrunc()   As Boolean  ' N-4: 上限で切ったか
+Private m_detRespIsText()  As Boolean  ' N-4: テキストと判定したか
+Private m_detRespEnc()     As String   ' N-4: content-encoding (★決めつけない★)
+Private m_detRespHex()     As String   ' N-4: ★先頭 32 バイトの hex (常に残す)★
+Private m_detRespGot()     As Boolean  ' N-4: ★本文が届いたか★ (0 バイトと未着は違う)
 
 ' 詳細リングの既定容量と上限。★一覧より桁で小さい★ 1 件あたりの重さが違う。
 Private Const NET_DET_CAP_DEFAULT As Long = 50
@@ -1126,6 +1145,26 @@ Private m_netDropped As Long
 Private m_netT0      As Long
 Private m_netRespOn    As Boolean
 Private m_netUnmatched As Long
+
+' --- N-4: レスポンス本文 ---
+'   m_respBodyOn     : 本文を取るか。★既定 False★ (論点1 案A)
+'   m_respBodyMax    : 本文の上限 (バイト。既定 65536)
+'   m_respPending    : ★完了まで保持している ResponseView★ (論点5 案β)
+'                      キーは "r" & 通し番号。値は AddRef 済みのポインタ。
+'   m_respBodyOrphan : 置き場が無かった本文の数 (黙って捨てない)
+Private m_respBodyOn     As Boolean
+Private m_respBodyMax    As Long
+Private m_respPending    As Collection
+Private m_respBodyOrphan As Long
+
+' レスポンス本文の上限の既定 (64KB)。上限自体の上限は NET_BODY_MAX_LIMIT を共用。
+Private Const NET_RESP_BODY_MAX_DEFAULT As Long = 65536
+
+' ★204 No Content では GetContent の完了がこの HRESULT で来る★ (N-4 で実測)。
+'   0x800700E8 = HRESULT_FROM_WIN32(ERROR_NO_DATA)。★これは失敗ではなく
+'   「本文が無い」の意味★ なので、取得失敗と同じ扱いにしてはいけない
+'   (設計原則111: それらしい値を書き残さない)。
+Private Const E_NO_DATA As Long = &H800700E8
 Private m_netFilters As Collection
 Private m_netStatus()  As Long
 Private m_netReason()  As String
@@ -1194,6 +1233,12 @@ Private Sub Class_Initialize()
     m_detRedactList = NetRedactDefaults()
     m_detUriFilter = ""
     NetDetailRingAlloc
+
+    ' --- N-4: レスポンス本文 ---
+    m_respBodyOn = False                  ' ★既定 OFF★ (論点1 案A)
+    m_respBodyMax = NET_RESP_BODY_MAX_DEFAULT
+    Set m_respPending = New Collection
+    m_respBodyOrphan = 0
 End Sub
 
 Private Sub Class_Terminate()
@@ -5881,6 +5926,10 @@ Public Function NetCaptureStop() As Boolean
     If hr <> 0 Then allOk = False
     m_netRespOn = False
 
+    ' --- (4) N-4: 保持している ResponseView をほどく ---
+    '   ★完了が来ないまま終わることがある★ ので漏らさない。
+    NetRespPendingClear
+
     m_netOn = False
     NetCaptureStop = allOk
 
@@ -6753,7 +6802,7 @@ Public Function NetDetail(ByVal idx As Long) As Boolean
                     ") 先頭: " & m_detHex(k)
     End If
 
-    ' --- N-3: 応答 ---
+    ' --- N-3 / N-4: 応答 ---
     If m_detStatus(k) = 0 Then
         Wv2Log.LogI "      [応答] まだ来ていない"
     Else
@@ -6764,6 +6813,23 @@ Public Function NetDetail(ByVal idx As Long) As Boolean
             For i = LBound(lines) To UBound(lines)
                 Wv2Log.LogI "        " & lines(i)
             Next i
+        End If
+
+        ' --- N-4: レスポンス本文 ---
+        '   ★encoding と先頭 hex を必ず出す★ (論点2 案P')
+        '   圧縮されていれば hex の先頭で分かる (gzip なら 1F 8B)。
+        If m_detRespBytes(k) > 0 Or LenB(m_detRespEnc(k)) > 0 Then
+            Wv2Log.LogI "      [応答本文] " & m_detRespBytes(k) & " バイト" & _
+                        IIf(m_detRespTrunc(k), " ★上限で切った★", "") & _
+                        IIf(LenB(m_detRespEnc(k)) > 0, " encoding=" & m_detRespEnc(k), "") & _
+                        IIf(m_detRespIsText(k), " (テキスト)", " (バイナリ)")
+            Wv2Log.LogI "        先頭: " & m_detRespHex(k)
+            If LenB(m_detRespBody(k)) > 0 Then
+                lines = Split(Replace$(Left$(m_detRespBody(k), 2000), vbCrLf, vbLf), vbLf)
+                For i = LBound(lines) To UBound(lines)
+                    Wv2Log.LogI "        " & lines(i)
+                Next i
+            End If
         End If
     End If
 
@@ -6951,6 +7017,60 @@ Private Function NetReadBody(ByVal pReq As LongPtr, _
         Exit Function
     End If
 
+    ' ★読むところは NetReadStream に切り出した (N-4)★
+    '   レスポンス本文も同じ読み方をするので共通にした。違うのは
+    '   ★こちらは読んだ後 Seek(0) で戻す必要がある★ ことだけ。
+    If Not NetReadStream(pStream, cap, got, outTrunc, outBuf) Then
+        ComRelease pStream
+        Exit Function
+    End If
+
+    ' ★★ 読んだぶんを必ず戻す ★★ (論点2 案X)
+    '   Seek(LARGE_INTEGER dlibMove, DWORD dwOrigin, ULARGE_INTEGER* plibNewPosition)
+    '   dlibMove は 8 バイトの値渡し、dwOrigin は 4 バイト、最後は NULL 可。
+    hr = dcf(pStream, 5, "", 0^, STREAM_SEEK_SET, 0^)
+    If hr <> 0 Then
+        ' ★戻せなかった★ これは通信を壊した可能性があるので黙って進まない。
+        ' ハンドラの中なのでログは撃たず、ボディの中身に印を残す。
+        outTrunc = True
+        outBytes = got
+        ComRelease pStream
+        NetReadBody = True
+        Exit Function
+    End If
+
+    ComRelease pStream
+    outBytes = got
+    NetReadBody = True
+End Function
+
+
+' ============================================================
+' NetReadStream (N-4、Private) - IStream を上限まで読む
+'
+'   ★位置は動かしたまま返す★ 戻す必要があるかは呼び出し側の都合。
+'     ・要求ボディ (N-2) … ★戻さないと通信が壊れる★ ので呼び出し側で Seek(0)
+'     ・応答本文 (N-4)   … 応答のコピーなので戻す必要が無い
+'
+'   ★上限に達したら 1 バイトだけ余分に読んで「まだ残っているか」を確かめる★
+'   これをしないと「ちょうど上限ぴったり」と「切られた」を区別できない。
+'
+'   戻り値: True なら読み終えた (0 バイトでも True)。
+' ============================================================
+Private Function NetReadStream(ByVal pStream As LongPtr, _
+                               ByVal cap As Long, _
+                               ByRef outBytes As Long, _
+                               ByRef outTrunc As Boolean, _
+                               ByRef outBuf() As Byte) As Boolean
+    Dim hr     As Long
+    Dim got    As Long
+    Dim chunk  As Long
+    Dim cbRead As Long
+
+    outBytes = 0
+    outTrunc = False
+    If pStream = 0 Or cap < 1 Then Exit Function
+
     ReDim outBuf(0 To cap - 1)
 
     Do While got < cap
@@ -6971,23 +7091,8 @@ Private Function NetReadBody(ByVal pReq As LongPtr, _
         If hr = 0 And cbRead > 0 Then outTrunc = True
     End If
 
-    ' ★★ 読んだぶんを必ず戻す ★★ (論点2 案X)
-    '   Seek(LARGE_INTEGER dlibMove, DWORD dwOrigin, ULARGE_INTEGER* plibNewPosition)
-    '   dlibMove は 8 バイトの値渡し、dwOrigin は 4 バイト、最後は NULL 可。
-    hr = dcf(pStream, 5, "", 0^, STREAM_SEEK_SET, 0^)
-    If hr <> 0 Then
-        ' ★戻せなかった★ これは通信を壊した可能性があるので黙って進まない。
-        ' ハンドラの中なのでログは撃たず、ボディの中身に印を残す。
-        outTrunc = True
-        outBytes = got
-        ComRelease pStream
-        NetReadBody = True
-        Exit Function
-    End If
-
-    ComRelease pStream
     outBytes = got
-    NetReadBody = True
+    NetReadStream = True
 End Function
 
 
@@ -7019,6 +7124,14 @@ Private Sub NetDetailPush(ByVal seqNo As Long, _
     m_detStatus(m_detHead) = 0
     m_detReason(m_detHead) = ""
     m_detRespHeaders(m_detHead) = ""
+    ' N-4: 本文もまだ来ていない (使い回すスロットなので必ず消す)
+    m_detRespBody(m_detHead) = ""
+    m_detRespBytes(m_detHead) = 0
+    m_detRespTrunc(m_detHead) = False
+    m_detRespIsText(m_detHead) = False
+    m_detRespEnc(m_detHead) = ""
+    m_detRespHex(m_detHead) = ""
+    m_detRespGot(m_detHead) = False
 
     m_detHead = m_detHead + 1
     If m_detHead >= m_detCap Then m_detHead = 0
@@ -7049,6 +7162,13 @@ Private Sub NetDetailRingAlloc()
     ReDim m_detRespHeaders(0 To m_detCap - 1)
     ReDim m_detStatus(0 To m_detCap - 1)
     ReDim m_detReason(0 To m_detCap - 1)
+    ReDim m_detRespBody(0 To m_detCap - 1)
+    ReDim m_detRespBytes(0 To m_detCap - 1)
+    ReDim m_detRespTrunc(0 To m_detCap - 1)
+    ReDim m_detRespIsText(0 To m_detCap - 1)
+    ReDim m_detRespEnc(0 To m_detCap - 1)
+    ReDim m_detRespHex(0 To m_detCap - 1)
+    ReDim m_detRespGot(0 To m_detCap - 1)
 
     m_detHead = 0
     m_detCount = 0
@@ -7449,6 +7569,11 @@ Private Sub View2_OnWebResourceResponseReceived_Core(ByVal pSender As LongPtr, B
     ' --- 応答ヘッダは詳細が ON のときだけ (論点4 案U) ---
     If m_detOn Then NetAttachRespHeaders m_netSeq(k), pResp, st, reason
 
+    ' --- N-4: 本文の取得を始める (★ここで撃つしかない★) ---
+    '   ResponseView は args の寿命に縛られるので、ハンドラの中で GetContent を
+    '   撃つ。呼び出し自体は即座に戻り、本文は後から完了ハンドラへ届く。
+    If m_respBodyOn And m_detOn Then NetStartRespContent m_netSeq(k), pResp
+
     ComRelease pResp
 End Sub
 
@@ -7533,3 +7658,316 @@ Private Sub NetAttachRespHeaders(ByVal seqNo As Long, _
     Next i
 End Sub
 
+
+' ============================================================
+' ★N-4 : レスポンス本文★
+'
+'   N-1～N-3 は「ハンドラの中で同期的に読む」だった。
+'   ★N-4 で初めて非同期になる★ ―― `GetContent` はハンドラを渡して即座に戻り、
+'   本文は後から `OnResponseContentCompleted` に届く。
+'
+'   ■ ★N-2 と違って Seek(0) の心配は要らない★
+'     これは応答のコピーを読むだけで、通信物には手を入れない。
+'     設計原則118 (観測が対象に触れるとき別経路で数える) の出番が無い。
+'
+'   ■ ★本文は別のスイッチ (論点1 案A)★
+'     ヘッダは数 KB、本文は数百 KB で桁が違う。同じスイッチに載せると
+'     NetDetailOn が気軽に使えなくなる。`NetRespBodyOn = True` で初めて取る。
+'     ★NetDetailOn も True でないと置き場が無い★ (本文は詳細エントリに入る)。
+'
+'   ■ ★圧縮は決めつけず観測する (論点2 案P')★
+'     応答には content-encoding: gzip / br / zstd が付く。GetContent が返すのが
+'     復号済みかどうかは SDK ヘッダに書かれていない。だから
+'     ・content-encoding を記録し
+'     ・★先頭 32 バイトの hex を必ず残す★ (gzip なら 1F 8B で一目で分かる)
+'     ・テキスト判定なら UTF-8 デコードも試みる
+'     の 3 つを全部残す。1 回の実機で答えが出る (設計原則117)。
+'
+'   ■ ★ResponseView は完了まで保持する (論点5 案β)★
+'     「GetContent を呼んだ後 ResponseView を解放してよいか」は
+'     ヘッダに書かれていない。外した場合の現れ方が★解放済みオブジェクトへの
+'     アクセス = クラッシュ★ で、仕様事実20 によりデバッガも使えない。
+'     だから AddRef して m_respPending に持ち、完了時に Release する。
+'
+'   ■ 追加した Public メンバ
+'     NetRespBodyOn        As Boolean  ★既定 False★
+'     NetRespBodyMaxBytes  As Long     本文の上限 (既定 65536)
+'     NetRespBodyOrphan    As Long     置き場が無かった本文の数
+'     NetDetailRespBody(i) As String   本文 (テキストのときだけ中身)
+'     NetDetailRespLine(i) As String   バイト数 / 切った / 種類 / encoding / 先頭hex
+'
+'   ■ vtable index (★tools/vtable.py で確定★)
+'       ICoreWebView2WebResourceResponseView::GetContent(handler)   6
+'       完了ハンドラ Invoke(HRESULT, IStream*)                       3
+'       IStream::Read                                                3
+' ============================================================
+
+
+' ============================================================
+' NetRespBodyOn (N-4) - レスポンス本文を取るか
+'   ★既定 False★ 本文はヘッダと桁が違う (数百 KB ～)。
+'   ★NetDetailOn も True でないと置き場が無い★ ので、そのときは知らせる。
+' ============================================================
+Public Property Get NetRespBodyOn() As Boolean
+    NetRespBodyOn = m_respBodyOn
+End Property
+
+Public Property Let NetRespBodyOn(ByVal onOff As Boolean)
+    m_respBodyOn = onOff
+    If onOff And Not m_detOn Then
+        Wv2Log.LogW "Wv2Pane.NetRespBodyOn = True だが ★NetDetailOn が False★ なので " & _
+                    "本文の置き場が無く、1 件も取れない。NetDetailOn = True も要る。"
+    Else
+        Wv2Log.LogD "Wv2Pane.NetRespBodyOn = " & onOff
+    End If
+End Property
+
+
+' ============================================================
+' NetRespBodyMaxBytes (N-4) - レスポンス本文の上限 (バイト)
+'   ★要求ボディとは別に持つ (論点3 案S)★ 適切な値が違う。
+' ============================================================
+Public Property Get NetRespBodyMaxBytes() As Long
+    NetRespBodyMaxBytes = m_respBodyMax
+End Property
+
+Public Property Let NetRespBodyMaxBytes(ByVal n As Long)
+    If n < 0 Then n = 0
+    If n > NET_BODY_MAX_LIMIT Then n = NET_BODY_MAX_LIMIT
+    m_respBodyMax = n
+    Wv2Log.LogD "Wv2Pane.NetRespBodyMaxBytes = " & m_respBodyMax
+End Property
+
+
+' ============================================================
+' NetRespBodyOrphan (N-4) - 置き場が無かった本文の数
+'   ★完了が来たときに詳細エントリが消えていた★ ときに増える
+'   (リングから溢れた / NetDetailClear した後に届いた)。黙って捨てない。
+' ============================================================
+Public Property Get NetRespBodyOrphan() As Long
+    NetRespBodyOrphan = m_respBodyOrphan
+End Property
+
+
+' ============================================================
+' NetDetailRespBody (N-4) - 詳細 1 本のレスポンス本文
+'   ★テキストと判定できたときだけ中身が入る★ (N-2 のボディと同じ作法)。
+'   圧縮されていたら中身は当てにならないので NetDetailRespLine の
+'   encoding 欄と先頭 hex を見ること。
+' ============================================================
+Public Property Get NetDetailRespBody(ByVal idx As Long) As String
+    Dim k As Long
+    k = NetDetailRingIndex(idx)
+    If k < 0 Then Exit Property
+    NetDetailRespBody = m_detRespBody(k)
+End Property
+
+
+' ============================================================
+' NetDetailRespLine (N-4) - レスポンス本文の素性
+'   vbTab 区切りで 6 項目:
+'     バイト数 / 切ったか / テキストか / content-encoding / 先頭 32 バイトの hex /
+'     ★届いたか★ (0 バイトの応答と「まだ来ていない」は別物)
+'   ★encoding と hex を必ず残す★ のが N-4 の眼目 (論点2 案P')。
+' ============================================================
+Public Property Get NetDetailRespLine(ByVal idx As Long) As String
+    Dim k As Long
+    k = NetDetailRingIndex(idx)
+    If k < 0 Then Exit Property
+
+    NetDetailRespLine = m_detRespBytes(k) & vbTab & CStr(m_detRespTrunc(k)) & _
+                        vbTab & CStr(m_detRespIsText(k)) & vbTab & m_detRespEnc(k) & _
+                        vbTab & m_detRespHex(k) & vbTab & CStr(m_detRespGot(k))
+End Property
+
+
+' ============================================================
+' NetStartRespContent (N-4、Private) - 本文の取得を始める
+'
+'   ★WebResourceResponseReceived のハンドラの中から呼ぶ★
+'   ResponseView は args の寿命に縛られるので、ここで GetContent を撃つしかない。
+'   GetContent 自体は即座に戻り、本文は後から完了ハンドラに届く。
+'
+'   ★ResponseView を AddRef して保持する (論点5 案β)★
+'     完了までに解放してよいかは SDK に書かれていない。外したときの現れ方が
+'     クラッシュなので安全側に倒す。完了時 / 後始末で必ず Release する。
+' ============================================================
+Private Sub NetStartRespContent(ByVal seqNo As Long, ByVal pResp As LongPtr)
+    Dim h  As ComCallbackHandler
+    Dim hr As Long
+    Dim ky As String
+
+    If pResp = 0 Then Exit Sub
+
+    ' ★置き場が無ければ撃たない★ 本文は詳細エントリに入るので、
+    '   詳細を取っていない要求の本文を取っても捨てるだけになる。
+    If NetFindDetailBySeq(seqNo) < 0 Then Exit Sub
+
+    ky = "r" & seqNo
+    ' 同じ seq で二重に撃たない (1 要求 1 応答のはずだが念のため)
+    On Error Resume Next
+    Dim dummy As Variant
+    dummy = m_respPending(ky)
+    If Err.Number = 0 Then
+        Err.Clear
+        On Error GoTo 0
+        Exit Sub
+    End If
+    Err.Clear
+    On Error GoTo 0
+
+    Set h = AcquireHandlerFor(HK_ResponseGetContent, Me)
+    If h Is Nothing Then Exit Sub
+    h.callbackId = seqNo
+
+    ' ★完了まで ResponseView を生かす★
+    ComAddRef pResp
+    m_respPending.Add pResp, ky
+
+    hr = dcf(pResp, 6, "", h.Slot + VTABLE_OBJ_OFFSET)   ' GetContent
+    If hr <> 0 Then
+        ' 撃てなかった。保持をほどく。
+        ComRelease pResp
+        m_respPending.Remove ky
+        Set h = Nothing
+    End If
+End Sub
+
+
+' ============================================================
+' OnResponseContentCompleted (N-4)
+'   ComCallbackHandler から動的バインディング経由で呼ばれる。Public Sub 必須。
+'   1 ショット系なので出自接頭辞なし (第9.6a 規約)。
+'
+'   ★IStream は Invoke の間しか有効でない★ ので同期的に読み切る。
+'   ★N-1 以降の受け口と同じくエラーを再送出しない★
+' ============================================================
+Public Sub OnResponseContentCompleted(ByVal cbId As Long, _
+                                      ByVal errorCode As Long, _
+                                      ByVal pStream As LongPtr)
+    Dim errNum As Long
+
+    m_inCallback = m_inCallback + 1
+    On Error GoTo GuardExit
+    OnResponseContentCompleted_Core cbId, errorCode, pStream
+
+GuardExit:
+    errNum = Err.Number
+    If m_inCallback > 0 Then m_inCallback = m_inCallback - 1
+    If errNum <> 0 Then
+        On Error Resume Next
+        m_respBodyOrphan = m_respBodyOrphan + 1
+    End If
+End Sub
+
+
+Private Sub OnResponseContentCompleted_Core(ByVal cbId As Long, _
+                                            ByVal errorCode As Long, _
+                                            ByVal pStream As LongPtr)
+    Dim k       As Long
+    Dim nBytes  As Long
+    Dim trunc   As Boolean
+    Dim buf()   As Byte
+    Dim enc     As String
+    Dim cType   As String
+    Dim ky      As String
+
+    ' --- 保持していた ResponseView をほどく (論点5 案β の後始末) ---
+    ky = "r" & cbId
+    On Error Resume Next
+    Dim pKept As LongPtr
+    pKept = CLngPtr(m_respPending(ky))
+    If pKept <> 0 Then
+        ComRelease pKept
+        m_respPending.Remove ky
+    End If
+    Err.Clear
+    On Error GoTo 0
+
+    ' --- 置き場を探す ---
+    k = NetFindDetailBySeq(cbId)
+    If k < 0 Then
+        ' ★完了までに詳細エントリが消えていた★ (溢れた / Clear した)
+        m_respBodyOrphan = m_respBodyOrphan + 1
+        Exit Sub
+    End If
+
+    ' ★ここまで来たら「届いた」★ 0 バイトでも失敗でも、未着とは区別する
+    m_detRespGot(k) = True
+
+    If errorCode = E_NO_DATA Then
+        ' ★本文が無い応答 (204 など)★ 失敗ではない。0 バイトのまま残す。
+        m_detRespBody(k) = ""
+        m_detRespBytes(k) = 0
+        Exit Sub
+    ElseIf errorCode <> 0 Then
+        m_detRespBody(k) = ""
+        m_detRespEnc(k) = "(取得失敗 hr=&H" & Hex(errorCode) & ")"
+        Exit Sub
+    End If
+
+    If pStream = 0 Then
+        ' ★本文が無い応答★ (204 / 304 など)。0 バイトとして残す。
+        m_detRespBytes(k) = 0
+        Exit Sub
+    End If
+
+    ' --- 読む (★Seek で戻す必要は無い★ 応答のコピーなので) ---
+    If Not NetReadStream(pStream, m_respBodyMax, nBytes, trunc, buf) Then Exit Sub
+
+    m_detRespBytes(k) = nBytes
+    m_detRespTrunc(k) = trunc
+    If nBytes <= 0 Then Exit Sub
+
+    ' --- ★何が来たのかを決めつけず、全部残す (論点2 案P')★ ---
+    enc = NetHeaderValue(m_detRespHeaders(k), "content-encoding")
+    cType = NetHeaderValue(m_detRespHeaders(k), "content-type")
+    m_detRespEnc(k) = enc
+    m_detRespHex(k) = NetHexHead(buf, nBytes)     ' ★常に残す★
+    m_detRespIsText(k) = NetIsTextType(cType)
+    If m_detRespIsText(k) Then
+        m_detRespBody(k) = Utf8BytesToString(buf, nBytes)
+    End If
+End Sub
+
+
+' ============================================================
+' NetFindDetailBySeq (N-4、Private) - 通し番号から詳細リングの位置を探す
+'   見つからなければ -1。N-3 の NetAttachRespHeaders と同じ探し方。
+' ============================================================
+Private Function NetFindDetailBySeq(ByVal seqNo As Long) As Long
+    Dim i As Long
+    Dim k As Long
+
+    NetFindDetailBySeq = -1
+    For i = m_detCount To 1 Step -1
+        k = NetDetailRingIndex(i)
+        If k >= 0 Then
+            If m_detSeq(k) = seqNo Then
+                NetFindDetailBySeq = k
+                Exit Function
+            End If
+        End If
+    Next i
+End Function
+
+
+' ============================================================
+' NetRespPendingClear (N-4、Private) - 保持中の ResponseView を全部ほどく
+'   ★完了が来ないまま終わることがある★ (捕捉をやめた / Pane を閉じた)。
+'   漏らさないためにここでまとめて Release する。
+' ============================================================
+Private Sub NetRespPendingClear()
+    Dim v As Variant
+
+    If m_respPending Is Nothing Then Exit Sub
+
+    On Error Resume Next
+    For Each v In m_respPending
+        If CLngPtr(v) <> 0 Then ComRelease CLngPtr(v)
+    Next v
+    Err.Clear
+    On Error GoTo 0
+
+    Set m_respPending = New Collection
+End Sub
