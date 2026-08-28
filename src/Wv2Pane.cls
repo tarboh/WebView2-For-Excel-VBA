@@ -8,6 +8,19 @@ Attribute VB_Creatable = False
 Attribute VB_PredeclaredId = False
 Attribute VB_Exposed = False
 ''''''''''''''''''''''''''''''''''
+' --- Wv2Pane.cls  N-3 段階 (レスポンスのステータスとヘッダ) ---
+'
+'   一覧の 1 行に★結果★が付いた。詳細には★応答ヘッダ★が付いた。
+'   詳細一式は N-3 の節 (このファイルの末尾) にまとめてある。要点だけ:
+'
+'     ・★このイベントにはフィルタが無い★ 画像も CSS も全部来る。だから
+'       ★一覧に既に居る要求に対応するものだけ★ 記録する (絞り方を二重に持たない)
+'     ・突き合わせは URI + メソッドで「まだ応答が付いていない最古の要求」に (FIFO)。
+'       ★同じ URL への同時並行要求は取り違えるし、取り違えは検出できない★
+'     ・★まだ応答が来ていない行は空欄★ (0 を書くと本物と見分けが付かない)
+'     ・★応答側の GetIterator は 7、要求側は 8★ 流用すると 1 つずれる
+''''''''''''''''''''''''''''''''''
+''''''''''''''''''''''''''''''''''
 ' --- Wv2Pane.cls  N-2 段階 (リクエストのヘッダとボディ) ---
 '
 '   N-1 の一覧 (URL / メソッド / 種別) の上に、★1 本を再現するのに要るもの★を足す。
@@ -890,6 +903,7 @@ Private m_lastError As Long
 ' 第9.6a 段階で上限を HK_DocumentTitleChanged → HK_NewWindowRequested に拡張。
 ' 第9.9b 段階で上限を HK_NewWindowRequested(7) → HK_DOMContentLoaded(10) に拡張。
 ' N-1 段階で上限を HK_DOMContentLoaded(10) → HK_WebResourceRequested(11) に拡張。
+' N-3 段階で上限を HK_WebResourceRequested(11) → HK_WebResourceResponseReceived(12) に拡張。
 '   これにより HK_HistoryChanged(9) / HK_DOMContentLoaded(10) も永続配列で
 '   管理できる。
 '
@@ -902,8 +916,8 @@ Private m_lastError As Long
 ' Class_Terminate ですべての非 Nothing なハンドラについて remove_ を呼ぶ
 ' (CleanupAllPersistentHandlers の LBound/UBound ループは変更不要、
 '  これが「HandlerKind 連動配列で横展開を自動化」の本領発揮)。
-Private m_persistentHandlers(HK_NavigationStarting To HK_WebResourceRequested) As ComCallbackHandler
-Private m_persistentTokens(HK_NavigationStarting To HK_WebResourceRequested) As LongLong
+Private m_persistentHandlers(HK_NavigationStarting To HK_WebResourceResponseReceived) As ComCallbackHandler
+Private m_persistentTokens(HK_NavigationStarting To HK_WebResourceResponseReceived) As LongLong
 
 ' --- ページ読み込み完了フラグ (第9.4c 段階で追加、暫定実装) ---
 '
@@ -1066,6 +1080,9 @@ Private m_detTrunc()   As Boolean
 Private m_detIsText()  As Boolean
 Private m_detBody()    As String
 Private m_detHex()     As String
+Private m_detRespHeaders() As String   ' N-3: 応答ヘッダ
+Private m_detStatus()      As Long     ' N-3: ステータス (0 = 未着)
+Private m_detReason()      As String   ' N-3: 理由句
 
 ' 詳細リングの既定容量と上限。★一覧より桁で小さい★ 1 件あたりの重さが違う。
 Private Const NET_DET_CAP_DEFAULT As Long = 50
@@ -1096,6 +1113,10 @@ Private Const STREAM_SEEK_SET As Long = 0
 '   m_netDropped : ★溢れて捨てた件数★ 黙って切らない
 '   m_netT0      : 捕捉開始時の GetTickCount 値。各件の経過 ms の基準。
 '   m_netFilters : 登録済みフィルタ (uri & vbTab & ctx)。Stop で外すために覚える。
+'   m_netStatus  : その行のステータス (N-3)。★0 = まだ応答が来ていない★
+'   m_netReason  : 理由句 (N-3)
+'   m_netRespOn  : 応答イベントを拾えているか (N-3)
+'   m_netUnmatched : ★一覧に対応が無かった応答の数★ (N-3。大半は正常)
 Private m_netOn      As Boolean
 Private m_netCap     As Long
 Private m_netHead    As Long
@@ -1103,7 +1124,11 @@ Private m_netCount   As Long
 Private m_netTotal   As Long
 Private m_netDropped As Long
 Private m_netT0      As Long
+Private m_netRespOn    As Boolean
+Private m_netUnmatched As Long
 Private m_netFilters As Collection
+Private m_netStatus()  As Long
+Private m_netReason()  As String
 Private m_netSeq()    As Long
 Private m_netMs()     As Long
 Private m_netCtx()    As Long
@@ -1351,8 +1376,9 @@ End Sub
 ' ============================================================
 Private Function RemoveInterfaceFor(ByVal kind As Long) As LongPtr
     Select Case kind
-        Case HK_DOMContentLoaded
+        Case HK_DOMContentLoaded, HK_WebResourceResponseReceived
             ' _2 IF のイベント。m_pView2 で叩く (未取得なら 0 を返す)。
+            '   ★N-3 の WebResourceResponseReceived も _2 IF★ なので同じ扱い。
             RemoveInterfaceFor = m_pView2
         Case Else
             ' 基底 ICoreWebView2 のイベント。m_pView で叩く。
@@ -1385,6 +1411,7 @@ End Function
 '    44  add_NewWindowRequested      45  remove_NewWindowRequested  ← 第9.6a で追加
 '    46  add_DocumentTitleChanged    47  remove_DocumentTitleChanged
 '    55  add_WebResourceRequested    56  remove_WebResourceRequested  ← N-1 で追加
+'    (_2 IF) 61  add_WebResourceResponseReceived  62  remove_  ← N-3 で追加
 '
 '   ICoreWebView2_2 vtable layout (基底の 61 個に続く派生 IF):
 '    64  add_DOMContentLoaded        65  remove_DOMContentLoaded     ← 第9.9b で追加
@@ -1404,6 +1431,7 @@ Private Function RemoveVtableIndexFor(ByVal kind As Long) As Long
         Case HK_HistoryChanged:       RemoveVtableIndexFor = 14   ' 第9.9b で追加 (基底 IF)
         Case HK_DOMContentLoaded:     RemoveVtableIndexFor = 65   ' 第9.9b で追加 (_2 IF)
         Case HK_WebResourceRequested: RemoveVtableIndexFor = 56   ' N-1 で追加 (基底 IF)
+        Case HK_WebResourceResponseReceived: RemoveVtableIndexFor = 62  ' N-3 で追加 (_2 IF)
         Case Else:                    RemoveVtableIndexFor = 0   ' 未知 → 解除不可
     End Select
 End Function
@@ -5781,6 +5809,19 @@ Public Function NetCaptureStart(Optional ByVal contexts As String = "", _
         Exit Function
     End If
 
+    ' --- (3) 応答イベントも張る (N-3) ---
+    '   ★このイベントにはフィルタが無い★ ので全部来る。一覧に居る要求に
+    '   対応するものだけ記録する (論点1 案A)。_2 IF が取れない環境では
+    '   ★ステータス欄が永久に空欄になる★ ので、黙って進まず知らせる。
+    m_netRespOn = False
+    hr = View2_AddWebResourceResponseReceived()
+    If hr = 0 Then
+        m_netRespOn = True
+    Else
+        Wv2Log.LogW "Wv2Pane.NetCaptureStart: ★応答イベントを張れなかった★ hr=&H" & _
+                    Hex(hr) & " 一覧のステータス欄は空欄のままになる。"
+    End If
+
     NetLogClear
     m_netOn = True
     NetCaptureStart = True
@@ -5834,6 +5875,11 @@ Public Function NetCaptureStop() As Boolean
     ' --- (2) ハンドラを外す ---
     hr = View_RemoveWebResourceRequested()
     If hr <> 0 Then allOk = False
+
+    ' --- (3) 応答イベントを外す (N-3) ---
+    hr = View2_RemoveWebResourceResponseReceived()
+    If hr <> 0 Then allOk = False
+    m_netRespOn = False
 
     m_netOn = False
     NetCaptureStop = allOk
@@ -5912,8 +5958,10 @@ End Sub
 ' NetLogLine (N-1) - 流さずに 1 件だけ読む
 '
 '   idx は★古い順に 1 起点★。範囲外なら空文字。
-'   1 行は vbTab 区切りで 5 項目:
-'     通し番号 / 経過ms / メソッド / 種別名 / URL
+'   1 行は vbTab 区切りで 7 項目 (N-3 で 5 → 7):
+'     通し番号 / 経過ms / メソッド / 種別名 / URL / ステータス / 理由句
+'   ★ステータスは末尾に足した★ 既存の添字 (0～4) を動かさないため。
+'   ★まだ応答が来ていなければ空欄★ (論点7 案α)
 '
 '   ★ドレインすると消えるので、判定に使うときはこちらで読む★
 '   (N-5 で PowerShell コードを吐くときの入口もここになる)
@@ -5924,7 +5972,8 @@ Public Property Get NetLogLine(ByVal idx As Long) As String
     If k < 0 Then Exit Property
 
     NetLogLine = m_netSeq(k) & vbTab & m_netMs(k) & vbTab & _
-                 m_netMethod(k) & vbTab & NetCtxName(m_netCtx(k)) & vbTab & m_netUri(k)
+                 m_netMethod(k) & vbTab & NetCtxName(m_netCtx(k)) & vbTab & m_netUri(k) & _
+                 vbTab & NetStatusText(m_netStatus(k)) & vbTab & m_netReason(k)
 End Property
 
 
@@ -5932,6 +5981,8 @@ End Property
 ' NetLogDrain (N-1) - 溜まった分を Wv2Log へ流して空にする
 '
 '   ★取り出したらリングは空になる★ (D-4 の SpaProbeDrainLog と同じ契約)。
+'   ★N-3 の注意★ 応答は一覧の行に書かれるので、まだ応答が来ていない要求を
+'   ドレインすると、その応答は行き場を失って NetRespUnmatched に数えられる。
 '   ★判定はログファイルで読む★ (設計原則105)。イミディエイトは配管ログで流れる。
 '
 '   戻り値: 流した件数。0 なら何も溜まっていなかった。
@@ -5947,7 +5998,7 @@ Public Function NetLogDrain() As Long
     End If
 
     Wv2Log.LogI "  --- ネットワーク要求 " & n & " 件 (総発火 " & m_netTotal & " 件) ---"
-    Wv2Log.LogI "        #   経過ms  メソッド 種別       URL"
+    Wv2Log.LogI "        #   経過ms  メソッド 種別       状態  URL"
     For i = 1 To n
         Wv2Log.LogI "      " & NetLogFormat(i)
     Next i
@@ -5958,6 +6009,14 @@ Public Function NetLogDrain() As Long
         '   消えないだけ。消したいなら NetLogClear で数え直す。
         Wv2Log.LogW "  ★捕捉開始から " & m_netDropped & " 件が溢れて捨てられている★ " & _
                     "NetLogCapacity を増やすか、こまめに NetLogDrain すること。"
+    End If
+
+    ' --- N-3: 一覧に対応が無かった応答 ---
+    '   ★大きい数が出るのは異常ではない★ このイベントにはフィルタが無いので、
+    '   画像や CSS の応答も全部ここへ来る。取りこぼしの指標は NetLogDropped の方。
+    If m_netUnmatched > 0 Then
+        Wv2Log.LogI "  (一覧に対応が無かった応答 " & m_netUnmatched & " 件 ― " & _
+                    "画像や CSS など捕捉対象外のものが大半で、これは正常)"
     End If
 
     NetLogDrain = n
@@ -6245,11 +6304,14 @@ Private Sub NetRingAlloc()
     ReDim m_netCtx(0 To m_netCap - 1)
     ReDim m_netMethod(0 To m_netCap - 1)
     ReDim m_netUri(0 To m_netCap - 1)
+    ReDim m_netStatus(0 To m_netCap - 1)
+    ReDim m_netReason(0 To m_netCap - 1)
 
     m_netHead = 0
     m_netCount = 0
     m_netTotal = 0
     m_netDropped = 0
+    m_netUnmatched = 0
     m_netT0 = GetTickCount()
 End Sub
 
@@ -6277,6 +6339,9 @@ Private Sub NetPush(ByVal mth As String, ByVal ctx As Long, ByVal uri As String)
     m_netCtx(m_netHead) = ctx
     m_netMethod(m_netHead) = mth
     m_netUri(m_netHead) = uri
+    ' ★使い回すスロットなので必ず消す★ 前の要求の応答が残ると嘘になる (N-3)
+    m_netStatus(m_netHead) = 0
+    m_netReason(m_netHead) = ""
 
     m_netHead = m_netHead + 1
     If m_netHead >= m_netCap Then m_netHead = 0
@@ -6335,7 +6400,20 @@ Private Function NetLogFormat(ByVal idx As Long) As String
                    Right$("       " & m_netMs(k), 7) & "  " & _
                    Left$(m_netMethod(k) & "        ", 8) & " " & _
                    Left$(NetCtxName(m_netCtx(k)) & "          ", 10) & " " & _
+                   Right$("     " & NetStatusText(m_netStatus(k)), 5) & " " & _
                    m_netUri(k)
+End Function
+
+
+' ============================================================
+' NetStatusText (N-3、Private) - ステータスの見せ方
+'   ★0 は「まだ応答が来ていない」なので空欄にする★ (論点7 案α)
+'   0 を書くと本物のステータスコードと見分けが付かず、後段が信じる (設計原則111)。
+' ============================================================
+Private Function NetStatusText(ByVal st As Long) As String
+    If st = 0 Then Exit Function
+    If st < 0 Then NetStatusText = "(読めず)": Exit Function
+    NetStatusText = CStr(st)
 End Function
 
 
@@ -6675,6 +6753,20 @@ Public Function NetDetail(ByVal idx As Long) As Boolean
                     ") 先頭: " & m_detHex(k)
     End If
 
+    ' --- N-3: 応答 ---
+    If m_detStatus(k) = 0 Then
+        Wv2Log.LogI "      [応答] まだ来ていない"
+    Else
+        Wv2Log.LogI "      [応答] " & NetStatusText(m_detStatus(k)) & " " & m_detReason(k)
+        If LenB(m_detRespHeaders(k)) > 0 Then
+            lines = Split(NetRedactApply(m_detRespHeaders(k)), vbLf)
+            Wv2Log.LogI "      [応答ヘッダ " & (UBound(lines) - LBound(lines) + 1) & " 個]"
+            For i = LBound(lines) To UBound(lines)
+                Wv2Log.LogI "        " & lines(i)
+            Next i
+        End If
+    End If
+
     NetDetail = True
 End Function
 
@@ -6725,6 +6817,33 @@ End Sub
 ' ============================================================
 Private Function NetReadHeaders(ByVal pReq As LongPtr) As String
     Dim pHeaders As LongPtr
+    Dim hr       As Long
+
+    If pReq = 0 Then Exit Function
+
+    hr = dcf(pReq, 9, "", VarPtr(pHeaders))          ' request.get_Headers
+    If hr <> 0 Or pHeaders = 0 Then Exit Function
+
+    ' ★要求側の GetIterator は 8★ (応答側は 7。並びが違う ― 設計原則115)
+    NetReadHeaders = NetReadHeadersIter(pHeaders, 8)
+    ComRelease pHeaders
+End Function
+
+
+' ============================================================
+' NetReadHeadersIter (N-3、Private) - ヘッダのコレクションを 1 本の文字列にする
+'
+'   要求側と応答側で共通の中身。★違うのは GetIterator の index だけ★ なので
+'   そこを引数にした (要求側 8 / 応答側 7)。
+'   イテレータの型はどちらも ICoreWebView2HttpHeadersCollectionIterator。
+'     3 = GetCurrentHeader(LPWSTR* name, LPWSTR* value)
+'     4 = get_HasCurrentHeader(BOOL*)   5 = MoveNext(BOOL*)
+'
+'   ★ハンドラの中で走る★ ので上限 (NET_HDR_MAX) で切る。
+'   ★GetCurrentHeader は LPWSTR を 2 本返す★ ので、どちらも CoTaskMemFree する。
+' ============================================================
+Private Function NetReadHeadersIter(ByVal pHeaders As LongPtr, _
+                                    ByVal iterIndex As Long) As String
     Dim pIter    As LongPtr
     Dim hr       As Long
     Dim n        As Long
@@ -6733,14 +6852,23 @@ Private Function NetReadHeaders(ByVal pReq As LongPtr) As String
     Dim moreFlag As Long
     Dim sb       As String
 
-    If pReq = 0 Then Exit Function
+    ' ★空で返さず理由を残す (N-3b)★
+    '   ハンドラの中なのでログは撃てない。どこで空になったのかが
+    '   分からないと、実機 1 往復ぶん無駄になる (設計原則111)。
+    If pHeaders = 0 Then
+        NetReadHeadersIter = "(診断: ヘッダのコレクションが 0)"
+        Exit Function
+    End If
 
-    hr = dcf(pReq, 9, "", VarPtr(pHeaders))          ' get_Headers
-    If hr <> 0 Or pHeaders = 0 Then Exit Function
-
-    hr = dcf(pHeaders, 8, "", VarPtr(pIter))         ' GetIterator
-    If hr <> 0 Or pIter = 0 Then
-        ComRelease pHeaders
+    hr = dcf(pHeaders, iterIndex, "", VarPtr(pIter))   ' GetIterator
+    If hr <> 0 Then
+        NetReadHeadersIter = "(診断: GetIterator が失敗 hr=&H" & Hex(hr) & _
+                             " index=" & iterIndex & ")"
+        Exit Function
+    End If
+    If pIter = 0 Then
+        NetReadHeadersIter = "(診断: GetIterator は S_OK だが iter が 0 index=" & _
+                             iterIndex & ")"
         Exit Function
     End If
 
@@ -6767,10 +6895,14 @@ Private Function NetReadHeaders(ByVal pReq As LongPtr) As String
     If n >= NET_HDR_MAX Then
         sb = sb & vbLf & "(★" & NET_HDR_MAX & " 個で打ち切った★)"
     End If
+    If n = 0 Then
+        ' ★イテレータは取れたのに 1 個も無い★
+        sb = "(診断: ヘッダが 0 個。HasCurrentHeader が最初から False" & _
+             " index=" & iterIndex & ")"
+    End If
 
     ComRelease pIter
-    ComRelease pHeaders
-    NetReadHeaders = sb
+    NetReadHeadersIter = sb
 End Function
 
 
@@ -6883,6 +7015,10 @@ Private Sub NetDetailPush(ByVal seqNo As Long, _
     m_detIsText(m_detHead) = isText
     m_detBody(m_detHead) = bodyText
     m_detHex(m_detHead) = hexHead
+    ' N-3: 応答はまだ来ていない (使い回すスロットなので必ず消す)
+    m_detStatus(m_detHead) = 0
+    m_detReason(m_detHead) = ""
+    m_detRespHeaders(m_detHead) = ""
 
     m_detHead = m_detHead + 1
     If m_detHead >= m_detCap Then m_detHead = 0
@@ -6910,6 +7046,9 @@ Private Sub NetDetailRingAlloc()
     ReDim m_detIsText(0 To m_detCap - 1)
     ReDim m_detBody(0 To m_detCap - 1)
     ReDim m_detHex(0 To m_detCap - 1)
+    ReDim m_detRespHeaders(0 To m_detCap - 1)
+    ReDim m_detStatus(0 To m_detCap - 1)
+    ReDim m_detReason(0 To m_detCap - 1)
 
     m_detHead = 0
     m_detCount = 0
@@ -7041,3 +7180,356 @@ Private Function NetRedactDefaults() As String
     NetRedactDefaults = "|cookie|set-cookie|authorization|proxy-authorization|" & _
                         "x-api-key|x-auth-token|x-csrf-token|api-key|"
 End Function
+
+' ============================================================
+' ★N-3 : レスポンスのステータスとヘッダ★
+'
+'   N-1 の一覧に★結果★を、N-2 の詳細に★応答ヘッダ★を足す。
+'   一覧の 1 行が「いつ・何を・どう叩いて・どうなったか」で完結する。
+'
+'   ■ ★このイベントにはフィルタが無い (N-3 の中心問題)★
+'     ICoreWebView2_2 の vtable に AddWebResourceResponseReceivedFilter は
+'     存在しない (61/62 の次は NavigateWithWebResourceRequest)。つまり
+'     ★画像も CSS もフォントも全部来る★。しかも args が持つのは Request と
+'     Response だけで、★種別 (COREWEBVIEW2_WEB_RESOURCE_CONTEXT) が入っていない★
+'     ので種別で絞ることもできない。
+'
+'     そこで ★一覧に既に居る要求に対応するものだけ記録する (論点1 案A)★。
+'     N-1 の網が「見たいもの」を既に定義しているので、それに乗る。
+'     全部欲しくなったら NetCaptureStart "ALL" で一覧側を広げれば
+'     レスポンスも自動でついてくる。★絞り方を二重に持たない★
+'
+'   ■ 突き合わせ (論点2 案P / 論点6 案Y)
+'     args には NavigationId のような紐付けの手がかりが無いので、
+'     ★URI + メソッドで「まだ応答が付いていない★最古の★要求」に付ける★。
+'     ★同じ URL への同時並行要求は原理的に取り違える。しかも取り違えたことは
+'     検出できない★ ―― これは正直に言っておく。リダイレクト (301 → 200) は
+'     要求そのものが 2 回発火するので 1 対 1 で付く。
+'
+'   ■ ★まだ応答が来ていないときは空欄 (論点7 案α)★
+'     0 を入れると本物のステータスコードと見分けが付かず、後段 (人でも
+'     N-5 のコード生成でも) がそれを信じる (設計原則111)。
+'
+'   ■ 追加した Public メンバ
+'     NetLogStatus(i)        As Long    その行のステータス (0 = まだ来ていない)
+'     NetDetailRespHeaders(i) As String 応答ヘッダ (伏せ字を適用して返す)
+'     NetRespOn              As Boolean 応答イベントを拾えているか
+'     NetRespUnmatched       As Long    ★一覧に対応が無かった応答の数★
+'
+'   ■ vtable index (★tools/vtable.py で確定★、設計原則115)
+'       ICoreWebView2_2::add_WebResourceResponseReceived            61
+'       ICoreWebView2_2::remove_WebResourceResponseReceived         62
+'       ...ResponseReceivedEventArgs::get_Request / get_Response   3 / 4
+'       ICoreWebView2WebResourceResponseView::get_Headers            3
+'       ...::get_StatusCode (int*) / get_ReasonPhrase              4 / 5
+'       ★ICoreWebView2HttpResponseHeaders::GetIterator = 7★
+'
+'   ★罠★ 要求側 ICoreWebView2HttpRequestHeaders::GetIterator は 8 だが、
+'   応答側 ICoreWebView2HttpResponseHeaders::GetIterator は ★7★。
+'   応答側には put_ 系が無く AppendHeader が先頭に来るので並びがずれる。
+'   「同じだろう」で流用すると 1 つずれて GetHeaders を呼ぶ (設計原則115)。
+' ============================================================
+
+
+' ============================================================
+' NetLogStatus (N-3) - その行のステータスコード
+'   ★0 は「まだ応答が来ていない」★ 本物の 0 は無いので番兵に使える。
+'   表示 (NetLogLine / NetLogFormat) では 0 を空欄にする (論点7 案α)。
+' ============================================================
+Public Property Get NetLogStatus(ByVal idx As Long) As Long
+    Dim k As Long
+    k = NetRingIndex(idx)
+    If k < 0 Then Exit Property
+    NetLogStatus = m_netStatus(k)
+End Property
+
+
+' ============================================================
+' NetRespOn (N-3) - 応答イベントを拾えているか
+'   ★False なら一覧のステータス欄は永久に空欄★
+'   ICoreWebView2_2 が取れなかったときにそうなる。
+' ============================================================
+Public Property Get NetRespOn() As Boolean
+    NetRespOn = m_netRespOn
+End Property
+
+
+' ============================================================
+' NetRespUnmatched (N-3) - 一覧に対応が無かった応答の数
+'
+'   ★大半は「捕捉対象外のもの」で正常★
+'     このイベントにはフィルタが無いので、画像や CSS の応答も全部来る。
+'     一覧が DOCUMENT / XHR / FETCH に絞られている以上、それ以外の応答は
+'     必ずここに数えられる。★大きい数が出るのは異常ではない★
+'
+'   ★取りこぼしの指標は NetLogDropped の方★
+'     一覧が溢れて消えた要求の応答もここに混ざるが、両者は区別できない。
+'     取りこぼしを疑うときは NetLogDropped を見ること。
+' ============================================================
+Public Property Get NetRespUnmatched() As Long
+    NetRespUnmatched = m_netUnmatched
+End Property
+
+
+' ============================================================
+' NetDetailRespHeaders (N-3) - 詳細 1 本の応答ヘッダを読む
+'   1 行 1 ヘッダで vbLf 区切り。★NetRedact = True なら秘密は伏せて返す★
+'   (Set-Cookie は既定リストに入っている)
+' ============================================================
+Public Property Get NetDetailRespHeaders(ByVal idx As Long) As String
+    Dim k As Long
+    k = NetDetailRingIndex(idx)
+    If k < 0 Then Exit Property
+
+    NetDetailRespHeaders = NetRedactApply(m_detRespHeaders(k))
+End Property
+
+
+' ============================================================
+' View2_AddWebResourceResponseReceived (N-3、ICoreWebView2_2 vtable 61)
+'
+'   ★_2 IF のイベントなので m_pView2 で叩く★ (設計原則45)。
+'   実装は View2_AddDOMContentLoaded を逐語的な見本にしている。
+'
+'   戻り値: HRESULT (S_OK = 0 で成功)
+' ============================================================
+Public Function View2_AddWebResourceResponseReceived() As Long
+    If m_closed Then
+        View2_AddWebResourceResponseReceived = &H80004003   ' E_POINTER
+        Exit Function
+    End If
+    If Not EnsureView2() Then
+        Debug.Print "Wv2Pane.View2_AddWebResourceResponseReceived: EnsureView2 失敗"
+        View2_AddWebResourceResponseReceived = &H80004003
+        Exit Function
+    End If
+
+    If Not (m_persistentHandlers(HK_WebResourceResponseReceived) Is Nothing) Then
+        Debug.Print "Wv2Pane.View2_AddWebResourceResponseReceived: 既に登録済み"
+        View2_AddWebResourceResponseReceived = 0
+        Exit Function
+    End If
+
+    Dim h As ComCallbackHandler
+    Set h = AcquireHandlerFor(HK_WebResourceResponseReceived, Me)
+    If h Is Nothing Then
+        Debug.Print "Wv2Pane.View2_AddWebResourceResponseReceived: Acquire に失敗"
+        View2_AddWebResourceResponseReceived = &H8000FFFF   ' E_UNEXPECTED
+        Exit Function
+    End If
+
+    Dim pVTableObj As LongPtr
+    pVTableObj = h.Slot + VTABLE_OBJ_OFFSET
+
+    Dim token As LongLong
+    Dim hr As Long
+    hr = dcf(m_pView2, 61, "View2.add_WebResourceResponseReceived", _
+             pVTableObj, VarPtr(token))
+
+    If hr <> 0 Then
+        Debug.Print "Wv2Pane.View2_AddWebResourceResponseReceived: 失敗 hr=&H" & Hex(hr)
+        Set h = Nothing
+        View2_AddWebResourceResponseReceived = hr
+        Exit Function
+    End If
+
+    m_persistentTokens(HK_WebResourceResponseReceived) = token
+    Set m_persistentHandlers(HK_WebResourceResponseReceived) = h
+    Debug.Print "Wv2Pane.View2_AddWebResourceResponseReceived OK: token=" & token
+
+    View2_AddWebResourceResponseReceived = 0
+End Function
+
+
+' ============================================================
+' View2_RemoveWebResourceResponseReceived (N-3、vtable 62、m_pView2)
+'   未登録なら no-op (S_OK で返す)。
+' ============================================================
+Public Function View2_RemoveWebResourceResponseReceived() As Long
+    If m_persistentHandlers(HK_WebResourceResponseReceived) Is Nothing Then
+        View2_RemoveWebResourceResponseReceived = 0
+        Exit Function
+    End If
+
+    Dim hr As Long
+    If m_pView2 <> 0 Then
+        hr = dcf(m_pView2, 62, "View2.remove_WebResourceResponseReceived", _
+                 m_persistentTokens(HK_WebResourceResponseReceived))
+        If hr <> 0 Then
+            Debug.Print "Wv2Pane.View2_RemoveWebResourceResponseReceived: 解除失敗 hr=&H" & Hex(hr)
+        End If
+    Else
+        Debug.Print "Wv2Pane.View2_RemoveWebResourceResponseReceived: m_pView2 が 0 なので参照のみ解放"
+    End If
+
+    Set m_persistentHandlers(HK_WebResourceResponseReceived) = Nothing
+    m_persistentTokens(HK_WebResourceResponseReceived) = 0^
+
+    View2_RemoveWebResourceResponseReceived = hr
+End Function
+
+
+' ============================================================
+' View2_OnWebResourceResponseReceived (N-3)
+'   ComCallbackHandler から動的バインディング経由で呼ばれる。Public Sub 必須。
+'   ★N-1 の受け口と同じくエラーを再送出しない★ (通信の最中にダイアログを出さない)
+' ============================================================
+Public Sub View2_OnWebResourceResponseReceived(ByVal pSender As LongPtr, ByVal pArgs As LongPtr)
+    Dim errNum As Long
+    Dim errDsc As String
+
+    m_inCallback = m_inCallback + 1
+    On Error GoTo GuardExit
+    View2_OnWebResourceResponseReceived_Core pSender, pArgs
+
+GuardExit:
+    errNum = Err.Number
+    errDsc = Err.Description
+    If m_inCallback > 0 Then m_inCallback = m_inCallback - 1
+    If errNum <> 0 Then
+        On Error Resume Next
+        m_netUnmatched = m_netUnmatched + 1
+    End If
+End Sub
+
+
+' ============================================================
+' View2_OnWebResourceResponseReceived_Core (N-3、Private)
+'
+'   ★記録だけしてすぐ返す★ (N-1 / N-2 と同じ)。ログも Debug.Print も撃たない。
+'   ★通信物には触らない★ 本文 (GetContent) は非同期なので N-4 の話。
+'   ここで読むのはステータス・理由句・応答ヘッダだけ。
+'
+'   args の vtable: 3 = get_Request、4 = get_Response
+'   ResponseView の vtable: 3 = get_Headers、4 = get_StatusCode、5 = get_ReasonPhrase
+' ============================================================
+Private Sub View2_OnWebResourceResponseReceived_Core(ByVal pSender As LongPtr, ByVal pArgs As LongPtr)
+    Dim pReq  As LongPtr
+    Dim pResp As LongPtr
+    Dim hr    As Long
+    Dim uri   As String
+    Dim mth   As String
+    Dim st    As Long
+    Dim reason As String
+    Dim k     As Long
+
+    If pArgs = 0 Then Exit Sub
+
+    ' --- どの要求への応答かを知るために Request を読む ---
+    hr = dcf(pArgs, 3, "", VarPtr(pReq))             ' get_Request
+    If hr <> 0 Or pReq = 0 Then Exit Sub
+    uri = GetStringProperty(pReq, 3, "")             ' request.get_Uri
+    mth = GetStringProperty(pReq, 5, "")             ' request.get_Method
+    ComRelease pReq
+
+    ' --- 一覧の中から「まだ応答が付いていない最新の要求」を探す ---
+    '   ★見つからなければ数えて終わり (論点1 案A / 論点5 案W)★
+    '   このイベントにはフィルタが無いので、画像や CSS の応答もここへ来る。
+    '   それらは一覧に居ないので当然見つからない = 正常。
+    k = NetMatchRequest(uri, mth)
+    If k < 0 Then
+        m_netUnmatched = m_netUnmatched + 1
+        Exit Sub
+    End If
+
+    ' --- Response を読む ---
+    hr = dcf(pArgs, 4, "", VarPtr(pResp))            ' get_Response
+    If hr <> 0 Or pResp = 0 Then
+        m_netStatus(k) = -1                          ' ★応答は来たが読めなかった★
+        m_netReason(k) = "(応答の取得に失敗)"
+        Exit Sub
+    End If
+
+    st = GetLongProperty(pResp, 4, "")               ' get_StatusCode
+    reason = GetStringProperty(pResp, 5, "")         ' get_ReasonPhrase
+
+    m_netStatus(k) = st
+    m_netReason(k) = reason
+
+    ' --- 応答ヘッダは詳細が ON のときだけ (論点4 案U) ---
+    If m_detOn Then NetAttachRespHeaders m_netSeq(k), pResp, st, reason
+
+    ComRelease pResp
+End Sub
+
+
+' ============================================================
+' NetMatchRequest (N-3、Private) - 応答を付ける相手を一覧から探す
+'
+'   ★URI + メソッドで「まだ応答が付いていない★最古の★要求」を探す★
+'   (論点2 案P / 論点6 案Y)。古い順に走査して最初に見つかったものを返す。
+'
+'   ★合意時は「最新」と言っていたが、実装前の検算で「最古」が正しいと分かった★
+'   同じ URL の要求が 2 本飛んでから応答が返る場面 (Req1 → Req2 → Resp → Resp)
+'   で、最新から探すと★ステータスが入れ替わる★。最古から探せば FIFO になり、
+'   順番に 1 往復ずつの場面でも結果は変わらない (つまり最古が常に同等以上)。
+'
+'   ★弱点を正直に★ 同じ URL への同時並行要求は取り違える。しかも
+'   取り違えたことは検出できない。args に NavigationId のような紐付けの
+'   手がかりが無いので、これ以上は原理的に詰められない。
+'
+'   戻り値: リング上の位置。見つからなければ -1。
+' ============================================================
+Private Function NetMatchRequest(ByVal uri As String, ByVal mth As String) As Long
+    Dim i As Long
+    Dim k As Long
+
+    NetMatchRequest = -1
+    If m_netCount = 0 Then Exit Function
+
+    ' ★古い順 (i = 1 → m_netCount)★ = 先に出た要求に先に届いた応答を付ける
+    For i = 1 To m_netCount
+        k = NetRingIndex(i)
+        If k >= 0 Then
+            If m_netStatus(k) = 0 Then                       ' まだ応答が付いていない
+                If m_netUri(k) = uri Then
+                    If LenB(mth) = 0 Or m_netMethod(k) = mth Then
+                        NetMatchRequest = k
+                        Exit Function
+                    End If
+                End If
+            End If
+        End If
+    Next i
+End Function
+
+
+' ============================================================
+' NetAttachRespHeaders (N-3、Private) - 応答ヘッダを詳細エントリに足す
+'
+'   詳細リングの中から同じ通し番号のエントリを探して書き込む。
+'   ★見つからなければ何もしない★ (詳細を取っていない要求の応答なので正常)。
+' ============================================================
+Private Sub NetAttachRespHeaders(ByVal seqNo As Long, _
+                                 ByVal pResp As LongPtr, _
+                                 ByVal st As Long, _
+                                 ByVal reason As String)
+    Dim i As Long
+    Dim k As Long
+    Dim pHeaders As LongPtr
+    Dim hr As Long
+
+    For i = m_detCount To 1 Step -1
+        k = NetDetailRingIndex(i)
+        If k >= 0 Then
+            If m_detSeq(k) = seqNo Then
+                m_detStatus(k) = st
+                m_detReason(k) = reason
+
+                ' ResponseView.get_Headers (3) → ICoreWebView2HttpResponseHeaders
+                hr = dcf(pResp, 3, "", VarPtr(pHeaders))
+                If hr <> 0 Then
+                    m_detRespHeaders(k) = "(診断: get_Headers が失敗 hr=&H" & Hex(hr) & ")"
+                ElseIf pHeaders = 0 Then
+                    m_detRespHeaders(k) = "(診断: get_Headers は S_OK だが 0 が返った)"
+                Else
+                    ' ★応答側の GetIterator は 7★ (要求側は 8。並びが違う)
+                    m_detRespHeaders(k) = NetReadHeadersIter(pHeaders, 7)
+                    ComRelease pHeaders
+                End If
+                Exit Sub
+            End If
+        End If
+    Next i
+End Sub
+

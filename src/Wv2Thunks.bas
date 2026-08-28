@@ -1,5 +1,15 @@
 Attribute VB_Name = "Wv2Thunks"
 ''''''''''''''''''''''''''''''''''
+' --- Wv2Thunks.bas N-3 段階 (レスポンスのステータスとヘッダ) ---
+'
+'   N-3 の変更点:
+'     - HandlerKind に HK_WebResourceResponseReceived = 12 を追加
+'       ★永続、ICoreWebView2_2 (vtable 61/62)★ = 派生 IF のイベント
+'     - m_iidTable の配列上限を HK_WebResourceRequested ← HK_WebResourceResponseReceived
+'     - IID {7de9898a-24f5-40c3-a2de-d4f458e69828}
+'       ★出典は SDK ヘッダの MIDL_INTERFACE 行 (設計原則115)★
+''''''''''''''''''''''''''''''''''
+''''''''''''''''''''''''''''''''''
 ' --- Wv2Thunks.bas N-2 段階 (リクエストのヘッダとボディ) ---
 '
 '   N-2 の変更点:
@@ -604,6 +614,7 @@ Public Enum HandlerKind
     HK_HistoryChanged = 9           ' 第9.9b で追加、永続、基底 ICoreWebView2 (vtable 13/14)
     HK_DOMContentLoaded = 10        ' 第9.9b で追加、永続、ICoreWebView2_2 (vtable 64/65)
     HK_WebResourceRequested = 11    ' N-1 で追加、永続、基底 ICoreWebView2 (vtable 55/56)
+    HK_WebResourceResponseReceived = 12  ' N-3 で追加、永続、ICoreWebView2_2 (vtable 61/62)
 End Enum
 
 
@@ -634,9 +645,9 @@ Private m_handlers(0 To SLOT_COUNT - 1) As ComCallbackHandler
 '   S_OK + 自身、不一致なら ppvObject = 0 + E_NOINTERFACE を返す。
 '
 '   Thunks_Init の末尾で InitIIDTable によって初期化される。
-'   宣言のレンジは HandlerKind の全範囲 (HK_None = 0 ? HK_WebResourceRequested = 11)。
+'   宣言のレンジは HandlerKind の全範囲 (HK_None = 0 ? HK_WebResourceResponseReceived = 12)。
 '   HK_None のエントリは未使用 (ハンドラとして使われない、初期値 0 のまま)。
-Private m_iidTable(HK_None To HK_WebResourceRequested) As GUID
+Private m_iidTable(HK_None To HK_WebResourceResponseReceived) As GUID
 
 ' --- IID_IUnknown (Win32 標準、Thunks_Init で初期化) ---
 '   {00000000-0000-0000-C000-000000000046}。Handler_QueryInterface での
@@ -2396,6 +2407,11 @@ Private Sub InitIIDTable()
     '   出典: WebView2.h の MIDL_INTERFACE 行 (★推測ではなくヘッダから取った★)
     FillGUID m_iidTable(HK_WebResourceRequested), _
              "ab00b74c-15f1-4646-80e8-e76341d25d71"
+
+    ' ICoreWebView2WebResourceResponseReceivedEventHandler (N-3 で追加)
+    '   出典: WebView2.h の MIDL_INTERFACE 行
+    FillGUID m_iidTable(HK_WebResourceResponseReceived), _
+             "7de9898a-24f5-40c3-a2de-d4f458e69828"
 End Sub
 
 

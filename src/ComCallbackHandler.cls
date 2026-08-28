@@ -8,6 +8,22 @@ Attribute VB_Creatable = False
 Attribute VB_PredeclaredId = False
 Attribute VB_Exposed = False
 ''''''''''''''''''''''''''''''''''
+' --- ComCallbackHandler.cls N-3 段階 (レスポンスのステータスとヘッダ) ---
+'
+'   N-3 の変更点:
+'     - Handler_Invoke に Case HK_WebResourceResponseReceived を追加。
+'       2 引数イベント (sender, args) なので既存と同形。
+'       → m_owner.View2_OnWebResourceResponseReceived arg1, arg2
+'
+'   ★命名は View2_ 接頭辞★ (設計原則31 / 第9.9b 規約)
+'     このイベントは ICoreWebView2_2 (派生 IF) のもの。add / remove も
+'     m_pView2 で叩く。基底の HK_WebResourceRequested (View_) と混ぜないこと。
+'
+'   ★この分岐も Debug.Print を撃たない★
+'     ★このイベントにはフィルタが無い★ ので、画像も CSS も全部来る。
+'     N-1 の WebResourceRequested より発火数が多い。記録だけしてすぐ返す。
+''''''''''''''''''''''''''''''''''
+''''''''''''''''''''''''''''''''''
 ' --- ComCallbackHandler.cls N-1 段階 (WebResourceRequested の配線) ---
 '
 '   N-1 の変更点:
@@ -71,6 +87,7 @@ Attribute VB_Exposed = False
 '     HK_HistoryChanged          (永続、第9.9b で追加、基底 ICoreWebView2)
 '     HK_DOMContentLoaded        (永続、第9.9b で追加、ICoreWebView2_2)
 '     HK_WebResourceRequested    (永続、N-1 で追加、基底 ICoreWebView2)
+'     HK_WebResourceResponseReceived (永続、N-3 で追加、ICoreWebView2_2)
 '
 '   引数解釈の法則 (設計原則 11):
 '     ComCallbackHandler の Handler_Invoke が受ける (this, arg1, arg2) は
@@ -419,6 +436,23 @@ Public Function Handler_Invoke( _
             '    7 : get_ResourceContext(COREWEBVIEW2_WEB_RESOURCE_CONTEXT*)
             If Not (m_owner Is Nothing) Then
                 m_owner.View_OnWebResourceRequested arg1, arg2
+            End If
+
+        Case HK_WebResourceResponseReceived
+            ' N-3 で追加。永続、ICoreWebView2_2 (vtable 61/62)。
+            '
+            ' ★ここでも Debug.Print を撃たない★ (N-1 と同じ理由。しかも
+            '   このイベントには★フィルタが無い★ので発火数はさらに多い)
+            '
+            ' 2 引数イベント: Invoke(sender, args)
+            '   arg1 = sender (= m_pView。_2 IF でも sender は ICoreWebView2*)
+            '   arg2 = args   (= ICoreWebView2WebResourceResponseReceivedEventArgs)
+            '
+            ' args の vtable (★tools/vtable.py で確定★):
+            '    3 : get_Request(ICoreWebView2WebResourceRequest**)
+            '    4 : get_Response(ICoreWebView2WebResourceResponseView**)
+            If Not (m_owner Is Nothing) Then
+                m_owner.View2_OnWebResourceResponseReceived arg1, arg2
             End If
 
         Case HK_ExecuteScriptCompleted

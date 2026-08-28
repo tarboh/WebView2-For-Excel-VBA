@@ -1,5 +1,20 @@
 Attribute VB_Name = "Wv2Tests"
 ''''''''''''''''''''''''''''''''''
+' --- Wv2Tests.bas  N-3 段階 (レスポンスのステータスとヘッダ) ---
+'
+'   Test_N3_Status … 回帰試験。的は N-1 / N-2 と同じ 2 系統
+'   Test_N3_Help   … 手順
+'
+'   ★(1)～(4) は外部が要る★
+'     到達不能ローカル (案F) には★応答が来ない★ので、ステータスの検証には
+'     本物の送り先が要る。逆に言えば案F は「応答が来ないこと = 空欄」の
+'     対照になる ((5) がそれ)。
+'
+'   ★このイベントにはフィルタが無い★
+'     画像も CSS も全部来る。一覧に居ない応答は NetRespUnmatched に数える
+'     だけで捨てる。★大きい数が出るのは正常★。
+''''''''''''''''''''''''''''''''''
+''''''''''''''''''''''''''''''''''
 ' --- Wv2Tests.bas  N-2 段階 (リクエストのヘッダとボディ) ---
 '
 '   Test_N2_Detail … 回帰試験。的は N-1 と同じ 2 系統 (案F / 案D)
@@ -7383,3 +7398,393 @@ Private Function N2PageText(ByVal p As Wv2Pane, ByVal timeoutSec As Single) As S
     Loop
     N2PageText = cur
 End Function
+
+
+' ============================================================
+' Test_N3_Status (N-3 の回帰試験)
+'
+'   ★このイベントにはフィルタが無い★ ので、一覧に居る要求に対応するものだけ
+'   記録する (論点1 案A)。的は N-1 / N-2 と同じ 2 系統。
+'
+'   見ているもの:
+'     (0) 応答イベントが張れている (NetRespOn)
+'     (1) ★ふつうの 200 が一覧の行に付く★
+'     (2) ★404 も 500 もそのまま出る★ (成功だけ見ない)
+'     (3) ★リダイレクトは 1 要求 1 応答で並ぶ★ (論点6 案Y)
+'     (4) 応答ヘッダが読める / ★応答ヘッダにも伏せ字が効く★
+'         ★応答の中身を見る節は N3WaitAny で待つ★ (N2Wait では要求が
+'         飛んだ瞬間に成立してしまい、必ず空を読む)
+'     (5) ★到達不能な的は応答が来ない = 空欄★ (論点7 案α)
+'     (6) ★一覧に居ない応答は数えるだけ★ (論点5 案W)
+'     (7) 詳細が OFF なら応答ヘッダは取らない (ステータスは付く)
+'
+'   ★(1)～(4) は外部が要る★ 到達不能ローカルには応答が来ないので、
+'   ステータスの検証には本物の送り先が要る。届かないときはその旨を出して飛ばす。
+' ============================================================
+Public Sub Test_N3_Status()
+    Dim b   As Wv2Browser
+    Dim p   As Wv2Pane
+    Dim folderPath As String
+    Dim hr  As Long
+    Dim k   As Long
+    Dim n0  As Long
+    Dim netOk As Boolean
+    Dim hdr As String
+
+    Set b = UserForm1.CurrentBrowser
+    If b Is Nothing Then
+        Wv2Log.LogI "Test_N3_Status: Browser が起動していません。"
+        Exit Sub
+    End If
+
+    folderPath = N1WriteFolder()
+    If LenB(folderPath) = 0 Then
+        Wv2Log.LogI "Test_N3_Status: 検証ページの書き出しに失敗しました。中止します。"
+        Exit Sub
+    End If
+
+    Set p = b.AddTab()
+    If p Is Nothing Then
+        Wv2Log.LogI "Test_N3_Status: タブの生成に失敗しました。"
+        Exit Sub
+    End If
+
+    Wv2Log.LogI ""
+    TestCountReset
+    Wv2Log.LogI "================ Test_N3_Status 開始 ================"
+    Wv2Log.LogI "        案F の的 = " & N1_LOCAL & "  (到達不能なローカル)"
+    Wv2Log.LogI "        案D の的 = " & N1_NET & "  (外部サービス)"
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (0) 応答イベントが張れている ---"
+
+    TestBool "NetCaptureStart が成功する", p.NetCaptureStart()
+    TestBool "★応答イベントも張れている (NetRespOn)★", (p.NetRespOn = True)
+
+    hr = p.View3_SetVirtualHostNameToFolderMapping(N1_HOST, folderPath, 1)   ' 1 = ALLOW
+    TestBool "  仮想ホストのマッピングができる", (hr = 0)
+    hr = p.View_Navigate("https://" & N1_HOST & "/netprobe.html")
+    TestBool "  Navigate が成功する", (hr = 0)
+
+    If Not D2WaitTitle(p, "N-1 プローブ", 10) Then
+        Wv2Log.LogI "Test_N3_Status: 検証ページの読み込みを確認できませんでした。"
+        p.NetCaptureStop
+        TestCountPrint
+        Exit Sub
+    End If
+    D3Pump 2
+
+    p.NetDetailOn = True
+    p.NetLogClear
+    p.NetDetailClear
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (1) ★ふつうの 200 が一覧の行に付く★ ---"
+
+    N1Fire p, "(function(){fetch('" & N1_NET & "/get?k=n3-200').catch(function(){});" & _
+              "return 1;})()"
+    netOk = N3Wait(p, "k=n3-200", 200, 12)
+    TestBool "★200 が付く★", netOk
+    If netOk Then
+        k = N1Find(p, "", "", "k=n3-200")
+        Wv2Log.LogI "        " & Replace$(p.NetLogLine(k), vbTab, "  ")
+        TestBool "  NetLogStatus でも読める", (p.NetLogStatus(k) = 200)
+    Else
+        Wv2Log.LogW "  ※ ★外部が届いていない★ (1)～(4) は空振りとして読むこと。"
+    End If
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (2) ★404 も 500 もそのまま出る★ ---"
+    ' ★成功だけ見ない★ 失敗が失敗として見えることが調査道具の値打ち。
+
+    If netOk Then
+        p.NetLogClear
+        N1Fire p, "(function(){" & _
+                  "fetch('" & N1_NET & "/status/404?k=n3-404').catch(function(){});" & _
+                  "fetch('" & N1_NET & "/status/500?k=n3-500').catch(function(){});" & _
+                  "return 1;})()"
+        TestBool "★404 が付く★", N3Wait(p, "k=n3-404", 404, 12)
+        TestBool "★500 が付く★", N3Wait(p, "k=n3-500", 500, 12)
+        k = N1Find(p, "", "", "k=n3-404")
+        If k > 0 Then Wv2Log.LogI "        " & Replace$(p.NetLogLine(k), vbTab, "  ")
+    End If
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (3) ★リダイレクトは 1 要求 1 応答で並ぶ★ (論点6 案Y) ---"
+    ' リダイレクトは要求そのものが複数回発火するので、応答も 1 対 1 で付く。
+    ' ★同じ URL に 2 つの応答が付いて上書きされる、が起きないことを見る★
+
+    If netOk Then
+        p.NetLogClear
+        N1Fire p, "(function(){fetch('" & N1_NET & "/redirect/2?k=n3-redir')" & _
+                  ".catch(function(){});return 1;})()"
+        D3Pump 6
+        n0 = N3CountWithStatus(p)
+        Wv2Log.LogI "        一覧 " & p.NetLogCount & " 件 / うち応答が付いたもの " & n0 & " 件"
+        N3DumpAll p
+        TestBool "★リダイレクトで複数の行が並ぶ★", (p.NetLogCount >= 2)
+        TestBool "★どの行にも応答が 1 つずつ付いている★", (n0 = p.NetLogCount)
+    End If
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (4) 応答ヘッダが読める / ★応答ヘッダにも伏せ字が効く★ ---"
+
+    If netOk Then
+        p.NetLogClear
+        p.NetDetailClear
+        N1Fire p, "(function(){fetch('" & N1_NET & _
+                  "/response-headers?X-N3-Test=hello&k=n3-hdr').catch(function(){});" & _
+                  "return 1;})()"
+        ' ★応答が付くまで待つ (N-3c)★
+        '   N2Wait は「詳細が現れるまで」= 要求が飛んだ瞬間に成立してしまう。
+        '   応答ヘッダを読みたいなら★応答が来るまで★待たなければ意味がない。
+        TestBool "★応答が付くまで待てる★", N3WaitAny(p, "k=n3-hdr", 15)
+        k = N2Find(p, "k=n3-hdr")
+        If k > 0 Then
+            hdr = p.NetDetailRespHeaders(k)
+            Wv2Log.LogI "        応答ヘッダ: " & Replace$(Left$(hdr, 300), vbLf, " / ")
+            ' ★どこまで到達したかを丸ごと出す (N-3b)★
+            '   [応答] 行が出れば NetAttachRespHeaders までは来ている。
+            '   出なければ詳細エントリの突き合わせで落ちている。
+            p.NetDetail k
+            TestBool "★応答ヘッダが読めている★", (InStr(1, hdr, ":") > 0)
+            TestBool "★指定したヘッダが返ってきている★", _
+                     (InStr(1, hdr, "X-N3-Test", vbTextCompare) > 0)
+            TestBool "  要求ヘッダとは別に持っている", _
+                     (p.NetDetailHeaders(k) <> hdr)
+        End If
+
+        ' --- ★応答ヘッダ側でも伏せ字が効くか★ ---
+        '   ★外部の Set-Cookie に頼らない★ 既に読めている content-type を
+        '   伏せ対象に足して、★同じ 1 件を伏せる前と後で読み比べる★。
+        '   これは論点3 案M (保存時ではなく出すときに伏せる) の直接の証明でもある。
+        If k > 0 Then
+            p.AddRedactHeader "content-type"
+            hdr = p.NetDetailRespHeaders(k)
+            Wv2Log.LogI "        伏せた後: " & Replace$(Left$(hdr, 240), vbLf, " / ")
+            TestBool "★応答ヘッダにも伏せ字が効く★", (InStr(1, hdr, "<伏せた") > 0)
+            TestBool "★中身 (application/json) が消えている★", _
+                     (InStr(1, hdr, "application/json") = 0)
+
+            ' ★リング上は生のまま持っている★ ので False にすれば戻る
+            p.NetRedact = False
+            hdr = p.NetDetailRespHeaders(k)
+            TestBool "★リング上は生のまま (NetRedact = False で戻る)★", _
+                     (InStr(1, hdr, "application/json") > 0)
+            p.NetRedact = True
+        End If
+
+        ' --- 本物の Set-Cookie でも試す (上乗せ。来なければ未検証と記録する) ---
+        '   ★走らなかったことを黙って通さない★ FAIL 0 に見えて実は
+        '   何も確かめていない、が一番たちが悪い。
+        p.NetLogClear
+        p.NetDetailClear
+        N1Fire p, "(function(){fetch('" & N1_NET & _
+                  "/cookies/set?n3secret=topsecret123&k=n3-cookie'" & _
+                  ",{redirect:'manual'}).catch(function(){});return 1;})()"
+        If N3WaitAny(p, "k=n3-cookie", 12) Then
+            k = N2Find(p, "k=n3-cookie")
+            hdr = p.NetDetailRespHeaders(k)
+            Wv2Log.LogI "        応答ヘッダ: " & Replace$(Left$(hdr, 300), vbLf, " / ")
+            If InStr(1, hdr, "et-cookie", vbTextCompare) > 0 Then
+                TestBool "★本物の Set-Cookie の中身も伏せられている★", _
+                         (InStr(1, hdr, "topsecret123") = 0)
+            Else
+                Wv2Log.LogW "  ※ ★Set-Cookie が応答ヘッダに無かった★ " & _
+                            "この上乗せの判定は走らなかった (未検証)。"
+            End If
+        Else
+            Wv2Log.LogW "  ※ ★Set-Cookie の上乗せ判定は走らなかった (応答が来ない)★ " & _
+                        "redirect manual の要求は応答イベントに乗らないのかもしれない。" & _
+                        "断定はせず宿題に積む。伏せ字の機構そのものは上で検証済み。"
+        End If
+    End If
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (5) ★到達不能な的は応答が来ない = 空欄★ (論点7 案α) ---"
+    ' ★0 を書かないことの確認★ 「まだ来ていない」と「本物の 0」を混ぜない。
+
+    p.NetLogClear
+    p.NetDetailClear
+    N1Fire p, "(function(){fetch('" & N1_LOCAL & "/n3none?k=n3-none').catch(function(){});" & _
+              "return 1;})()"
+    TestBool "要求は一覧に載る", N1Wait(p, "", "", "k=n3-none", 8)
+    D3Pump 3
+    k = N1Find(p, "", "", "k=n3-none")
+    If k > 0 Then
+        Wv2Log.LogI "        " & Replace$(p.NetLogLine(k), vbTab, "  ")
+        TestBool "★ステータスは 0 (未着) のまま★", (p.NetLogStatus(k) = 0)
+        TestBool "★表示は空欄 (0 と書かない)★", _
+                 (Split(p.NetLogLine(k), vbTab)(5) = "")
+    End If
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (6) ★一覧に居ない応答は数えるだけ★ (論点5 案W) ---"
+    ' ★わざと捕捉対象外の要求を出して数える★
+    '   画像は IMAGE 種別なので一覧 (DOCUMENT / XHR / FETCH) には載らない。
+    '   だがこのイベントにはフィルタが無いので★応答だけは来る★。
+    '   それが「対応なし」として数えられ、一覧には現れないことを見る。
+    '   ★「>= 0」のような常に真の判定にしない★ (それは何も確かめていない)
+
+    If netOk Then
+        p.NetLogClear
+        n0 = p.NetRespUnmatched
+        N1Fire p, "(function(){var im=new Image();" & _
+                  "im.src='" & N1_NET & "/image/png?k=n3-orphan';" & _
+                  "return 1;})()"
+        D3Pump 6
+        Wv2Log.LogI "        一覧に対応が無かった応答 = " & p.NetRespUnmatched & " 件 " & _
+                    "(クリア直後は " & n0 & " 件)"
+        TestBool "★捕捉対象外の応答が数えられている★", (p.NetRespUnmatched > n0)
+        TestBool "★その画像は一覧には載っていない★", (N1Find(p, "", "", "k=n3-orphan") = 0)
+        TestBool "  一覧の取りこぼしは別勘定 (NetLogDropped)", (p.NetLogDropped = 0)
+    End If
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- (7) 詳細が OFF でもステータスは付く ---"
+    ' ★応答ヘッダだけが詳細扱い (論点4 案U)★ ステータスは一覧の一部。
+
+    If netOk Then
+        p.NetDetailOn = False
+        p.NetLogClear
+        p.NetDetailClear
+        N1Fire p, "(function(){fetch('" & N1_NET & "/get?k=n3-off').catch(function(){});" & _
+                  "return 1;})()"
+        TestBool "★詳細 OFF でもステータスは付く★", N3Wait(p, "k=n3-off", 200, 12)
+        TestBool "  詳細は 1 件も増えない", (p.NetDetailCount = 0)
+        p.NetDetailOn = True
+    End If
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  --- 手元に残っているものを全部出す ---"
+    p.NetLogDrain
+    p.NetCaptureStop
+
+    Wv2Log.LogI ""
+    Wv2Log.LogI "  in-callback 深さ (期待 0): " & p.InCallbackDepth
+    TestCountPrint
+    Wv2Log.LogI "================ Test_N3_Status 終了 ================"
+    Wv2Log.LogI ""
+End Sub
+
+
+' ============================================================
+' Test_N3_Help (N-3 の手順)
+' ============================================================
+Public Sub Test_N3_Help()
+    Debug.Print "==== N-3 実機手順 (レスポンスのステータスとヘッダ) ===="
+    Debug.Print ""
+    Debug.Print "  【回帰試験】"
+    Debug.Print "    1) UserForm1.Show vbModeless      ' ★仕様事実54★"
+    Debug.Print "    2) UserForm1.StartWebView2_Full"
+    Debug.Print "    3) Wv2Log.LogStart"
+    Debug.Print "    4) Test_N3_Status"
+    Debug.Print "    → ★(1)～(4) は外部 (httpbingo.org) が要る★"
+    Debug.Print "       到達不能ローカルには応答が来ないので、ステータスの検証には"
+    Debug.Print "       本物の送り先が要る。届かないときは空振りとして表示する。"
+    Debug.Print ""
+    Debug.Print "  【一覧の読み方 (N-3 で 1 列増えた)】"
+    Debug.Print "    #   経過ms  メソッド 種別       状態  URL"
+    Debug.Print "    1       94  GET      DOCUMENT    200  https://..."
+    Debug.Print "    2      141  GET      XHR         404  https://..."
+    Debug.Print "    3      609  GET      XHR              https://...   ← ★空欄 = まだ来ていない★"
+    Debug.Print ""
+    Debug.Print "  【応答ヘッダ】"
+    Debug.Print "    p.NetDetailOn = True             ' ★応答ヘッダは詳細扱い★"
+    Debug.Print "    p.NetDetail 3                    ' 3 番目の詳細 (要求 + 応答)"
+    Debug.Print "    p.NetDetailRespHeaders(3)        ' 応答ヘッダだけ取る"
+    Debug.Print "    ※ Set-Cookie は既定で伏せる (NetRedact)。"
+    Debug.Print ""
+    Debug.Print "  --- ★N-3 で気をつけたこと★ ---"
+    Debug.Print "  ・★このイベントにはフィルタが無い★ 画像も CSS も全部来る。だから"
+    Debug.Print "    一覧に既に居る要求に対応するものだけ記録する。全部見たいときは"
+    Debug.Print "    Test_N1_Watch ""ALL"" で一覧側を広げれば応答もついてくる。"
+    Debug.Print "  ・突き合わせは URI + メソッド。★同じ URL への同時並行要求は"
+    Debug.Print "    取り違えるし、取り違えたことは検出できない★ (args に紐付けの"
+    Debug.Print "    手がかりが無い)。リダイレクトは要求が複数回発火するので 1 対 1。"
+    Debug.Print "  ・★NetLogDrain するとまだ応答が来ていない行も消える★ ので、"
+    Debug.Print "    その応答は NetRespUnmatched に回る。急いで流さないこと。"
+    Debug.Print "  ・NetRespUnmatched が大きいのは★正常★ (捕捉対象外の応答)。"
+    Debug.Print "    取りこぼしを疑うときは NetLogDropped を見る。"
+    Debug.Print ""
+    Debug.Print "  --- N-3 でできないこと (後段) ---"
+    Debug.Print "    ・レスポンス本文                      → N-4 (GetContent は非同期)"
+    Debug.Print "    ・PowerShell の Invoke-WebRequest 化  → N-5"
+End Sub
+
+
+' ============================================================
+' N3Wait (N-3、Private) - その URL に指定のステータスが付くまで待つ
+' ============================================================
+Private Function N3Wait(ByVal p As Wv2Pane, _
+                        ByVal uriPart As String, _
+                        ByVal wantStatus As Long, _
+                        ByVal timeoutSec As Single) As Boolean
+    Dim t0 As Single
+    Dim k  As Long
+
+    t0 = Timer
+    Do
+        DoEvents
+        k = N1Find(p, "", "", uriPart)
+        If k > 0 Then
+            If p.NetLogStatus(k) = wantStatus Then
+                N3Wait = True
+                Exit Function
+            End If
+        End If
+        If (Timer - t0) > timeoutSec Then Exit Do
+    Loop
+End Function
+
+
+' ============================================================
+' N3WaitAny (N-3c、Private) - ★ステータスを問わず、応答が付くまで待つ★
+'
+'   N3Wait は「このステータスが付くまで」、N2Wait は「詳細が現れるまで」。
+'   ★詳細は要求が飛んだ瞬間に作られる★ ので、N2Wait で待って応答ヘッダを
+'   読むと必ず空になる (N-3 の初回実機でこれを踏んだ)。
+'   応答の中身を見たいときは必ずこちらで待つこと。
+' ============================================================
+Private Function N3WaitAny(ByVal p As Wv2Pane, _
+                           ByVal uriPart As String, _
+                           ByVal timeoutSec As Single) As Boolean
+    Dim t0 As Single
+    Dim k  As Long
+
+    t0 = Timer
+    Do
+        DoEvents
+        k = N1Find(p, "", "", uriPart)
+        If k > 0 Then
+            If p.NetLogStatus(k) <> 0 Then
+                N3WaitAny = True
+                Exit Function
+            End If
+        End If
+        If (Timer - t0) > timeoutSec Then Exit Do
+    Loop
+End Function
+
+
+' ============================================================
+' N3CountWithStatus (N-3、Private) - 応答が付いている行の数
+' ============================================================
+Private Function N3CountWithStatus(ByVal p As Wv2Pane) As Long
+    Dim i As Long
+    For i = 1 To p.NetLogCount
+        If p.NetLogStatus(i) <> 0 Then N3CountWithStatus = N3CountWithStatus + 1
+    Next i
+End Function
+
+
+' ============================================================
+' N3DumpAll (N-3、Private) - 一覧をそのままログへ出す (消さない)
+'   ★NetLogDrain と違って空にしない★ 判定に使う途中で消えると困るため。
+' ============================================================
+Private Sub N3DumpAll(ByVal p As Wv2Pane)
+    Dim i As Long
+    For i = 1 To p.NetLogCount
+        Wv2Log.LogI "        " & Replace$(p.NetLogLine(i), vbTab, "  ")
+    Next i
+End Sub
+
